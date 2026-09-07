@@ -10,3 +10,5 @@ export { parseAgentTurn } from './model/validation.js';
 export type * from './model/types.js';
 export { AgentService } from './runtime/agent-service.js';
 export type { OwnerTurnInput, AgentTurnResult } from './runtime/agent-service.js';
+export { ModelRegistry } from './model/registry.js';
+export { FakeModelGateway } from './model/fake-gateway.js';
