@@ -12,3 +12,5 @@ export { AgentService } from './runtime/agent-service.js';
 export type { OwnerTurnInput, AgentTurnResult } from './runtime/agent-service.js';
 export { ModelRegistry } from './model/registry.js';
 export { FakeModelGateway } from './model/fake-gateway.js';
+export { PiModelGateway } from './model/pi-gateway.js';
+export type { PiRuntime, PiRuntimeLoader, PiModelDescriptor, PiAssistantMessage } from './model/pi-gateway.js';
