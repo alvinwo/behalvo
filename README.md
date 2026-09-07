@@ -5,9 +5,13 @@
 Personal dogfooding first. A shared architectural foundation for later solo-business
 workflows. Working project name; **offline foundation preview, not a live assistant**.
 
-[中文架构导读](docs/architecture.zh-CN.md) ·
+[Architecture overview](docs/architecture.md) ·
 [Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) ·
+[中文架构导读](docs/architecture.zh-CN.md) ·
 [Roadmap](docs/ROADMAP.md) · [Verification](docs/VERIFICATION.md)
+
+> Documentation is English-first. Chinese companion documents are supplementary;
+> when wording differs, the English specification is authoritative.
 
 ## Run the offline example
 

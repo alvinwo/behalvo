@@ -3,6 +3,7 @@
 Read README, SECURITY.md and the approved architecture spec before editing.
 
 - Keep the kernel transport/model-independent and the application a modular monolith.
+- Write normative project documentation and code-facing documentation in English. Chinese `*.zh-CN.md` files are supplementary translations, not the source of truth.
 - Work in a feature branch; do not publish, push, contact real recipients, create
   paid resources, or choose a public license without owner authorization.
 - Use synthetic data only. Never ingest the maintainer's actual accounts into tests.

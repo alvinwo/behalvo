@@ -3,6 +3,8 @@
 The project is a local foundation preview. Public contributions and their license
 terms should be opened only after the maintainer chooses a release license.
 
+Documentation is English-first. New normative docs, ADRs, issue templates and public API descriptions should be written in English; translated `*.zh-CN.md` companions are welcome but are non-authoritative.
+
 Use Node.js >=22.16, run `npm ci`, then `npm run check` and `npm run demo`.
 No live account or model key is needed. Test fixtures belong under `tests/` and
 must be synthetic. Tests execute against temporary real SQLite databases.
