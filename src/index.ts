@@ -16,3 +16,7 @@ export { PiModelGateway, createPiRuntimeLoader } from './model/pi-gateway.js';
 export type { PiRuntime, PiRuntimeLoader, PiModelDescriptor, PiAssistantMessage, PiAuthType, PiAuthPrompt, PiAuthEvent, PiAuthInteraction } from './model/pi-gateway.js';
 export { PiCredentialFileStore } from './model/pi-auth-store.js';
 export type { PiCredential } from './model/pi-auth-store.js';
+export { runRepl } from './cli/repl.js';
+export type { ReplIo, ReplOptions, ReplResult, ReplAuthenticator } from './cli/repl.js';
+export { openLocalAgent } from './cli/local-app.js';
+export type { LocalAgent, LocalAgentOptions } from './cli/local-app.js';
