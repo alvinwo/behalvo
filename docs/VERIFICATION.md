@@ -1,88 +1,103 @@
-# Verification report — M0 offline foundation
+# Verification report — local agent MVP
 
 Date: 2026-09-07.
-Source-code checkpoint: `360582c9c8d49494df4fd40734dc5290d3ab452c`.
-Subsequent handoff changes affect documentation only.
+Branch: `feat/mvp-local-agent`.
 
-## Environment
+## Scope verified
 
-Linux; Node.js v22.16.0; npm 10.9.2; TypeScript 5.8.3;
-@types/node 22.19.7. Three installed development/transitive packages, zero runtime
-npm dependencies. Dependency versions and integrity values are in package-lock.json.
+This report covers the local terminal MVP: provider-neutral model turns, the optional Pi model adapter and credential store, durable owner/assistant turns, WorkItem and Fact proposals, cross-thread/restart recovery, the terminal REPL, and the deterministic offline MVP demo.
 
-The network registry was not reachable from the build container (DNS resolution
-failed). Installation was completed from the existing npm cache with the committed
-lockfile, not by substituting untracked dependencies. Live registry availability
-and a vulnerability audit were not verified.
+It does **not** claim live email, phone, WhatsApp, WeChat, browser actions, hosted operation, or production readiness.
 
-## Commands actually executed
+## Build environment
+
+The verification container runs Linux, Node.js v22.16.0 and npm 10.9.2. The committed project uses TypeScript and the Node 22 built-in SQLite driver.
+
+Outbound npm registry access is unavailable in this container. For verification only, TypeScript and `@types/node` are linked from already-installed toolchain copies in the environment. No runtime provider package is required for offline mode.
+
+The current `@earendil-works/pi-ai` package requires a newer Node 22 patch level than this container (Node >=22.19 at the time of this verification), so live Pi/Codex OAuth cannot be executed here. The adapter and OAuth/credential boundary are contract-tested with injected fake Pi runtimes. Users should use a current Node 22 or Node 24 release for the Pi-backed path.
+
+## Fresh commands executed
 
 ```bash
-npm ci --offline --cache /root/.npm --ignore-scripts --no-audit --no-fund
 npm run check
-npm run demo
-git diff --check
-git diff --cached --check
-git bundle verify /mnt/data/personal-operator.bundle
+npm run mvp:demo
 ```
 
-`/root/.npm` is a cache path in the build environment, not a requirement for users.
-Use ordinary `npm ci` in an environment with registry access.
+`npm run check` runs the strict TypeScript check, a fresh build, and every `tests/*.test.mjs` test.
 
-## Results
+## Fresh results
 
-- TypeScript strict check and build: passed.
-- Automated tests: **39 passed, 0 failed, 0 skipped**.
-- Offline demo subprocess: passed as part of the test suite and independently.
-- Original test-first run: 36 failing behavior assertions for missing implementation.
-- Additional test-first run: 3 expected failures for demo, historical stateAt and
-  summary-size limit; all passed after implementation.
-- Fresh clone from Git bundle: dependency install, strict checks, all 39 tests and
-  offline example passed again. The restored branch is `feat/bootstrap`.
-- Source ZIP: independently extracted and checked during final handoff validation.
+- TypeScript strict check: **passed**.
+- Build: **passed**.
+- Automated tests: **62 passed, 0 failed, 0 skipped**.
+- Deterministic restart demo: **passed**.
+- Node's built-in SQLite emits its experimental-feature warning under Node 22.16.0; the warning is intentionally not suppressed.
 
-The Node 22 built-in SQLite driver emits its documented experimental warning.
-This is not suppressed or misreported as a clean production stability guarantee.
+The 62 automated tests include the original M0 kernel tests plus MVP tests for:
 
-## Observed demo output
+- strict, provider-independent `AgentTurn` parsing;
+- rejection of malformed model output, unknown fields and forged provenance;
+- durable owner-message ingestion before model processing;
+- trusted runtime application of WorkItem and Fact proposals;
+- restart recovery and cross-thread WorkItem reuse;
+- provider/model registry routing and ambiguity rejection;
+- optional Pi model adapter request/response mapping;
+- Pi-compatible credential persistence outside Journal/State;
+- provider-owned OAuth login forwarding;
+- cancellable terminal OAuth prompts;
+- REPL model selection, login, state/work/history/context inspection and thread changes;
+- CLI boot from an empty database in offline mode;
+- restart demo proving durable state without smuggling an old thread transcript into the new model context.
+
+## Observed restart-demo output
 
 ```json
 {
-  "mode": "offline-fake-provider",
-  "realMessagesSent": 0,
-  "fakeProviderCalls": 1,
-  "crossThreadWorkId": "refund-demo",
-  "workStatus": "open",
-  "recoveredUnknownActions": 1,
-  "dueTimersFired": 1,
-  "secondPollFired": 0,
-  "rawHistoryRetained": true,
-  "rawMessagesOmittedFromContext": 8,
-  "sourceLinkedSummariesLoaded": 1,
-  "contextEstimatedTokens": 1766,
-  "replayMatches": true,
-  "journalRecords": 24
+  "firstReply": "I will track your Maui preparation.",
+  "secondReply": "Your Maui preparation is still open and departs on 2026-09-12.",
+  "workPhase": "open",
+  "workThreadIds": [
+    "thread-before-restart",
+    "thread-after-restart"
+  ],
+  "departureDate": "2026-09-12",
+  "rawOwnerMessage": "I am going to Maui on September 12.",
+  "actionCount": 0,
+  "journalCount": 10
 }
 ```
 
-## Coverage of behaviors, not a coverage-percentage claim
+This specifically verifies that:
 
-Tests exercise journal update/delete rejection; atomic rollback; revision conflict;
-ingress deduplication and collision rejection; workspace isolation; persistence;
-projection replay and historical state; transactional inbox acknowledgement;
-approval identity/digest/expiry/work-version binding; effect redispatch;
-unknown-outcome recovery and explicit reconciliation; timers after restart;
-cross-thread work; source-preserving summaries; budget overflow; future facts
-and conflicting claims.
+1. process one creates durable WorkItem and Fact state;
+2. the SQLite connection is closed;
+3. process two opens the same database and uses a different Thread;
+4. the second model turn receives the durable WorkItem/Fact state;
+5. the old raw owner transcript is **not** silently copied into the new Thread's model context;
+6. the old raw message is still retrievable from immutable history;
+7. no external action is executed by the MVP model path.
 
-Restart tests close and reopen real SQLite connections. They do not simulate
-hardware power loss, all operating-system crash modes, or real provider outages.
-The fake provider is not evidence of production mail or messaging reliability.
+## Model and Codex boundary
 
-## Review and release limitations
+The core does not depend on Pi. A `ModelGateway` abstraction owns provider/model discovery and completion, and `PiModelGateway` is an optional adapter.
 
-Architecture-to-code self-review and regression tests were performed. There was
-no independent reviewer or security audit. The GitHub Actions workflow is configured
-for Node 22.16 and 24.x, but **remote CI has not run**; local Node 24 compatibility
-was not tested. No GitHub repository, issue, Projects board, PR or public release
-was created. No production account was accessed. License choice remains pending.
+Pi session/cache hints are transport hints only; Pi conversation state is not authoritative Agent memory. Journal, projections, WorkItems, Facts and Thread artifacts remain the source of durable state.
+
+Provider credentials are persisted separately in `data/pi-auth.json`, use Pi-compatible credential shapes, are written atomically with restrictive Unix permissions, and are not written to Journal, model context or domain state. The MVP supports provider-owned `/login <provider> oauth|api_key` flows through the REPL.
+
+Live ChatGPT/Codex subscription OAuth is **not** claimed as verified in this offline container. The first real-device smoke test should be `/login openai-codex oauth` on a current Node version with `@earendil-works/pi-ai` installed.
+
+## Known MVP limitations
+
+- No automatic conversation compaction or semantic historical retrieval yet. Raw history is retained; durable WorkItems/Facts and bounded recent context provide the current cross-thread memory behavior.
+- No email, SMS, phone, WhatsApp, WeChat or browser channel/capability adapters yet.
+- Model proposals are limited to WorkItems and Facts in this MVP; they cannot directly execute external effects.
+- Pi is an optional local dependency and was not fetched in this network-isolated build container.
+- `PiCredentialFileStore` serializes refresh writes within one process; multiple concurrent processes sharing one auth file are not supported yet.
+- There has been no independent security review, penetration test or hosted multi-tenant review.
+- GitHub remote CI has not run for this branch.
+
+## Release gate still required
+
+Before producing the handoff archive, export the committed branch into a clean directory and repeat `npm run check`, `npm run mvp:demo`, and an offline CLI smoke test there. The final handoff must report those results separately from the worktree results above.

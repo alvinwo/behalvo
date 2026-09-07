@@ -1,6 +1,6 @@
 # Local Agent MVP Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build a locally runnable, restart-persistent personal agent CLI with a provider-neutral model layer and an optional Pi model gateway.
 
@@ -32,11 +32,11 @@
 **Interfaces:**
 - Produces `ModelRef`, `ModelInfo`, `ModelRequest`, `ModelResponse`, `ModelGateway`, `AgentTurn`, `parseAgentTurn(text)`.
 
-- [ ] Write tests proving valid envelopes parse and malformed/unknown fields fail closed.
-- [ ] Run the model test and verify RED because the model module does not exist.
-- [ ] Implement the minimal provider-independent types and strict parser.
-- [ ] Run model tests and then the full existing suite.
-- [ ] Commit.
+- [x] Write tests proving valid envelopes parse and malformed/unknown fields fail closed.
+- [x] Run the model test and verify RED because the model module does not exist.
+- [x] Implement the minimal provider-independent types and strict parser.
+- [x] Run model tests and then the full existing suite.
+- [x] Commit.
 
 ### Task 2: Trusted AgentService and durable assistant messages
 
@@ -52,12 +52,12 @@
 - Consumes `ModelGateway`, `buildContext`, `Operator`, `SqliteStore`.
 - Produces `AgentService.runOwnerTurn(input): Promise<AgentTurnResult>`.
 
-- [ ] Write a restart-persistence test using a deterministic fake gateway: first turn creates a WorkItem/fact; restart; second turn receives current state and returns an answer.
-- [ ] Verify RED for missing AgentService.
-- [ ] Implement owner-message ingestion, bounded context building, model call, strict validation, trusted proposal application, and durable assistant-message ingestion.
-- [ ] Add a test proving model-supplied fact provenance is ignored and rebound to the owner message record.
-- [ ] Run focused tests and the full suite.
-- [ ] Commit.
+- [x] Write a restart-persistence test using a deterministic fake gateway: first turn creates a WorkItem/fact; restart; second turn receives current state and returns an answer.
+- [x] Verify RED for missing AgentService.
+- [x] Implement owner-message ingestion, bounded context building, model call, strict validation, trusted proposal application, and durable assistant-message ingestion.
+- [x] Add a test proving model-supplied fact provenance is ignored and rebound to the owner message record.
+- [x] Run focused tests and the full suite.
+- [x] Commit.
 
 ### Task 3: Model selection registry and fake/offline gateway
 
@@ -70,11 +70,11 @@
 **Interfaces:**
 - Produces `ModelRegistry.list()`, `selected()`, `select(provider, model)`, `complete(request)`.
 
-- [ ] Write tests for listing, switching, persistence-neutral selection, and unknown model rejection.
-- [ ] Verify RED.
-- [ ] Implement registry and deterministic fake gateway.
-- [ ] Run focused and full tests.
-- [ ] Commit.
+- [x] Write tests for listing, switching, persistence-neutral selection, and unknown model rejection.
+- [x] Verify RED.
+- [x] Implement registry and deterministic fake gateway.
+- [x] Run focused and full tests.
+- [x] Commit.
 
 ### Task 4: Optional Pi gateway
 
@@ -87,12 +87,12 @@
 - Produces `PiRuntime` adapter contract and `PiModelGateway`.
 - `PiModelGateway.create()` dynamically loads `@earendil-works/pi-ai`; tests inject a fake runtime.
 
-- [ ] Write tests with a fake Pi runtime for provider/model discovery, model selection, request transformation, and assistant text extraction.
-- [ ] Verify RED.
-- [ ] Implement the smallest dynamic adapter; no static Pi import is allowed.
-- [ ] Add a test that a missing Pi package yields an actionable installation error while the base package still imports successfully.
-- [ ] Run focused and full tests.
-- [ ] Commit.
+- [x] Write tests with a fake Pi runtime for provider/model discovery, model selection, request transformation, and assistant text extraction.
+- [x] Verify RED.
+- [x] Implement the smallest dynamic adapter; no static Pi import is allowed.
+- [x] Add a test that a missing Pi package yields an actionable installation error while the base package still imports successfully.
+- [x] Run focused and full tests.
+- [x] Commit.
 
 ### Task 5: Local REPL and inspection commands
 
@@ -107,11 +107,11 @@
 - Produces `runRepl(options)` with injectable input/output for tests.
 - Adds `npm run agent`.
 
-- [ ] Write scripted REPL tests for `/model`, owner turn, `/work`, `/state`, `/history`, `/context`, `/new`, and `/quit`.
-- [ ] Verify RED.
-- [ ] Implement command parsing and REPL around `AgentService`.
-- [ ] Run focused and full tests.
-- [ ] Commit.
+- [x] Write scripted REPL tests for `/model`, owner turn, `/work`, `/state`, `/history`, `/context`, `/new`, and `/quit`.
+- [x] Verify RED.
+- [x] Implement command parsing and REPL around `AgentService`.
+- [x] Run focused and full tests.
+- [x] Commit.
 
 ### Task 6: Restart demo and operator documentation
 
@@ -126,21 +126,21 @@
 **Interfaces:**
 - Adds `npm run mvp:demo`, proving first run -> close -> reopen -> second thread can use durable state.
 
-- [ ] Write the end-to-end demo test first and verify RED.
-- [ ] Implement the deterministic offline demo.
-- [ ] Document local setup, Pi installation, `npx @earendil-works/pi-ai login`, Codex subscription use, model selection, and the boundary that live OAuth is not exercised in CI/offline tests.
-- [ ] Run `npm run check`, `npm run mvp:demo`, and a clean-copy verification.
-- [ ] Commit.
+- [x] Write the end-to-end demo test first and verify RED.
+- [x] Implement the deterministic offline demo.
+- [x] Document local setup, Pi installation, `/login openai-codex oauth`, Codex subscription use, model selection, and the boundary that live OAuth is not exercised in CI/offline tests.
+- [x] Run `npm run check`, `npm run mvp:demo`, and a clean-copy verification.
+- [x] Commit.
 
 ### Task 7: Final verification and handoff
 
 **Files:**
 - Modify: `docs/VERIFICATION.md`
 
-- [ ] Record exact Node version, commands, test count, offline Pi boundary, and known limitations.
-- [ ] Run `npm run check` fresh.
-- [ ] Run `npm run mvp:demo` fresh.
-- [ ] Clone/export a clean artifact and re-run build/tests/demo there using installed local dev dependencies.
-- [ ] Inspect `git diff`, `git status`, and recent commits.
-- [ ] Produce updated ZIP and Git bundle.
+- [x] Record exact Node version, commands, test count, offline Pi boundary, and known limitations.
+- [x] Run `npm run check` fresh.
+- [x] Run `npm run mvp:demo` fresh.
+- [x] Clone/export a clean artifact and re-run build/tests/demo there using installed local dev dependencies.
+- [x] Inspect `git diff`, `git status`, and recent commits.
+- [x] Produce updated ZIP and Git bundle.
 

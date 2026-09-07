@@ -3,8 +3,9 @@
 **A small, journal-backed operator kernel for work that survives conversations.**
 
 Personal dogfooding first. A shared architectural foundation for later solo-business
-workflows. Working project name; **offline foundation preview, not a live assistant**.
+workflows. Working project name. The repository now includes a **locally runnable agent MVP**; real communication channels and autonomous external effects remain out of scope.
 
+[Local MVP guide](docs/local-mvp.md) · [中文 MVP 说明](docs/local-mvp.zh-CN.md) ·
 [Architecture overview](docs/architecture.md) ·
 [Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) ·
 [中文架构导读](docs/architecture.zh-CN.md) ·
@@ -13,44 +14,50 @@ workflows. Working project name; **offline foundation preview, not a live assist
 > Documentation is English-first. Chinese companion documents are supplementary;
 > when wording differs, the English specification is authoritative.
 
-## Run the offline example
+## Run it locally
 
-Node.js **22.16 or newer** is required. The verified environment is documented in
-`docs/VERIFICATION.md`; Node 22's built-in SQLite API emits an experimental warning.
+For the deterministic no-network smoke path:
 
 ```bash
 npm ci
-npm run check
-npm run demo
+npm run agent -- --offline
 ```
 
-No API keys, email account, phone number, model subscription, containers or external
-service are needed. The example uses a temporary database and a fake provider,
-prints its result, then removes only its own temporary directory. It sends no real
-messages and does not expose a web server.
+For the restart/cross-thread persistence scenario:
 
-The example demonstrates a synthetic refund case across IM/email/web threads,
-owner approval, a provider-accepted action that does not close the case, suppression
-of normal redispatch, recovery of an interrupted action as `unknown`, a persisted
-follow-up timer, and a bounded context that retains its original history.
+```bash
+npm run mvp:demo
+```
+
+For real models, the optional Pi adapter exposes Pi's multi-provider catalog while keeping provider state outside the agent kernel. Current Pi releases require Node.js **22.19+**:
+
+```bash
+npm install --no-save @earendil-works/pi-ai
+npm run agent
+```
+
+To use an eligible ChatGPT/Codex subscription through Pi's provider-owned OAuth flow:
+
+```text
+/login openai-codex oauth
+/model
+/model openai-codex <model-id>
+```
+
+See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, security boundaries, and current limitations.
 
 ## What exists in this revision
 
 | Implemented | Not implemented |
 | --- | --- |
-| Typed domain events, pure reducer, append-only SQL journal | Production LLM agent loop or model adapter |
-| Atomic journal/projection transactions and historical state reads | Automatic natural-language fact extraction |
-| Durable input queue and account-scoped deduplication | Webhook authentication and live inbox polling |
-| WorkItems linked across persistent threads | WeChat, WhatsApp, phone, SMS or email transport |
-| Content-bound, expiring owner approvals | Public approval UI, identity provider or team RBAC |
-| Explicit action outcomes and unknown-outcome quarantine | Provider-specific reconciliation or exactly-once delivery |
-| Persisted timers and stale-work checks | Supervised 24/7 daemon and real-time voice |
-| Source-linked summaries and bounded owner-only context | LLM summarization, vector search or hierarchical compaction |
-| Validity-aware facts and explicit conflicts | Encrypted artifacts, erasure and backup automation |
-| Offline test suite and example | Production security review or hosted multitenancy |
-
-The `Planner`, `ChannelAdapter` and `EffectDriver` interfaces are extension seams,
-not claims that their production integrations already exist.
+| Append-only Journal, rebuildable state, historical reads | Automatic long-history consolidation / semantic retrieval |
+| Durable owner + assistant messages across process restarts | Email, WhatsApp, WeChat, SMS or phone channels |
+| WorkItems/Facts shared across explicitly linked threads | Browser automation or model-generated real-world effects |
+| Provider-neutral model contract and model registry | Background supervised 24/7 daemon |
+| Optional Pi multi-provider adapter and file credential store | Live Pi/Codex smoke test in the offline build container |
+| Provider-owned OAuth login flow in the REPL | Hosted multi-user deployment |
+| Strict model proposal validation and provenance rebinding | Encrypted raw message artifacts |
+| Local inspection commands for state/history/context | Production security review |
 
 ## Mental model
 
@@ -80,14 +87,16 @@ not proof the email was never sent. M0 represents these distinctions explicitly.
 src/
   kernel/       domain types, reducer, deterministic policy
   storage/      SQLite transactions, journal, artifacts, inbox, summaries
-  runtime/      validated work, action and timer operations
+  runtime/      validated work, action, timer and AgentService operations
   memory/       audience-scoped, budgeted context assembly
-  ports.ts      model/channel/effect extension contracts
+  model/        provider-neutral contracts, registry, optional Pi adapter
+  cli/          local REPL, app wiring and cancellable terminal input
+  ports.ts      channel/effect extension contracts
   index.ts      local library entry point
-  demo.ts       executable offline scenario
+  mvp-demo.ts   restart/cross-thread MVP scenario
 ```
 
-One package, not a forest of empty packages. No runtime npm dependencies. No event
+One package, not a forest of empty packages. The verified core has no required runtime npm dependencies; Pi is intentionally optional. No event
 broker, distributed workflow engine, graph database or multi-agent orchestration.
 
 ## Safety boundary

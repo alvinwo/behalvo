@@ -50,7 +50,7 @@ MVP model output cannot directly emit external commands. External effects remain
 
 Use `@earendil-works/pi-ai`, not the deprecated `@mariozechner/pi-ai` package. The Pi integration is isolated behind `PiModelGateway` and loaded dynamically. The repository must still build and run offline tests when Pi is not installed.
 
-The local setup guide documents that current Pi releases support OpenAI Codex OAuth backed by a ChatGPT subscription. Authentication is performed by Pi's own CLI/provider auth flow and stored outside the journal. Credentials must never be copied into agent state, prompts, Journal records, or artifacts.
+The local setup guide documents that current Pi releases support OpenAI Codex OAuth backed by a ChatGPT subscription. Authentication is performed by Pi's provider-owned auth flow exposed through the local `/login` command and stored in a separate Pi-compatible credential file outside the journal. Credentials must never be copied into agent state, prompts, Journal records, or artifacts.
 
 Because this execution environment has no outbound npm/network access, the live Pi/OAuth path is an integration boundary: it is contract-tested with an injected fake Pi runtime here, while the release checklist includes a user-machine smoke test with a real Pi install and Codex login.
 
@@ -95,6 +95,7 @@ MVP slash commands:
 
 - `/help`
 - `/model` and `/model <provider> <model>`
+- `/login <provider> <oauth|api_key>`
 - `/new` and `/new <thread-id>`
 - `/work`
 - `/state`
@@ -102,7 +103,7 @@ MVP slash commands:
 - `/context`
 - `/quit`
 
-The database defaults to `./data/agent.db`. Workspace/owner IDs default to `personal` and `owner` and are configurable by environment variables.
+The database defaults to `./data/agent.db`; Pi credentials default to `./data/pi-auth.json`. Workspace/owner IDs default to `personal` and `owner` and are configurable by environment variables.
 
 ## Acceptance boundaries
 
