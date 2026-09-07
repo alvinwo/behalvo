@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+test('offline demo proves cross-thread state, raw retention and restart without real sends', () => {
+    const entry = new URL('../dist/demo.js', import.meta.url);
+    assert.ok(existsSync(entry), 'The offline demo is not implemented yet.');
+    const result = JSON.parse(execFileSync(process.execPath, [entry.pathname], { encoding: 'utf8' }));
+    assert.equal(result.mode, 'offline-fake-provider');
+    assert.equal(result.realMessagesSent, 0);
+    assert.equal(result.fakeProviderCalls, 1);
+    assert.equal(result.crossThreadWorkId, 'refund-demo');
+    assert.equal(result.workStatus, 'open');
+    assert.equal(result.recoveredUnknownActions, 1);
+    assert.equal(result.dueTimersFired, 1);
+    assert.equal(result.secondPollFired, 0);
+    assert.equal(result.rawHistoryRetained, true);
+    assert.ok(result.rawMessagesOmittedFromContext > 0);
+    assert.equal(result.replayMatches, true);
+});

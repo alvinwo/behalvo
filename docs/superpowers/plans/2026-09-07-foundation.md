@@ -26,11 +26,11 @@ Files: `src/kernel/types.ts`, `src/kernel/reducer.ts`, `src/storage/sqlite-store
 Interfaces: `SqliteStore(path)`, `createWorkspace(id, owner)`, `state(id)`,
 `append(id, expectedVersion, events, metadata)`, `journal(id)`, `rebuild(id)`, `close()`.
 
-- [ ] Write behavior tests first, including atomic rejection of an invalid batch.
-- [ ] Run `node --test tests/foundation.test.mjs`; missing implementation must fail assertions.
-- [ ] Implement the typed reducer and SQLite transaction boundary.
-- [ ] Run `npm test`; journal, isolation and rollback tests must pass.
-- [ ] Commit the storage foundation.
+- [x] Write behavior tests first, including atomic rejection of an invalid batch.
+- [x] Run `node --test tests/foundation.test.mjs`; missing implementation must fail assertions.
+- [x] Implement the typed reducer and SQLite transaction boundary.
+- [x] Run `npm test`; journal, isolation and rollback tests must pass.
+- [x] Commit the storage foundation.
 
 Example contract:
 ```js
@@ -49,13 +49,13 @@ Files: `src/kernel/policy.ts`, `src/runtime/operator.ts`, `src/ports.ts`, `tests
 Interfaces: `Operator(store, clock)`, `createWork`, `propose`, `approve`,
 `runEffect`, `recoverInterrupted`, `reconcile`, `schedule`, `fireDue`.
 
-- [ ] Write tests for unauthorized, expired and stale approval, duplicate operation,
+- [x] Write tests for unauthorized, expired and stale approval, duplicate operation,
   uncertain outcome, restart recovery, and provider-accepted versus work-completed.
-- [ ] Run the tests red before implementing these APIs.
-- [ ] Persist approval and started/result transitions, retain stable operation keys,
+- [x] Run the tests red before implementing these APIs.
+- [x] Persist approval and started/result transitions, retain stable operation keys,
   and make timer firing/inbox insertion one transaction.
-- [ ] Run `npm test`; a driver must not be invoked twice by redispatch.
-- [ ] Commit runtime lifecycle.
+- [x] Run `npm test`; a driver must not be invoked twice by redispatch.
+- [x] Commit runtime lifecycle.
 
 Example contract:
 ```js
@@ -72,12 +72,12 @@ Files: `src/memory/context.ts`, `tests/memory.test.mjs`.
 Interfaces: `buildContext(store, request)`, `SqliteStore.saveSummary`,
 `readArtifact`, `threadMessages`; `resolveFact` in the kernel.
 
-- [ ] Write tests for raw retention, scope filtering, invalid source references,
+- [x] Write tests for raw retention, scope filtering, invalid source references,
   thread switching, pinned-block budget overflow, and fact validity/conflicts.
-- [ ] Run these tests red.
-- [ ] Implement bounded owner-only context and source-linked summary storage.
-- [ ] Run `npm test`; verify context omission never deletes archive records.
-- [ ] Commit memory foundation.
+- [x] Run these tests red.
+- [x] Implement bounded owner-only context and source-linked summary storage.
+- [x] Run `npm test`; verify context omission never deletes archive records.
+- [x] Commit memory foundation.
 
 Example contract:
 ```js

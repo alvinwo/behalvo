@@ -1,0 +1,20 @@
+name: Bug report
+description: Report a reproducible kernel or adapter failure.
+body:
+  - type: markdown
+    attributes:
+      value: Do not include real messages, credentials, customer data or account identifiers.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic reproduction
+      description: Steps, expected behavior and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and failing test
+      description: Node version, OS, revision and sanitized test output.
+    validations:
+      required: true
