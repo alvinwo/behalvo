@@ -6,3 +6,5 @@ export { commandDigest, PINNED_POLICY } from './kernel/policy.js';
 export type * from './kernel/types.js';
 export type * from './ports.js';
 export type * from './memory/context.js';
+export { parseAgentTurn } from './model/validation.js';
+export type * from './model/types.js';
