@@ -40,7 +40,7 @@ Shared kernel is an engineering hypothesis; product-market fit must be tested.
 
 This is a **proposed board configuration**, not a created remote board.
 
-Board: `Personal Operator`. Status: Backlog / Ready / In progress / Review / Done.
+Board: `Behalvo`. Status: Backlog / Ready / In progress / Review / Done.
 Fields: Milestone (M0–M3), Area (Kernel / Memory / Integration / Security / Product),
 Risk (Low / Medium / High). Import the eight local issue drafts as individual
 issues and attach their dependencies. Keep M1 focused on one personal workflow.

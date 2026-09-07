@@ -7,7 +7,7 @@ import { api } from './helpers.mjs';
 
 test('PiCredentialFileStore reads Pi auth.json and persists serialized refresh updates', async () => {
   const { PiCredentialFileStore } = await api();
-  const dir = await mkdtemp(join(tmpdir(), 'personal-operator-auth-'));
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-auth-'));
   const path = join(dir, 'auth.json');
   const store = new PiCredentialFileStore(path);
 
@@ -40,7 +40,7 @@ test('PiCredentialFileStore reads Pi auth.json and persists serialized refresh u
 
 test('PiCredentialFileStore delete removes only one provider and malformed auth fails closed', async () => {
   const { PiCredentialFileStore } = await api();
-  const dir = await mkdtemp(join(tmpdir(), 'personal-operator-auth-'));
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-auth-'));
   const path = join(dir, 'auth.json');
   const store = new PiCredentialFileStore(path);
 

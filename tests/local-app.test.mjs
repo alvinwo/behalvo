@@ -7,7 +7,7 @@ import { api } from './helpers.mjs';
 
 test('openLocalAgent creates the personal workspace once and reopens the same durable state', async t => {
   const { FakeModelGateway, openLocalAgent } = await api();
-  const dir = await mkdtemp(join(tmpdir(), 'personal-operator-app-'));
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-app-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const dbPath = join(dir, 'agent.db');
   const gateway = new FakeModelGateway([{ provider: 'fake', model: 'one' }], () => ({ text: '{"reply":"ok","workProposals":[],"factProposals":[]}' }));

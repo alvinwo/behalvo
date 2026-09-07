@@ -18,11 +18,11 @@ function runMain(args, input) {
 }
 
 test('CLI main boots from an empty database in offline mode and accepts scripted input', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'personal-operator-main-'));
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-main-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const result = await runMain(['--offline', '--db', join(dir, 'agent.db')], '/model\n/quit\n');
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /Personal Operator/);
+  assert.match(result.stdout, /Behalvo/);
   assert.match(result.stdout, /offline\/deterministic/);
   assert.doesNotMatch(result.stderr, /Error:/);
 });

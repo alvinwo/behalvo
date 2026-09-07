@@ -1,7 +1,7 @@
 {
-  "name": "personal-operator",
-  "version": "0.2.0",
-  "description": "Journal-backed operator kernel for personal and solo-business workflows. Local agent MVP.",
+  "name": "behalvo",
+  "version": "0.2.1",
+  "description": "Behalvo: a journal-backed agent runtime that acts on your behalf across life and work. Local MVP.",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",

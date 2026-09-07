@@ -54,7 +54,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   let threadId = options.initialThreadId ?? `local-${randomUUID()}`;
   let workId: string | undefined;
 
-  io.write(`Personal Operator — workspace ${workspaceId} — thread ${threadId}`);
+  io.write(`Behalvo — workspace ${workspaceId} — thread ${threadId}`);
   io.write('Use /help for commands.');
 
   for (;;) {

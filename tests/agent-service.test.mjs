@@ -28,6 +28,7 @@ test('AgentService persists owner/model turns and recovers work and facts after 
   let service = new f.AgentService(f.store, gateway, () => f.clock.value);
   const first = await service.runOwnerTurn({ workspaceId: 'personal', ownerId: 'owner', threadId: 'im', externalId: 'u1', text: 'I leave for Maui on September 12.', model });
   assert.equal(first.turn.reply, 'I will track your Maui preparation.');
+  assert.match(gateway.requests[0].system, /reasoning component of Behalvo/);
   assert.equal(f.store.state('personal').works.maui.phase, 'open');
   assert.equal(f.store.state('personal').facts.departure.value, '2026-09-12');
   assert.equal(f.store.inbox('personal').length, 0);

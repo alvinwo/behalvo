@@ -7,7 +7,7 @@ import { api } from './helpers.mjs';
 
 test('MVP demo proves restart plus a new thread uses durable work while raw history remains available', async t => {
   const { runMvpDemo } = await api();
-  const dir = await mkdtemp(join(tmpdir(), 'personal-operator-mvp-'));
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-mvp-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const result = await runMvpDemo(join(dir, 'agent.db'));
   assert.equal(result.firstReply, 'I will track your Maui preparation.');

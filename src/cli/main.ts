@@ -33,13 +33,13 @@ function parseModel(value: string | undefined): { provider: string; model: strin
 }
 
 export function parseCliArgs(argv: string[]): CliArgs {
-  const model = parseModel(valueAfter(argv, '--model') ?? process.env.OPERATOR_MODEL);
+  const model = parseModel(valueAfter(argv, '--model') ?? process.env.BEHALVO_MODEL ?? process.env.OPERATOR_MODEL);
   return {
     offline: argv.includes('--offline'),
-    dbPath: resolve(valueAfter(argv, '--db') ?? process.env.OPERATOR_DB ?? 'data/agent.db'),
-    authPath: resolve(valueAfter(argv, '--auth') ?? process.env.OPERATOR_PI_AUTH ?? 'data/pi-auth.json'),
-    workspaceId: valueAfter(argv, '--workspace') ?? process.env.OPERATOR_WORKSPACE ?? 'personal',
-    ownerId: valueAfter(argv, '--owner') ?? process.env.OPERATOR_OWNER ?? 'owner',
+    dbPath: resolve(valueAfter(argv, '--db') ?? process.env.BEHALVO_DB ?? process.env.OPERATOR_DB ?? 'data/agent.db'),
+    authPath: resolve(valueAfter(argv, '--auth') ?? process.env.BEHALVO_PI_AUTH ?? process.env.OPERATOR_PI_AUTH ?? 'data/pi-auth.json'),
+    workspaceId: valueAfter(argv, '--workspace') ?? process.env.BEHALVO_WORKSPACE ?? process.env.OPERATOR_WORKSPACE ?? 'personal',
+    ownerId: valueAfter(argv, '--owner') ?? process.env.BEHALVO_OWNER ?? process.env.OPERATOR_OWNER ?? 'owner',
     ...(model ? { model } : {})
   };
 }

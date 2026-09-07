@@ -7,7 +7,7 @@ import { parseAgentTurn } from '../model/validation.js';
 import { Operator } from './operator.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 
-const AGENT_SYSTEM = `You are the reasoning component of Personal Operator.
+const AGENT_SYSTEM = `You are the reasoning component of Behalvo.
 The application's journal and projected state are authoritative. Never claim you executed an external action.
 Return exactly one JSON object with only these fields:
 {"reply": string, "workProposals": [{"id": string, "title": string, "goal": string}], "factProposals": [{"id": string, "subject": string, "predicate": string, "value": string, "validFrom": UTC_ISO_STRING, "validTo"?: UTC_ISO_STRING|null, "supersedes"?: string}]}

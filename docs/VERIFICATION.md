@@ -1,3 +1,6 @@
+> **Latest verification:** [Behalvo v0.2.1 naming patch](verification/2026-09-07-behalvo-rename.md): 68 tests passed, with backward-compatible configuration and cross-version database readback.
+> The report below is retained as the historical v0.2.0 verification record.
+
 # Verification report — local agent MVP
 
 Date: 2026-09-07.

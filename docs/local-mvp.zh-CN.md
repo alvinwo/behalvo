@@ -2,7 +2,7 @@
 
 > 英文文档 [`local-mvp.md`](local-mvp.md) 是主文档；如有差异，以英文为准。
 
-这一版已经可以在本地启动一个持久化 Agent REPL。它把 Pi 只当作模型/provider transport；Journal、State、WorkItem、Fact、Thread 和 Context 都由 Personal Operator 自己维护。
+这一版已经可以在本地启动一个持久化 Agent REPL。它把 Pi 只当作模型/provider transport；Journal、State、WorkItem、Fact、Thread 和 Context 都由 Behalvo 自己维护。
 
 ## 先跑离线版
 
@@ -29,6 +29,10 @@ npm run agent -- --offline
 ```bash
 npm run mvp:demo
 ```
+
+## 更名兼容性
+
+项目品牌改为 Behalvo。推荐使用 `BEHALVO_*` 环境变量；原有 `OPERATOR_*` 名称仍可用。优先级是命令行参数、新变量、旧变量、原默认值。数据库路径、workspace/owner ID、Journal 和凭证格式不变；已有数据无需迁移。
 
 ## 使用 Codex 订阅
 

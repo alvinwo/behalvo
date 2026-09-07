@@ -80,7 +80,7 @@ export async function runMvpDemo(dbPath: string): Promise<MvpDemoResult> {
 }
 
 async function main(): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), 'personal-operator-mvp-demo-'));
+  const dir = mkdtempSync(join(tmpdir(), 'behalvo-mvp-demo-'));
   try {
     const result = await runMvpDemo(join(dir, 'agent.db'));
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

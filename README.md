@@ -1,15 +1,17 @@
-# Personal Operator
+# Behalvo
 
-**A small, journal-backed operator kernel for work that survives conversations.**
+**An agent that acts on your behalf.**
+
+A small, journal-backed agent runtime for work that survives conversations.
 
 Personal dogfooding first. A shared architectural foundation for later solo-business
-workflows. Working project name. The repository now includes a **locally runnable agent MVP**; real communication channels and autonomous external effects remain out of scope.
+workflows. The project/runtime is **Behalvo**; an individual agent may have its own name, such as Jarvis or Friday. The repository now includes a **locally runnable agent MVP**; real communication channels and autonomous external effects remain out of scope.
 
 [Local MVP guide](docs/local-mvp.md) · [中文 MVP 说明](docs/local-mvp.zh-CN.md) ·
 [Architecture overview](docs/architecture.md) ·
 [Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) ·
 [中文架构导读](docs/architecture.zh-CN.md) ·
-[Roadmap](docs/ROADMAP.md) · [Verification](docs/VERIFICATION.md)
+[Brand](docs/BRAND.md) · [Roadmap](docs/ROADMAP.md) · [Verification](docs/VERIFICATION.md)
 
 > Documentation is English-first. Chinese companion documents are supplementary;
 > when wording differs, the English specification is authoritative.
@@ -113,7 +115,7 @@ not an administrator rewriting the file. See the spec for the full threat model.
 
 ## Repository / licensing status
 
-This MVP is developed locally on `feat/mvp-local-agent`. A GitHub repository,
+This renamed MVP is developed locally on `chore/behalvo-brand`, based on `feat/mvp-local-agent`. A GitHub repository,
 Projects board, issue list, pull request and public release have **not** been
 created by these files. The issue drafts under `docs/issues/` are a local backlog.
 

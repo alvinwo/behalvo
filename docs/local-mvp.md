@@ -1,6 +1,6 @@
 # Local Agent MVP
 
-This is the first dogfoodable version of Personal Operator. It is intentionally small: a local terminal agent with durable memory/state, multiple model providers through an optional Pi adapter, and inspection commands for seeing what the agent believes and why.
+This is the first dogfoodable version of Behalvo. It is intentionally small: a local terminal agent with durable memory/state, multiple model providers through an optional Pi adapter, and inspection commands for seeing what the agent believes and why.
 
 The model is **not** the state store. Every durable message, WorkItem, and Fact is written through the trusted application runtime and survives process restarts independently of provider sessions.
 
@@ -42,7 +42,7 @@ The demo creates a WorkItem and Fact, closes SQLite, reopens it in a fresh app i
 
 ## Use real models through Pi
 
-Personal Operator owns the agent runtime. Pi is only the replaceable model/provider transport layer.
+Behalvo owns the agent runtime. Pi is only the replaceable model/provider transport layer.
 
 The core project supports Node.js 22.16+, but current `@earendil-works/pi-ai` releases require **Node.js 22.19+**. Use Node 22.19 or newer when enabling Pi.
 
@@ -85,7 +85,7 @@ Then list the models and select one of the model IDs Pi reports:
 You can also select a model at startup:
 
 ```bash
-OPERATOR_MODEL=openai-codex/<model-id> npm run agent
+BEHALVO_MODEL=openai-codex/<model-id> npm run agent
 ```
 
 A ChatGPT/Codex subscription is not a generic OpenAI Platform API key. This path intentionally uses Pi's provider-owned Codex OAuth flow rather than pretending the subscription is an API credential.
@@ -94,7 +94,7 @@ A ChatGPT/Codex subscription is not a generic OpenAI Platform API key. This path
 
 Because the gateway uses Pi's current built-in model collection, the same model boundary can expose other providers supported by Pi. Authentication method depends on the provider: OAuth, stored API key, or ambient environment credentials. Use `/model` to inspect the catalog and `/login <provider> <oauth|api_key>` for providers that expose an interactive login method.
 
-The Personal Operator kernel does not contain provider-specific memory or provider-specific domain state.
+The Behalvo kernel does not contain provider-specific memory or provider-specific domain state.
 
 ## Local files
 
@@ -108,18 +108,20 @@ data/pi-auth.json   Pi provider credentials only
 Override them with:
 
 ```bash
-OPERATOR_DB=/path/agent.db \
-OPERATOR_PI_AUTH=/path/pi-auth.json \
+BEHALVO_DB=/path/agent.db \
+BEHALVO_PI_AUTH=/path/pi-auth.json \
 npm run agent
 ```
 
 Workspace and owner IDs are also configurable:
 
 ```bash
-OPERATOR_WORKSPACE=personal OPERATOR_OWNER=owner npm run agent
+BEHALVO_WORKSPACE=personal BEHALVO_OWNER=owner npm run agent
 ```
 
-Do not run two Personal Operator processes against the same Pi auth file in this MVP. Credential refresh is serialized and atomically written within one process; cross-process file locking is not implemented yet.
+The previous `OPERATOR_DB`, `OPERATOR_PI_AUTH`, `OPERATOR_WORKSPACE`, `OPERATOR_OWNER`, and `OPERATOR_MODEL` names remain supported. Selection order is: explicit CLI flag, matching `BEHALVO_*` variable, matching `OPERATOR_*` variable, then the existing default. Database paths, workspace/owner IDs, stored history and credential formats are unchanged; no data migration is needed. The existing exported `Operator` class also keeps its name for source compatibility.
+
+Do not run two Behalvo processes against the same Pi auth file in this MVP. Credential refresh is serialized and atomically written within one process; cross-process file locking is not implemented yet.
 
 ## Memory behavior in this MVP
 
