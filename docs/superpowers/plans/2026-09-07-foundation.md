@@ -94,12 +94,12 @@ Files: `src/demo.ts`, `README.md`, `docs/architecture.zh-CN.md`, `docs/ROADMAP.m
 `docs/issues/*.md`, `.github/workflows/ci.yml`, `AGENTS.md`, `SECURITY.md`,
 `CONTRIBUTING.md`, `LICENSE-DECISION.md`, `docs/VERIFICATION.md`.
 
-- [ ] Add an integration test that launches the offline demo in a child process.
-- [ ] Run it red; implement demo with synthetic data and restart simulation.
-- [ ] Run `npm ci --offline --cache /root/.npm --ignore-scripts`, `npm run check`,
+- [x] Add an integration test that launches the offline demo in a child process.
+- [x] Run it red; implement demo with synthetic data and restart simulation.
+- [x] Run `npm ci --offline --cache /root/.npm --ignore-scripts`, `npm run check`,
   `npm run demo`, and `git diff --check` in this environment.
-- [ ] Record actual output and known limitations; do not claim unexecuted CI passed.
-- [ ] Commit and create a source archive and Git bundle, excluding dependencies,
+- [x] Record actual output and known limitations; do not claim unexecuted CI passed.
+- [x] Commit and create a source archive and Git bundle, excluding dependencies,
   data, secrets and transient output. Verify both artifacts can be restored.
 
 ## Release boundary
