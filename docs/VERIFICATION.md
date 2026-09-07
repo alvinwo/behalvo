@@ -98,6 +98,24 @@ Live ChatGPT/Codex subscription OAuth is **not** claimed as verified in this off
 - There has been no independent security review, penetration test or hosted multi-tenant review.
 - GitHub remote CI has not run for this branch.
 
-## Release gate still required
+## Clean-copy release gate
 
-Before producing the handoff archive, export the committed branch into a clean directory and repeat `npm run check`, `npm run mvp:demo`, and an offline CLI smoke test there. The final handoff must report those results separately from the worktree results above.
+A clean source tree was exported from committed Git `HEAD` with `git archive`; it did not reuse the worktree's `dist`, database, or generated runtime data. Because the build container has no npm registry access, the clean copy was wired only to the already-installed TypeScript and `@types/node` toolchain copies. No application/runtime dependency was copied from the working tree.
+
+The following were then executed in the clean copy:
+
+```bash
+npm run check
+npm run mvp:demo
+printf '/model\nhello from clean copy\n/history 8\n/quit\n' | npm run agent -- --offline --db <fresh-temp-dir>/agent.db
+```
+
+Results:
+
+- clean-copy strict typecheck/build: **passed**;
+- clean-copy automated tests: **62 passed, 0 failed, 0 skipped**;
+- clean-copy restart demo: **passed** with the same durable-state/raw-history assertions described above;
+- clean-copy CLI subprocess: **passed** from an empty database;
+- the CLI persisted a non-empty SQLite database containing the new Journal records.
+
+This clean-copy gate verifies the offline MVP is reproducible from committed source in the available build environment. It does not change the live Pi/Codex limitation above.
