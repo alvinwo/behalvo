@@ -2,9 +2,13 @@
 
 **Offline prototype. Not ready for sensitive accounts, customer data or public hosting.**
 
-M0 has no remote server, live provider connection, API key store or production
-model. The owner ID checks assume a trusted local caller. They are not a login
-system, signature check or authorization token. External-audience context is denied.
+The offline M0 kernel uses fake providers and has no remote server. The local MVP
+adds an optional Pi adapter that can contact model providers and stores credentials
+separately in `data/pi-auth.json` by default. Live Pi/Codex operation has not yet
+been verified; this credential store is not production secrets protection.
+
+The owner ID checks assume a trusted local caller. They are not a login system,
+signature check or authorization token. External-audience context is denied.
 
 SQLite artifacts are plaintext. The append-only journal triggers protect normal
 application behavior, not an adversary controlling the process or database file.
