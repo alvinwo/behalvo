@@ -8,3 +8,5 @@ export type * from './ports.js';
 export type * from './memory/context.js';
 export { parseAgentTurn } from './model/validation.js';
 export type * from './model/types.js';
+export { AgentService } from './runtime/agent-service.js';
+export type { OwnerTurnInput, AgentTurnResult } from './runtime/agent-service.js';
