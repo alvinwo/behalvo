@@ -86,3 +86,41 @@ test('PiModelGateway default loader fails with actionable optional-dependency gu
   });
   await assert.rejects(() => gateway.listModels(), /@earendil-works\/pi-ai|optional|install/i);
 });
+
+test('createPiRuntimeLoader injects the configured file credential store into builtinModels', async () => {
+  const { createPiRuntimeLoader, PiCredentialFileStore } = await api();
+  let receivedOptions;
+  const runtime = fakePiRuntime();
+  const loader = createPiRuntimeLoader('/tmp/operator-auth.json', async specifier => {
+    assert.equal(specifier, '@earendil-works/pi-ai/providers/all');
+    return {
+      builtinModels(options) {
+        receivedOptions = options;
+        return runtime;
+      }
+    };
+  });
+  assert.equal(await loader(), runtime);
+  assert.ok(receivedOptions.credentials instanceof PiCredentialFileStore);
+  assert.equal(receivedOptions.credentials.path, '/tmp/operator-auth.json');
+});
+
+test('PiModelGateway forwards provider-owned login without putting credentials in model state', async () => {
+  const { PiModelGateway } = await api();
+  const runtime = fakePiRuntime();
+  runtime.login = async (provider, type, interaction) => {
+    assert.equal(provider, 'openai-codex');
+    assert.equal(type, 'oauth');
+    interaction.notify({ type: 'progress', message: 'opening browser' });
+    assert.equal(await interaction.prompt({ type: 'select', message: 'Method', options: [{ id: 'browser', label: 'Browser' }] }), 'browser');
+    return { type: 'oauth', access: 'a', refresh: 'r', expires: 123 };
+  };
+  const gateway = PiModelGateway.fromRuntime(runtime);
+  const events = [];
+  const credential = await gateway.login('openai-codex', 'oauth', {
+    notify: event => events.push(event),
+    prompt: async () => 'browser'
+  });
+  assert.equal(credential.type, 'oauth');
+  assert.deepEqual(events, [{ type: 'progress', message: 'opening browser' }]);
+});

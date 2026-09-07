@@ -1,4 +1,5 @@
 import type { ModelGateway, ModelInfo, ModelRequest, ModelResponse } from './types.js';
+import { PiCredentialFileStore, type PiCredential } from './pi-auth-store.js';
 
 export interface PiModelDescriptor {
   provider: string;
@@ -19,9 +20,27 @@ export interface PiAssistantMessage {
   errorMessage?: string;
 }
 
+export type PiAuthType = 'oauth' | 'api_key';
+
+export type PiAuthPrompt =
+  | { type: 'text' | 'secret' | 'manual_code'; message: string; placeholder?: string; signal?: AbortSignal }
+  | { type: 'select'; message: string; options: readonly { id: string; label: string; description?: string }[]; signal?: AbortSignal };
+
+export type PiAuthEvent =
+  | { type: 'auth_url'; url: string; instructions?: string }
+  | { type: 'device_code'; userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number }
+  | { type: 'progress'; message: string };
+
+export interface PiAuthInteraction {
+  signal?: AbortSignal;
+  prompt(prompt: PiAuthPrompt): Promise<string>;
+  notify(event: PiAuthEvent): void;
+}
+
 export interface PiRuntime {
   getModels(provider?: string): readonly PiModelDescriptor[];
   getModel(provider: string, id: string): PiModelDescriptor | undefined;
+  login?(providerId: string, type: PiAuthType, interaction: PiAuthInteraction): Promise<PiCredential>;
   completeSimple(
     model: PiModelDescriptor,
     context: Readonly<{
@@ -36,24 +55,27 @@ export type PiRuntimeLoader = () => Promise<PiRuntime>;
 
 const PI_PACKAGE = '@earendil-works/pi-ai';
 
-async function defaultPiRuntimeLoader(): Promise<PiRuntime> {
-  try {
-    // Keep pi-ai optional: the core kernel and offline tests do not need it installed.
-    const dynamicImport = new Function('specifier', 'return import(specifier)') as (
-      specifier: string
-    ) => Promise<Record<string, unknown>>;
-    const module = await dynamicImport(`${PI_PACKAGE}/providers/all`);
+type PiModuleImporter = (specifier: string) => Promise<Record<string, unknown>>;
+
+const defaultImporter: PiModuleImporter = new Function('specifier', 'return import(specifier)') as PiModuleImporter;
+
+export function createPiRuntimeLoader(
+  authPath: string,
+  importer: PiModuleImporter = defaultImporter
+): PiRuntimeLoader {
+  return async () => {
+    const module = await importer(`${PI_PACKAGE}/providers/all`);
     const builtinModels = module.builtinModels;
     if (typeof builtinModels !== 'function')
       throw new Error('pi-ai providers/all does not export builtinModels()');
-    return (builtinModels as () => PiRuntime)();
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Pi model support is optional. Install ${PI_PACKAGE} on Node >=22.19 and configure provider credentials before using it. Loader error: ${detail}`,
-      { cause: error }
-    );
-  }
+    return (builtinModels as (options: { credentials: PiCredentialFileStore }) => PiRuntime)({
+      credentials: new PiCredentialFileStore(authPath)
+    });
+  };
+}
+
+async function defaultPiRuntimeLoader(): Promise<PiRuntime> {
+  return createPiRuntimeLoader('data/pi-auth.json')();
 }
 
 function textFrom(message: PiAssistantMessage): string {
@@ -90,6 +112,13 @@ export class PiModelGateway implements ModelGateway {
       }
     }
     return this.#runtime;
+  }
+
+  async login(providerId: string, type: PiAuthType, interaction: PiAuthInteraction): Promise<PiCredential> {
+    const runtime = await this.#getRuntime();
+    if (!runtime.login)
+      throw new Error('Loaded Pi runtime does not support provider login');
+    return runtime.login(providerId, type, interaction);
   }
 
   async listModels(): Promise<readonly ModelInfo[]> {
