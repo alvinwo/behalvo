@@ -1,7 +1,7 @@
 {
   "name": "personal-operator",
-  "version": "0.1.0",
-  "description": "Journal-backed operator kernel for personal and solo-business workflows. Offline foundation preview.",
+  "version": "0.2.0",
+  "description": "Journal-backed operator kernel for personal and solo-business workflows. Local agent MVP.",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",

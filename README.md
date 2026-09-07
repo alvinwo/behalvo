@@ -113,7 +113,7 @@ not an administrator rewriting the file. See the spec for the full threat model.
 
 ## Repository / licensing status
 
-This checkout was initialized locally on `feat/bootstrap`. A GitHub repository,
+This MVP is developed locally on `feat/mvp-local-agent`. A GitHub repository,
 Projects board, issue list, pull request and public release have **not** been
 created by these files. The issue drafts under `docs/issues/` are a local backlog.
 
