@@ -20,3 +20,6 @@ export { runRepl } from './cli/repl.js';
 export type { ReplIo, ReplOptions, ReplResult, ReplAuthenticator } from './cli/repl.js';
 export { openLocalAgent } from './cli/local-app.js';
 export type { LocalAgent, LocalAgentOptions } from './cli/local-app.js';
+export { NodeLineIo } from './cli/node-io.js';
+export { runMvpDemo } from './mvp-demo.js';
+export type { MvpDemoResult } from './mvp-demo.js';

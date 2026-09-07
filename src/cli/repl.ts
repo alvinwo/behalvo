@@ -8,7 +8,7 @@ import type { PiAuthInteraction, PiAuthType } from '../model/pi-gateway.js';
 import type { PiCredential } from '../model/pi-auth-store.js';
 
 export interface ReplIo {
-  readLine(prompt?: string): Promise<string | null>;
+  readLine(prompt?: string, signal?: AbortSignal): Promise<string | null>;
   readSecret?(prompt?: string): Promise<string | null>;
   write(line?: string): void;
 }
@@ -112,7 +112,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
               }
               const answer = prompt.type === 'secret'
                 ? (io.readSecret ? await io.readSecret('> ') : null)
-                : await io.readLine('> ');
+                : await io.readLine('> ', prompt.signal);
               if (answer === null) {
                 if (prompt.type === 'secret' && !io.readSecret)
                   throw new Error('This terminal does not support hidden secret input');

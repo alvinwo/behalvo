@@ -1,11 +1,11 @@
-import { createInterface } from 'node:readline';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { stdin, stdout, stderr } from 'node:process';
 import { FakeModelGateway } from '../model/fake-gateway.js';
 import { PiModelGateway, createPiRuntimeLoader } from '../model/pi-gateway.js';
 import { openLocalAgent } from './local-app.js';
-import { runRepl, type ReplIo } from './repl.js';
+import { runRepl } from './repl.js';
+import { NodeLineIo } from './node-io.js';
 
 interface CliArgs {
   offline: boolean;
@@ -44,18 +44,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
   };
 }
 
-function terminalIo(): ReplIo & { close(): void } {
-  const rl = createInterface({ input: stdin, crlfDelay: Infinity, terminal: Boolean(stdin.isTTY && stdout.isTTY) });
-  const iterator = rl[Symbol.asyncIterator]();
-  return {
-    async readLine(prompt = '') {
-      if (prompt) stdout.write(prompt);
-      const next = await iterator.next();
-      return next.done ? null : next.value;
-    },
-    write(line = '') { stdout.write(`${line}\n`); },
-    close() { rl.close(); }
-  };
+function terminalIo(): NodeLineIo {
+  return new NodeLineIo(stdin, stdout);
 }
 
 async function main(): Promise<void> {
