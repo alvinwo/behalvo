@@ -1,0 +1,22 @@
+{
+  "name": "personal-operator",
+  "version": "0.1.0",
+  "description": "Journal-backed operator kernel for personal and solo-business workflows. Offline foundation preview.",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "demo": "npm run build && node dist/demo.js",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.7",
+    "typescript": "5.8.3"
+  }
+}
