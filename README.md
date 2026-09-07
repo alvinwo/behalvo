@@ -115,10 +115,11 @@ not an administrator rewriting the file. See the spec for the full threat model.
 
 ## Repository / licensing status
 
-This renamed MVP is developed locally on `chore/behalvo-brand`, based on `feat/mvp-local-agent`. A GitHub repository,
-Projects board, issue list, pull request and public release have **not** been
-created by these files. The issue drafts under `docs/issues/` are a local backlog.
+The public source repository is `alvinwo/behalvo`. The issue drafts under
+`docs/issues/` remain a local backlog until they are explicitly published as GitHub
+issues. No public release has been cut yet.
 
 `private: true` and `license: UNLICENSED` are intentional bootstrap settings, not
-an open-source license choice. The owner has chosen an open-source direction but
-has not yet selected release terms. See [LICENSE-DECISION.md](LICENSE-DECISION.md).
+an open-source license choice. Source visibility does **not** grant reuse rights.
+The owner has chosen an open-source direction but has not yet selected release
+terms. See [LICENSE-DECISION.md](LICENSE-DECISION.md).

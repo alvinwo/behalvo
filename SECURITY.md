@@ -22,4 +22,4 @@ loop detection and independent security review are required.
 
 Do not put real messages, tokens, OTPs, financial data, addresses or customer
 records in public issues. A private vulnerability reporting route must be
-configured on the eventual GitHub repository before public distribution.
+configured on the GitHub repository before broader public distribution.

@@ -39,9 +39,9 @@ its local `data/` directory or use an explicit database/auth path.
 
 ## Publication boundaries
 
-Choosing this name is not domain registration, npm publication, repository creation,
-or trademark clearance. No availability or legal clearance is asserted here.
-The intended repository slug is a plan, not evidence of a GitHub repository.
+Choosing this name is not domain registration, npm publication, or trademark
+clearance. The public source repository is `alvinwo/behalvo`; that repository
+existence is not evidence of domain or trademark availability.
 
 The open-source direction remains unchanged, but no public license has been
 selected. `private: true` and `UNLICENSED` remain in package metadata pending
