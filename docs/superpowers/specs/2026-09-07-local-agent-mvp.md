@@ -140,4 +140,3 @@ A scripted REPL test can run `/model`, send a message, inspect `/work` or `/stat
 - external side effects initiated by model output;
 - hosted service deployment;
 - credential storage inside the operator database.
-

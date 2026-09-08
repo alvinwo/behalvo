@@ -143,4 +143,3 @@
 - [x] Clone/export a clean artifact and re-run build/tests/demo there using installed local dev dependencies.
 - [x] Inspect `git diff`, `git status`, and recent commits.
 - [x] Produce updated ZIP and Git bundle.
-
