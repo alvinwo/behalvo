@@ -91,3 +91,15 @@ test('oversized summaries are rejected instead of creating unbounded cache paylo
     const r = f.store.ingest('personal', message('m1'));
     assert.throws(() => f.store.saveSummary('personal', { threadId: 'im', sourceIds: [r.id], text: 'x'.repeat(65537) }), /size|large|limit/i);
 });
+
+test('explicit current input must be an owner message in the requested workspace and thread', async (t) => {
+    const f = await fixture(t);
+    createWork(f);
+    const otherThread = f.store.ingest('personal', message('other-thread', { threadId: 'other' }));
+    const assistant = f.store.ingest('personal', message('assistant', { senderId: 'agent', senderRole: 'agent' }));
+    f.store.createWorkspace('business', 'owner');
+    const foreign = f.store.ingest('business', message('foreign'));
+    const nonMessage = f.store.journal('personal')[0];
+    for (const record of [otherThread, assistant, foreign, nonMessage])
+        assert.throws(() => f.buildContext(f.store, { ...request, currentRecordId: record.id }), /owner|thread|message|record|found/i);
+});

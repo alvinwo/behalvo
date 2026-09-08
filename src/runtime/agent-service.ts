@@ -60,6 +60,9 @@ export class AgentService {
       text: input.text
     });
 
+    if (!this.store.inbox(input.workspaceId).some(record => record.id === ownerRecord.id))
+      throw new Error('Inbox record already handled or not found');
+
     if (input.workId) {
       const state = this.store.state(input.workspaceId);
       const work = state.works[input.workId];
@@ -73,6 +76,7 @@ export class AgentService {
       workspaceId: input.workspaceId,
       ownerId: input.ownerId,
       threadId: input.threadId,
+      currentRecordId: ownerRecord.id,
       ...(input.workId ? { workId: input.workId } : {}),
       windowTokens: input.windowTokens ?? 64000,
       outputReserve: input.outputReserve ?? 8000

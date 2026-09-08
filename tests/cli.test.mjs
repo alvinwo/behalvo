@@ -95,3 +95,56 @@ test('runRepl exposes provider-owned login without recording credentials in the 
   assert.match(io.output.join('\n'), /Login complete.*openai-codex/i);
   assert.doesNotMatch(JSON.stringify(f.store.journal('personal')), /DO-NOT-JOURNAL/);
 });
+
+test('real line I/O keeps login secrets out of chat, journal, and model prompts', async t => {
+  const f = await fixture(t);
+  const { PassThrough } = await import('node:stream');
+  const { NodeLineIo, ModelRegistry, FakeModelGateway, AgentService, runRepl } = f;
+  const input = new PassThrough(), output = new PassThrough();
+  let terminal = ''; output.on('data', chunk => { terminal += chunk; });
+  const io = new NodeLineIo(input, output); t.after(() => io.close());
+  const gateway = new FakeModelGateway([{ provider: 'fake', model: 'one' }], () => ({ text: JSON.stringify({reply:'done',workProposals:[],factProposals:[]}) }));
+  const registry = new ModelRegistry([gateway]); await registry.select('fake', 'one');
+  const authenticator = { async login(provider, type, interaction) {
+    const key = await interaction.prompt({ type: 'secret', message: 'Enter API key' });
+    assert.equal(key, 'SYNTHETIC-KEY');
+    return { type: 'api_key', key };
+  } };
+  input.end('/login fake api_key\nSYNTHETIC-KEY\nintended chat\n/quit\n');
+  await runRepl({store:f.store, registry, service:new AgentService(f.store,registry),authenticator,io,workspaceId:'personal',ownerId:'owner',initialThreadId:'secret-test'});
+  assert.match(terminal, /Login complete/);
+  assert.doesNotMatch(terminal, /SYNTHETIC-KEY/);
+  assert.equal(gateway.requests.length, 1);
+  assert.match(gateway.requests[0].prompt, /intended chat/);
+  assert.doesNotMatch(JSON.stringify(gateway.requests), /SYNTHETIC-KEY/);
+  assert.doesNotMatch(JSON.stringify(f.store.journal('personal')), /SYNTHETIC-KEY/);
+  assert.equal(f.store.messageCount('personal','secret-test'),2);
+  for (const record of f.store.threadMessages('personal', 'secret-test'))
+    assert.doesNotMatch(f.store.readArtifact('personal', record.event.data.artifactId), /SYNTHETIC-KEY/);
+});
+
+test('cancelled partial OAuth input never becomes a durable owner message', async t => {
+  const f = await fixture(t);
+  const { PassThrough } = await import('node:stream');
+  const { NodeLineIo, ModelRegistry, FakeModelGateway, AgentService, runRepl } = f;
+  const input = new PassThrough(), output = new PassThrough();
+  const io = new NodeLineIo(input, output); t.after(() => io.close());
+  const gateway = new FakeModelGateway([{ provider: 'fake', model: 'one' }], () => ({ text: JSON.stringify({reply:'done',workProposals:[],factProposals:[]}) }));
+  const registry = new ModelRegistry([gateway]); await registry.select('fake', 'one');
+  const authenticator = { async login(provider, type, interaction) {
+    const controller = new AbortController();
+    const pending = interaction.prompt({ type: 'manual_code', message: 'Enter code', signal: controller.signal });
+    input.write('SYNTHETIC-OAUTH-CODE');
+    controller.abort(new Error('Browser callback completed'));
+    await assert.rejects(pending, /Browser callback completed/);
+    input.end('SYNTHETIC-SUFFIX\nintended chat\n/quit\n');
+    return { type: 'oauth', access:'synthetic',refresh:'synthetic',expires:999 };
+  } };
+  input.write('/login fake oauth\n');
+  await runRepl({store:f.store, registry, service:new AgentService(f.store,registry),authenticator,io,workspaceId:'personal',ownerId:'owner',initialThreadId:'cancel-test'});
+  assert.equal(gateway.requests.length, 1);
+  assert.match(gateway.requests[0].prompt, /intended chat/);
+  assert.doesNotMatch(JSON.stringify(gateway.requests), /SYNTHETIC/);
+  for (const record of f.store.threadMessages('personal', 'cancel-test'))
+    assert.doesNotMatch(f.store.readArtifact('personal', record.event.data.artifactId), /SYNTHETIC/);
+});

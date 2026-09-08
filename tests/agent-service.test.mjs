@@ -65,3 +65,45 @@ test('invalid model output leaves the durable owner input unhandled and makes no
   assert.equal(Object.keys(f.store.state('personal').works).length, 0);
   assert.equal(Object.keys(f.store.state('personal').facts).length, 0);
 });
+
+test('retry pins the original owner input after newer messages and a restart', async (t) => {
+  const f = await fixture(t);
+  const gateway = new ScriptedGateway(['invalid JSON', JSON.stringify({ reply: 'Recovered.' })]);
+  let service = new f.AgentService(f.store, gateway);
+  const input = { workspaceId: 'personal', ownerId: 'owner', threadId: 'im', externalId: 'original', text: 'Remember the original request.', model };
+  await assert.rejects(() => service.runOwnerTurn(input), /JSON/);
+  for (let i = 0; i < 51; i++)
+    f.store.ingest('personal', { source: 'owner:local', externalId: `newer-${i}`, threadId: 'im', senderId: 'owner', senderRole: 'owner', text: `Later unrelated request ${i}.` });
+  f.restart();
+  service = new f.AgentService(f.store, gateway);
+  const result = await service.runOwnerTurn({ ...input, windowTokens: 1600, outputReserve: 0 });
+  assert.ok(result.context.includedRecordIds.includes(result.ownerRecordId));
+  assert.match(gateway.requests.at(-1).prompt, /CURRENT OWNER INPUT[^\n]*\n[^\n]*Remember the original request/);
+  assert.ok(!f.store.inbox('personal').some(record => record.id === result.ownerRecordId));
+});
+
+test('retry fails closed when the original input cannot fit despite a short newer message', async (t) => {
+  const f = await fixture(t);
+  const gateway = new ScriptedGateway(['invalid JSON', JSON.stringify({ reply: 'Must not run.' })]);
+  const service = new f.AgentService(f.store, gateway);
+  const input = { workspaceId: 'personal', ownerId: 'owner', threadId: 'im', externalId: 'original', text: 'x'.repeat(5000), model };
+  await assert.rejects(() => service.runOwnerTurn(input), /JSON/);
+  const original = f.store.inbox('personal')[0];
+  f.store.ingest('personal', { source: 'owner:local', externalId: 'newer', threadId: 'im', senderId: 'owner', senderRole: 'owner', text: 'A short newer input.' });
+  await assert.rejects(() => service.runOwnerTurn({ ...input, windowTokens: 1600, outputReserve: 0 }), /budget/i);
+  assert.equal(gateway.requests.length, 1);
+  assert.ok(f.store.inbox('personal').some(record => record.id === original.id));
+});
+
+test('completed redelivery is rejected before another model call or work link', async (t) => {
+  const f = await fixture(t);
+  const gateway = new ScriptedGateway([JSON.stringify({ reply: 'Done.' }), JSON.stringify({ reply: 'Duplicate.' })]);
+  const service = new f.AgentService(f.store, gateway);
+  const input = { workspaceId: 'personal', ownerId: 'owner', threadId: 'im', externalId: 'original', text: 'Hello.', model };
+  await service.runOwnerTurn(input);
+  f.operator.createWork('personal', 'owner', { id: 'other', title: 'Other', goal: 'Other work', threadId: 'other-thread' });
+  const before = f.store.state('personal');
+  await assert.rejects(() => service.runOwnerTurn({ ...input, workId: 'other' }), /already handled/i);
+  assert.equal(gateway.requests.length, 1);
+  assert.deepEqual(f.store.state('personal'), before);
+});

@@ -9,7 +9,7 @@ import type { PiCredential } from '../model/pi-auth-store.js';
 
 export interface ReplIo {
   readLine(prompt?: string, signal?: AbortSignal): Promise<string | null>;
-  readSecret?(prompt?: string): Promise<string | null>;
+  readSecret?(prompt?: string, signal?: AbortSignal): Promise<string | null>;
   write(line?: string): void;
 }
 
@@ -110,8 +110,8 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
               } else {
                 io.write(prompt.message);
               }
-              const answer = prompt.type === 'secret'
-                ? (io.readSecret ? await io.readSecret('> ') : null)
+              const answer = prompt.type === 'secret' || prompt.type === 'manual_code'
+                ? (io.readSecret ? await io.readSecret('> ', prompt.signal) : null)
                 : await io.readLine('> ', prompt.signal);
               if (answer === null) {
                 if (prompt.type === 'secret' && !io.readSecret)

@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { stdin, stdout, stderr } from 'node:process';
 import { FakeModelGateway } from '../model/fake-gateway.js';
@@ -93,7 +94,7 @@ async function main(): Promise<void> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(error => {
     stderr.write(`Fatal: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

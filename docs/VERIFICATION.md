@@ -1,4 +1,6 @@
-> **Latest verification:** [Behalvo v0.2.1 naming patch](verification/2026-09-07-behalvo-rename.md): 68 tests passed, with backward-compatible configuration and cross-version database readback.
+> **Current review:** [PR #1 review and fixes](reviews/2026-09-08-pr-1.md): 86 tests passed, with independent runtime, CLI, and security review. Earlier reports below retain their original environment and verification limits.
+
+> **Earlier verification:** [Behalvo v0.2.1 naming patch](verification/2026-09-07-behalvo-rename.md): 68 tests passed, with backward-compatible configuration and cross-version database readback.
 > The report below is retained as the historical v0.2.0 verification record.
 
 # Verification report — local agent MVP

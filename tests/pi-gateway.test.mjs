@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { api } from './helpers.mjs';
 
 function fakePiRuntime() {
@@ -30,6 +33,49 @@ function fakePiRuntime() {
     }
   };
 }
+
+test('concurrent first logins share one runtime and preserve both provider credentials', async (t) => {
+  const { PiModelGateway, createPiRuntimeLoader } = await api();
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-pi-login-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'auth.json');
+  let loads = 0;
+  const gateway = new PiModelGateway(createPiRuntimeLoader(path, async () => {
+    loads++;
+    return { builtinModels({ credentials }) {
+      return {
+        ...fakePiRuntime(),
+        login(provider, type) {
+          return credentials.modify(provider, async () => ({ type, key: `synthetic-${provider}` }));
+        }
+      };
+    } };
+  }));
+  const interaction = { prompt: async () => '', notify() {} };
+  await Promise.all([
+    gateway.login('openai', 'api_key', interaction),
+    gateway.login('anthropic', 'api_key', interaction)
+  ]);
+  assert.equal(loads, 1, 'one gateway must share the credential-store serialization queue');
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  assert.deepEqual(Object.keys(saved).sort(), ['anthropic', 'openai']);
+  assert.equal(saved.openai.key, 'synthetic-openai');
+  assert.equal(saved.anthropic.key, 'synthetic-anthropic');
+});
+
+test('a shared initialization failure is retryable on the next gateway call', async () => {
+  const { PiModelGateway } = await api();
+  let loads = 0;
+  const gateway = new PiModelGateway(async () => {
+    if (++loads === 1) throw new Error('temporary loader failure');
+    return fakePiRuntime();
+  });
+  const results = await Promise.allSettled([gateway.listModels(), gateway.listModels()]);
+  assert.deepEqual(results.map(result => result.status), ['rejected', 'rejected']);
+  assert.equal(loads, 1);
+  assert.equal((await gateway.listModels()).length, 2);
+  assert.equal(loads, 2);
+});
 
 test('PiModelGateway maps the Pi catalog and completion without making Pi session state authoritative', async () => {
   const { PiModelGateway } = await api();

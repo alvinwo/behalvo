@@ -56,7 +56,7 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | Durable owner + assistant messages across process restarts | Email, WhatsApp, WeChat, SMS or phone channels |
 | WorkItems/Facts shared across explicitly linked threads | Browser automation or model-generated real-world effects |
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |
-| Optional Pi multi-provider adapter and file credential store | Live Pi/Codex smoke test in the offline build container |
+| Optional Pi multi-provider adapter and file credential store | Live provider OAuth and model inference verification |
 | Provider-owned OAuth login flow in the REPL | Hosted multi-user deployment |
 | Strict model proposal validation and provenance rebinding | Encrypted raw message artifacts |
 | Local inspection commands for state/history/context | Production security review |

@@ -91,7 +91,7 @@ function textFrom(message: PiAssistantMessage): string {
 }
 
 export class PiModelGateway implements ModelGateway {
-  #runtime: PiRuntime | null = null;
+  #runtime: Promise<PiRuntime> | null = null;
 
   constructor(private readonly loader: PiRuntimeLoader = defaultPiRuntimeLoader) {}
 
@@ -101,15 +101,16 @@ export class PiModelGateway implements ModelGateway {
 
   async #getRuntime(): Promise<PiRuntime> {
     if (!this.#runtime) {
-      try {
-        this.#runtime = await this.loader();
-      } catch (error) {
+      // Share initialization as well as the loaded runtime: each loader owns a
+      // credential store whose serialized writes must not be split across calls.
+      this.#runtime = Promise.resolve().then(() => this.loader()).catch(error => {
+        this.#runtime = null;
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(
           `Pi model support is optional. Install ${PI_PACKAGE} on Node >=22.19 and configure provider credentials before using it. Loader error: ${detail}`,
           { cause: error }
         );
-      }
+      });
     }
     return this.#runtime;
   }

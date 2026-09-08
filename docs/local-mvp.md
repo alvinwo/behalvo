@@ -170,4 +170,6 @@ Those are intentionally outside this MVP so the local state, memory, provider, a
 
 The offline kernel, Pi adapter contract, credential-store behavior, OAuth prompt cancellation, CLI commands, cross-thread state, and restart behavior are covered by automated tests.
 
-The build environment used to produce this revision has no outbound npm/network access and runs Node 22.16, below current Pi's Node 22.19 requirement. Therefore a **live Pi install and live Codex OAuth request could not be executed in that environment**. The Pi adapter is tested against the current published Pi API contract with an injected runtime. A live user-machine Codex login is the remaining environment-dependent smoke test.
+The original offline build could not install Pi. During the PR review on 2026-09-08, Node 24.19.0 successfully loaded the published `@earendil-works/pi-ai@0.85.1`, enumerated 1,354 models including Codex, and persisted synthetic API-key logins with network calls disabled. Concurrent first logins preserved both provider credentials.
+
+Live provider OAuth and model inference have not been exercised. See the [PR review report](reviews/2026-09-08-pr-1.md) for current verification evidence.
