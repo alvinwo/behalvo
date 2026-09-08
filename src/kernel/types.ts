@@ -65,7 +65,7 @@ export interface MessageInput {
     externalId: string;
     threadId: string;
     senderId: string;
-    senderRole: 'owner' | 'external';
+    senderRole: 'owner' | 'external' | 'agent';
     text: string;
 }
 export type DomainEvent = {

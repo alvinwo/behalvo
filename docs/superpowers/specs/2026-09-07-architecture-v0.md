@@ -1,7 +1,7 @@
-# Personal Operator — Architecture v0
+# Behalvo — Architecture v0
 
 Status: architecture direction approved; M0 foundation implementation.
-Date: 2026-09-07. Working name: `personal-operator`.
+Date: 2026-09-07. Project name: **Behalvo** (`behalvo`). Naming-only update; architecture decisions are unchanged.
 
 ## 1. Product boundary
 

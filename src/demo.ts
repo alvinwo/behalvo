@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { SqliteStore, Operator, buildContext } from './index.js';
 import type { EffectDriver } from './ports.js';
 /** Synthetic offline integration demo. It opens no ports and calls no real provider. */
-const directory = mkdtempSync(join(tmpdir(), 'personal-operator-demo-'));
+const directory = mkdtempSync(join(tmpdir(), 'behalvo-demo-'));
 const path = join(directory, 'agent.db');
 let store = new SqliteStore(path);
 let now = '2026-09-07T12:00:00.000Z';

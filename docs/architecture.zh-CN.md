@@ -1,9 +1,9 @@
-# Personal Operator：架构 v0 中文导读
+# Behalvo：架构 v0 中文导读
 
 > **说明：英文是主文档语言。** 本页是辅助导读；若中文表述与英文文档存在差异，以 [`architecture.md`](architecture.md) 和正式英文 Architecture Spec 为准。
 
 这是已经落地为代码和测试的 M0 内核预览，不是已接入个人账号、可以全天运行的成品。
-项目暂名 `personal-operator`。英文架构总览位于 [`architecture.md`](architecture.md)，正式规格位于 [`superpowers/specs/2026-09-07-architecture-v0.md`](superpowers/specs/2026-09-07-architecture-v0.md)。
+项目正式采用 **Behalvo**（`behalvo`）作为品牌名。英文架构总览位于 [`architecture.md`](architecture.md)，正式规格位于 [`superpowers/specs/2026-09-07-architecture-v0.md`](superpowers/specs/2026-09-07-architecture-v0.md)。
 
 ## 1. 这版真正确定了什么
 

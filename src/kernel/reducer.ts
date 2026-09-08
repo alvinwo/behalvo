@@ -23,7 +23,7 @@ export function reduce(previous: State, event: DomainEvent, seq: number): State 
             identifier(d.senderId, 'senderId');
             nonempty(d.source, 'source');
             nonempty(d.externalId, 'externalId');
-            if (!['owner', 'external'].includes(d.senderRole))
+            if (!['owner', 'external', 'agent'].includes(d.senderRole))
                 throw new Error('Invalid sender role');
             break;
         }

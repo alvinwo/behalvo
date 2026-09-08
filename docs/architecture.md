@@ -1,8 +1,8 @@
-# Personal Operator — Architecture v0 Overview
+# Behalvo — Architecture v0 Overview
 
 > **Canonical language:** English. The [Chinese companion](architecture.zh-CN.md) is provided for convenience; when wording differs, the English specification is authoritative.
 
-This document is a concise guide to the M0 kernel that already exists in code and tests. It is not a production assistant connected to personal accounts. The working project name is `personal-operator`. The detailed, normative design is in [`superpowers/specs/2026-09-07-architecture-v0.md`](superpowers/specs/2026-09-07-architecture-v0.md).
+This document is a concise guide to the M0 kernel that already exists in code and tests. It is not a production assistant connected to personal accounts. The project name is **Behalvo** (`behalvo`). The detailed, normative design is in [`superpowers/specs/2026-09-07-architecture-v0.md`](superpowers/specs/2026-09-07-architecture-v0.md).
 
 ## 1. What M0 establishes
 

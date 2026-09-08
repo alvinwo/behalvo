@@ -1,7 +1,7 @@
 {
-  "name": "personal-operator",
-  "version": "0.1.0",
-  "description": "Journal-backed operator kernel for personal and solo-business workflows. Offline foundation preview.",
+  "name": "behalvo",
+  "version": "0.2.1",
+  "description": "Behalvo: a journal-backed agent runtime that acts on your behalf across life and work. Local MVP.",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
@@ -13,7 +13,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
     "demo": "npm run build && node dist/demo.js",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "agent": "npm run build && node dist/cli/main.js",
+    "mvp:demo": "npm run build && node dist/mvp-demo.js"
   },
   "devDependencies": {
     "@types/node": "22.19.7",
