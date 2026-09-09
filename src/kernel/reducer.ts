@@ -1,13 +1,15 @@
 import type { DomainEvent, Fact, State } from './types.js';
 import { identifier, instant, nonempty, required } from './types.js';
+import { isOperationCommand, validateConnection, validateOperationCommand, validateStoredObservation } from '../operations/validation.js';
 export function emptyState(workspaceId: string): State {
-    return { workspaceId, ownerId: '', version: 0, works: {}, actions: {}, timers: {}, facts: {} };
+    return { workspaceId, ownerId: '', version: 0, works: {}, actions: {}, timers: {}, facts: {}, connections: {} };
 }
 /** Pure replay: no clock reads, random IDs, network, authorization reevaluation or LLM. */
 export function reduce(previous: State, event: DomainEvent, seq: number): State {
     if (seq !== previous.version + 1)
         throw new Error('Non-contiguous journal sequence');
     const s = structuredClone(previous);
+    s.connections ??= {};
     switch (event.type) {
         case 'workspace.created': {
             if (s.ownerId)
@@ -30,6 +32,23 @@ export function reduce(previous: State, event: DomainEvent, seq: number): State 
         case 'inbox.handled':
             identifier(event.data.recordId);
             break;
+        case 'connection.registered': {
+            const connection = event.data.connection;
+            validateConnection(connection);
+            const existing = s.connections[connection.id];
+            if (connection.status !== 'active' || connection.generation !== (existing?.generation ?? 0) + 1)
+                throw new Error('Invalid connection generation');
+            s.connections[connection.id] = structuredClone(connection);
+            break;
+        }
+        case 'connection.revoked': {
+            const connection = required(s.connections, event.data.id, 'Connection');
+            if (connection.status !== 'active' || event.data.generation !== connection.generation + 1)
+                throw new Error('Invalid connection revocation');
+            connection.status = 'revoked';
+            connection.generation = event.data.generation;
+            break;
+        }
         case 'work.created': {
             const d = event.data;
             identifier(d.id);
@@ -73,6 +92,8 @@ export function reduce(previous: State, event: DomainEvent, seq: number): State 
             const w = required(s.works, a.workId, 'Work');
             if (a.status !== 'proposed' || a.approval || a.attemptId || a.evidenceRef)
                 throw new Error('Invalid initial action state');
+            if (a.verification) throw new Error('Invalid initial action verification');
+            if (isOperationCommand(a.command)) validateOperationCommand(a.command);
             if (a.workRevision !== w.revision)
                 throw new Error('Stale work revision');
             if (Object.hasOwn(s.actions, a.id) || Object.values(s.actions).some(x => x.key === a.key))
@@ -95,6 +116,25 @@ export function reduce(previous: State, event: DomainEvent, seq: number): State 
             const a = required(s.actions, event.data.id, 'Action');
             if (a.status !== 'approved')
                 throw new Error('Action requires approval');
+            const work = required(s.works, a.workId, 'Work');
+            if (work.revision !== a.workRevision || ['done', 'cancelled'].includes(work.phase))
+                throw new Error('Stale or closed work authorization');
+            if (isOperationCommand(a.command)) {
+                validateOperationCommand(a.command);
+                const command = a.command;
+                const connection = required(s.connections, command.connectionId, 'Connection');
+                if (connection.status !== 'active' || connection.provider !== command.provider || connection.subject !== command.subject ||
+                    connection.generation !== command.connectionGeneration) throw new Error('Operation connection binding changed');
+                const sameScope = Object.values(s.actions).filter(other => {
+                    if (other.id === a.id || !isOperationCommand(other.command)) return false;
+                    return other.command.provider === command.provider && other.command.subject === command.subject;
+                });
+                if (sameScope.some(other => other.status === 'running' || other.status === 'unknown' ||
+                    (other.status === 'accepted' && other.verification?.status !== 'satisfied' && other.verification?.status !== 'owner_attested')))
+                    throw new Error('Operation subject conflict barrier');
+                if (command.subjectRevision !== sameScope.filter(other => Boolean(other.attemptId)).length)
+                    throw new Error('Stale operation subject revision');
+            }
             identifier(event.data.attemptId);
             a.attemptId = event.data.attemptId;
             a.status = 'running';
@@ -114,13 +154,37 @@ export function reduce(previous: State, event: DomainEvent, seq: number): State 
         }
         case 'action.reconciled': {
             const a = required(s.actions, event.data.id, 'Action');
-            if (a.status !== 'unknown')
-                throw new Error('Only unknown actions can be reconciled');
+            const acceptedOperationResolution = isOperationCommand(a.command) && a.status === 'accepted' &&
+                event.data.status === 'accepted' && a.verification?.status !== 'satisfied' && a.verification?.status !== 'owner_attested';
+            if (a.status !== 'unknown' && !acceptedOperationResolution)
+                throw new Error('Only unknown or accepted actions can be reconciled');
             if (!['accepted', 'failed'].includes(event.data.status))
                 throw new Error('Invalid reconciliation');
             nonempty(event.data.evidenceRef, 'evidence');
             a.status = event.data.status;
             a.evidenceRef = event.data.evidenceRef;
+            break;
+        }
+        case 'action.verification_recorded': {
+            const a = required(s.actions, event.data.id, 'Action');
+            if (!isOperationCommand(a.command)) throw new Error('Verification requires an operation action');
+            const verification = event.data.verification;
+            instant(verification.recordedAt);
+            if (a.verification?.status === 'satisfied' || a.verification?.status === 'owner_attested')
+                throw new Error('Operation verification is already settled');
+            if (verification.status === 'owner_attested') {
+                if (!['accepted', 'failed'].includes(verification.resolution)) throw new Error('Invalid owner attestation');
+                nonempty(verification.evidenceRef, 'owner attestation evidence');
+                if (a.status !== verification.resolution) throw new Error('Owner attestation resolution mismatch');
+            } else {
+                if (!['satisfied', 'not_satisfied', 'unknown'].includes(verification.status)) throw new Error('Invalid verification');
+                validateStoredObservation(verification.observation);
+                if (verification.observation.provider !== a.command.provider || verification.observation.subject !== a.command.subject ||
+                    verification.observation.connectionId !== a.command.connectionId || verification.observation.connectionGeneration !== a.command.connectionGeneration ||
+                    verification.observation.resourceId !== a.command.resourceId)
+                    throw new Error('Verification observation scope mismatch');
+            }
+            a.verification = structuredClone(verification);
             break;
         }
         case 'action.cancelled': {

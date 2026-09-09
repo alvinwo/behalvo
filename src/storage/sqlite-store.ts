@@ -61,7 +61,9 @@ export class SqliteStore {
             return undefined;
         if (Number(row.projection_version) !== SCHEMA)
             throw new Error('Unsupported projection version; rebuild required');
-        return JSON.parse(String(row.state_json)) as State;
+        const state = JSON.parse(String(row.state_json)) as State;
+        state.connections ??= {};
+        return state;
     }
     state(workspaceId: string): State {
         identifier(workspaceId, 'workspaceId');

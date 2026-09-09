@@ -3,6 +3,7 @@ import type { SqliteStore } from '../storage/sqlite-store.js';
 import type { Action, Fact, WorkItem, WorkPhase } from '../kernel/types.js';
 import { identifier, instant, nonempty, required } from '../kernel/types.js';
 import { assertOwner, commandDigest, validateCommand } from '../kernel/policy.js';
+import { isOperationCommand } from '../operations/validation.js';
 import type { EffectDriver, EffectOutcome, EffectRequest, Proposal } from '../ports.js';
 /** Trusted application service. Model/adapter code gets ports, not this administrative object. */
 export class Operator {
@@ -139,6 +140,8 @@ export class Operator {
     reconcile(workspaceId: string, ownerId: string, actionId: string, status: 'accepted' | 'failed', evidence: string): void {
         const s = this.store.state(workspaceId);
         assertOwner(s, ownerId);
+        const action = required(s.actions, actionId, 'Action');
+        if (isOperationCommand(action.command)) throw new Error('Operation reconciliation requires OperationService');
         const evidenceRef = this.store.putArtifact(workspaceId, evidence);
         this.store.append(workspaceId, s.version, [{ type: 'action.reconciled', data: { id: actionId, status, evidenceRef } }], { actorId: ownerId, recordedAt: this.clock() });
     }

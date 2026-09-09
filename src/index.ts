@@ -23,3 +23,6 @@ export type { LocalAgent, LocalAgentOptions } from './cli/local-app.js';
 export { NodeLineIo } from './cli/node-io.js';
 export { runMvpDemo } from './mvp-demo.js';
 export type { MvpDemoResult } from './mvp-demo.js';
+export { OperationRegistry } from './operations/registry.js';
+export { OperationService } from './operations/service.js';
+export type * from './operations/types.js';

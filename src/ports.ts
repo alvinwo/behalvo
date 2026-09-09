@@ -1,4 +1,4 @@
-import type { Command, MessageInput, OutcomeStatus } from './kernel/types.js';
+import type { MessageCommand, MessageInput, OutcomeStatus } from './kernel/types.js';
 import type { ContextPacket } from './memory/context.js';
 /** Network adapters authenticate and bind principals BEFORE passing input to the store. */
 export interface ChannelAdapter {
@@ -18,7 +18,7 @@ export interface EffectRequest {
     actionId: string;
     attemptId: string;
     idempotencyKey: string;
-    command: Readonly<Command>;
+    command: Readonly<MessageCommand>;
 }
 export interface EffectOutcome {
     status: OutcomeStatus;
@@ -31,7 +31,7 @@ export interface EffectDriver {
 export interface Proposal {
     workId: string;
     key: string;
-    command: Command;
+    command: MessageCommand;
 }
 /** Proposal-only seam; M0 deliberately has no production model implementation. */
 export interface Planner {
