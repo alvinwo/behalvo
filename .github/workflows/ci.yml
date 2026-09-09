@@ -19,4 +19,5 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: npm run demo
+      - run: npm run operations:demo
       - run: git diff --check

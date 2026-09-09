@@ -19,6 +19,20 @@ is the only shipped driver. Approval binds command contents, work revision and
 expiry; model output cannot turn itself into approval through the supported API.
 Unknown execution outcomes are quarantined rather than automatically retried.
 
+General prepared operations use explicit workspace-scoped connection metadata and
+trusted versioned handlers. A connection's owner ID, provider, subject and label
+are local bindings, not remote authentication or credentials. Handler code must
+enforce its provider identity and resource scope on every callback. The shipped
+contact-update and subscription-cancellation handlers are synthetic and contact no
+real account.
+
+Trusted readback can show that a desired resource state is present, but it does not
+prove which action caused that state, cover every remote account, or complete a
+WorkItem. Without provider-side conditional writes, an external actor can race
+after the local preflight. Real handlers therefore require protected credentials,
+provider-specific authentication, conditional-write and readback design, rate
+limits, and independent review.
+
 Before real use: authenticated owner control, webhook signature verification,
 replay protection, protected secrets, encrypted artifacts, appropriate retention
 and erasure, scoped retrieval, provider readback, rate/budget caps, safe backups,

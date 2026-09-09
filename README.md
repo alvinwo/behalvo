@@ -7,7 +7,7 @@ A small, journal-backed agent runtime for work that survives conversations.
 Personal dogfooding first. A shared architectural foundation for later solo-business
 workflows. The project/runtime is **Behalvo**; an individual agent may have its own name, such as Jarvis or Friday. The repository now includes a **locally runnable agent MVP**; real communication channels and autonomous external effects remain out of scope.
 
-[Local MVP guide](docs/local-mvp.md) · [中文 MVP 说明](docs/local-mvp.zh-CN.md) ·
+[Local MVP guide](docs/local-mvp.md) · [General operations guide](docs/general-operations.md) · [中文 MVP 说明](docs/local-mvp.zh-CN.md) ·
 [Architecture overview](docs/architecture.md) ·
 [Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) ·
 [中文架构导读](docs/architecture.zh-CN.md) ·
@@ -29,6 +29,12 @@ For the restart/cross-thread persistence scenario:
 
 ```bash
 npm run mvp:demo
+```
+
+For the offline prepared-operations scenario:
+
+```bash
+npm run operations:demo
 ```
 
 For real models, the optional Pi adapter exposes Pi's multi-provider catalog while keeping provider state outside the agent kernel. Current Pi releases require Node.js **22.19+**:
@@ -60,6 +66,8 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | Provider-owned OAuth login flow in the REPL | Hosted multi-user deployment |
 | Strict model proposal validation and provenance rebinding | Encrypted raw message artifacts |
 | Local inspection commands for state/history/context | Production security review |
+| Versioned prepared operations with exact connection/resource bindings | Real account handlers, remote authentication or universal account discovery |
+| Synthetic contact-update and subscription-cancellation demo with readback | Production credential protection or provider write verification |
 
 ## Mental model
 
@@ -90,12 +98,14 @@ src/
   kernel/       domain types, reducer, deterministic policy
   storage/      SQLite transactions, journal, artifacts, inbox, summaries
   runtime/      validated work, action, timer and AgentService operations
+  operations/   versioned handler registry, prepared-operation service and synthetic demo handlers
   memory/       audience-scoped, budgeted context assembly
   model/        provider-neutral contracts, registry, optional Pi adapter
   cli/          local REPL, app wiring and cancellable terminal input
   ports.ts      channel/effect extension contracts
   index.ts      local library entry point
   mvp-demo.ts   restart/cross-thread MVP scenario
+  operations-demo.ts  synthetic multi-operation and unknown-readback scenario
 ```
 
 One package, not a forest of empty packages. The verified core has no required runtime npm dependencies; Pi is intentionally optional. No event

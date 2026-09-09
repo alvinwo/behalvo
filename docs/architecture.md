@@ -47,6 +47,21 @@ Approval is bound to the exact command content, workspace, owner, work revision,
 
 This favors safety over aggressive liveness. Idempotency keys suppress ordinary duplicate dispatch, but they do not create exactly-once semantics when the external provider cannot guarantee them.
 
+The runtime also supports versioned general operations through explicit connections
+and trusted handlers. Preparation captures a fresh provider observation and an
+immutable command; an exact owner approval batch authorizes only the listed
+action/digest pairs. Execution rechecks the connection generation, verified remote
+subject, work and subject revisions, approval, observation freshness and handler
+precondition before recording `action.started` and calling the handler.
+
+Mutation attempts are serialized by workspace, provider and verified remote
+subject. Alias connection IDs for the same provider subject share the barrier.
+Running, unknown and accepted-but-unverified attempts block fresh preparation in
+that scope. A satisfied handler readback can settle an unknown attempt without
+resubmission; owner attestation remains separately labeled evidence. See the
+[general operations guide](general-operations.md) for the public API and runnable
+synthetic demonstration.
+
 ## 5. Reactive and proactive work share the same durable path
 
 Inbound messages are persisted before processing. Duplicate deliveries are deduplicated by their scoped external identity, and a collision with different content is rejected rather than silently overwritten.
@@ -90,6 +105,13 @@ Facts carry provenance, validity ranges, and supersession. A future address does
 
 These are narrow TypeScript ports, not a security sandbox. Untrusted code must not be loaded in-process merely because it implements an interface.
 
+`OperationHandler` is another trusted in-process boundary. Each registered
+provider/operation/version owns its connection identity checks, resource semantics,
+argument validation, conditional write behavior and result comparison. The core
+does not contain contact, subscription or banking branches. Provider acceptance,
+satisfied readback, causation, exhaustive account coverage and WorkItem completion
+remain separate claims.
+
 Real Gmail, WhatsApp, WeChat, SMS, voice, and production model adapters are not part of M0.
 
 ## 9. Architectural principles
@@ -119,6 +141,8 @@ Authentication, protected secrets, encrypted/private artifacts, and provider rec
 npm ci
 npm run check
 npm run demo
+npm run operations:demo
 ```
 
-The demo uses synthetic data, a temporary SQLite database, and a fake provider. It sends no real messages and creates no paid resources.
+The demos use synthetic data, temporary SQLite databases, and fake providers. They
+send no real messages, change no real accounts and create no paid resources.

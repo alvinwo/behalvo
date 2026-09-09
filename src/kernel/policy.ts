@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
-import type { Command, State } from './types.js';
+import type { Command, MessageCommand, State } from './types.js';
 import { nonempty } from './types.js';
+import { canonicalJson, isOperationCommand, jsonValue, validateOperationCommand } from '../operations/validation.js';
 export function assertOwner(state: State, ownerId: string): void {
     // Local trusted principal binding only. A future remote adapter must authenticate first.
     if (ownerId !== state.ownerId)
         throw new Error('Denied: authenticated workspace owner required');
 }
-export function validateCommand(command: Command, allowedChannels: readonly string[]): void {
+export function validateCommand(command: Command, allowedChannels: readonly string[]): asserts command is MessageCommand {
     if (!command || command.kind !== 'message.send')
         throw new Error('Denied: unsupported command');
     if (!allowedChannels.includes(command.channel))
@@ -19,6 +20,11 @@ export function validateCommand(command: Command, allowedChannels: readonly stri
         throw new Error('Command exceeds size limit');
 }
 export function commandDigest(workspaceId: string, workId: string, workRevision: number, command: Command): string {
+    if (isOperationCommand(command)) {
+        validateOperationCommand(command);
+        const canonical = JSON.stringify([workspaceId, workId, workRevision, command.kind, canonicalJson(jsonValue(command, 'operation command'))]);
+        return createHash('sha256').update(canonical).digest('hex');
+    }
     const canonical = JSON.stringify([workspaceId, workId, workRevision, command.kind, command.channel, command.to, command.body]);
     return createHash('sha256').update(canonical).digest('hex');
 }

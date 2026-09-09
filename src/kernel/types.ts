@@ -1,13 +1,16 @@
 /** Domain data is transport- and model-independent. No provider session owns it. */
+import type { Connection, OperationCommand, VerificationState } from '../operations/types.js';
+
 export type WorkPhase = 'open' | 'waiting_external' | 'done' | 'cancelled';
 export type ActionStatus = 'proposed' | 'approved' | 'running' | 'accepted' | 'failed' | 'unknown' | 'cancelled';
 export type OutcomeStatus = 'accepted' | 'failed' | 'unknown';
-export interface Command {
+export interface MessageCommand {
     kind: 'message.send';
     channel: string;
     to: string;
     body: string;
 }
+export type Command = MessageCommand | OperationCommand;
 export interface WorkItem {
     id: string;
     title: string;
@@ -33,6 +36,7 @@ export interface Action {
     approval?: Approval;
     attemptId?: string;
     evidenceRef?: string;
+    verification?: VerificationState;
 }
 export interface Timer {
     id: string;
@@ -59,6 +63,7 @@ export interface State {
     actions: Record<string, Action>;
     timers: Record<string, Timer>;
     facts: Record<string, Fact>;
+    connections: Record<string, Connection>;
 }
 export interface MessageInput {
     source: string;
@@ -73,6 +78,12 @@ export type DomainEvent = {
     data: {
         ownerId: string;
     };
+} | {
+    type: 'connection.registered';
+    data: { connection: Connection };
+} | {
+    type: 'connection.revoked';
+    data: { id: string; generation: number };
 } | {
     type: 'message.received';
     data: Omit<MessageInput, 'text'> & {
@@ -136,6 +147,9 @@ export type DomainEvent = {
         status: 'accepted' | 'failed';
         evidenceRef: string;
     };
+} | {
+    type: 'action.verification_recorded';
+    data: { id: string; verification: VerificationState };
 } | {
     type: 'action.cancelled';
     data: {

@@ -15,7 +15,8 @@
     "demo": "npm run build && node dist/demo.js",
     "check": "npm run typecheck && npm test",
     "agent": "npm run build && node dist/cli/main.js",
-    "mvp:demo": "npm run build && node dist/mvp-demo.js"
+    "mvp:demo": "npm run build && node dist/mvp-demo.js",
+    "operations:demo": "npm run build && node dist/operations-demo.js"
   },
   "devDependencies": {
     "@types/node": "22.19.7",
