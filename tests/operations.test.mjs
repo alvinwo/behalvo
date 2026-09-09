@@ -152,6 +152,44 @@ test('retrying an identical preparation key recovers the original action despite
     } finally { f.store.close(); }
 });
 
+test('concurrent identical preparations recover one action despite different observation times', async () => {
+    let milliseconds = Date.parse(NOW);
+    const clock = { get value() { return new Date(milliseconds++).toISOString(); } };
+    const f = setup({ clock });
+    try {
+        registerConnection(f);
+        const [first, second] = await Promise.all([prepare(f), prepare(f)]);
+        assert.equal(second.id, first.id);
+        assert.equal(second.digest, first.digest);
+        assert.equal(f.controls.observeCalls, 2);
+        assert.equal(Object.keys(f.store.state('personal').actions).length, 1);
+    } finally { f.store.close(); }
+});
+
+test('proposal append collisions recover only the identical prepared request', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'behalvo-operation-proposal-race-'));
+    const path = join(dir, 'operations.db');
+    const f = setup({ path });
+    const secondStore = new SqliteStore(path);
+    try {
+        registerConnection(f);
+        const originalAppend = f.store.append.bind(f.store);
+        let injected = false;
+        f.store.append = (workspaceId, expectedVersion, events, metadata) => {
+            if (!injected && events.some(event => event.type === 'action.proposed')) {
+                injected = true;
+                secondStore.append(workspaceId, expectedVersion, events, metadata);
+            }
+            return originalAppend(workspaceId, expectedVersion, events, metadata);
+        };
+        const action = await prepare(f);
+        assert.equal(action.status, 'proposed');
+        assert.equal(Object.keys(f.store.state('personal').actions).length, 1);
+    } finally {
+        secondStore.close(); f.store.close(); rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test('approval, execution and verification use the exact handler and leave WorkItem completion to Operator', async () => {
     const f = setup();
     try {
@@ -163,6 +201,82 @@ test('approval, execution and verification use the exact handler and leave WorkI
         assert.equal(verified.verification.status, 'satisfied');
         assert.equal(f.store.state('personal').works.work.phase, 'open');
         assert.equal(f.controls.executeCalls, 1);
+    } finally { f.store.close(); }
+});
+
+test('known outcomes survive concurrent writes from another SQLite connection without redispatch', async t => {
+    for (const status of ['accepted', 'failed', 'unknown']) {
+        await t.test(status, async () => {
+            const dir = mkdtempSync(join(tmpdir(), `behalvo-operation-outcome-${status}-`));
+            const path = join(dir, 'operations.db');
+            const f = setup({ path });
+            const secondStore = new SqliteStore(path);
+            try {
+                registerConnection(f);
+                const action = await prepare(f); approve(f, action);
+                f.controls.onExecute = async () => ({ status, evidence: `Synthetic ${status} outcome.` });
+                const secondOperator = new Operator(secondStore, () => NOW);
+                let injected = false;
+                const appendConcurrentWork = () => {
+                    if (injected) return;
+                    injected = true;
+                    secondOperator.createWork('personal', 'owner', {
+                        id: `concurrent-${status}`, title: 'Concurrent write',
+                        goal: 'Advance the workspace from another connection', threadId: 'other-thread'
+                    });
+                };
+
+                const originalFinish = f.store.finishActionAttempt?.bind(f.store);
+                f.store.finishActionAttempt = (...args) => {
+                    appendConcurrentWork();
+                    return originalFinish(...args);
+                };
+                let artifactPersisted = false;
+                const originalPutArtifact = f.store.putArtifact.bind(f.store);
+                f.store.putArtifact = (...args) => {
+                    const ref = originalPutArtifact(...args);
+                    artifactPersisted = true;
+                    return ref;
+                };
+                const originalState = f.store.state.bind(f.store);
+                f.store.state = (...args) => {
+                    const state = originalState(...args);
+                    if (artifactPersisted) appendConcurrentWork();
+                    return state;
+                };
+
+                const completed = await f.service.execute({
+                    workspaceId: 'personal', ownerId: 'owner', actionId: action.id
+                });
+                assert.equal(completed.status, status);
+                assert.equal(f.store.readArtifact('personal', completed.evidenceRef), `Synthetic ${status} outcome.`);
+                assert.ok(f.store.state('personal').works[`concurrent-${status}`]);
+                assert.equal((await f.service.execute({
+                    workspaceId: 'personal', ownerId: 'owner', actionId: action.id
+                })).status, status);
+                assert.equal(f.controls.executeCalls, 1);
+            } finally {
+                secondStore.close(); f.store.close(); rmSync(dir, { recursive: true, force: true });
+            }
+        });
+    }
+});
+
+test('finishing a stale attempt preserves a legitimately settled outcome and evidence', async () => {
+    const f = setup();
+    try {
+        registerConnection(f);
+        const action = await prepare(f); approve(f, action);
+        f.controls.onExecute = async () => ({ status: 'failed', evidence: 'Original rejected outcome.' });
+        const completed = await f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id });
+        const before = structuredClone(completed);
+        assert.equal(f.store.finishActionAttempt('personal', action.id, 'stale-attempt', 'unknown',
+            'Stale worker outcome.', { recordedAt: NOW }), false);
+        const after = f.store.state('personal').actions[action.id];
+        assert.equal(after.status, 'failed');
+        assert.equal(after.attemptId, before.attemptId);
+        assert.equal(after.evidenceRef, before.evidenceRef);
+        assert.equal(f.store.readArtifact('personal', after.evidenceRef), 'Original rejected outcome.');
     } finally { f.store.close(); }
 });
 

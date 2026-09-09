@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
 import { emptyState, reduce } from '../kernel/reducer.js';
-import type { DomainEvent, JournalRecord, MessageInput, RecordMetadata, State, Summary } from '../kernel/types.js';
+import type { DomainEvent, JournalRecord, MessageInput, OutcomeStatus, RecordMetadata, State, Summary } from '../kernel/types.js';
 import { identifier, instant, nonempty } from '../kernel/types.js';
 type Row = Record<string, string | number | bigint | Uint8Array | null>;
 const SCHEMA = 1;
@@ -168,6 +168,27 @@ export class SqliteStore {
         if (Buffer.byteLength(body, 'utf8') > 262144)
             throw new Error('Artifact exceeds size limit');
         return this.#artifact(workspaceId, body);
+    }
+    /** Persist an already obtained effect outcome only while its exact attempt is still running. */
+    finishActionAttempt(workspaceId: string, actionId: string, attemptId: string, status: OutcomeStatus,
+        evidence: string, metadata: RecordMetadata = {}): boolean {
+        identifier(actionId, 'actionId');
+        identifier(attemptId, 'attemptId');
+        if (!['accepted', 'failed', 'unknown'].includes(status)) throw new Error('Invalid action outcome');
+        nonempty(evidence, 'artifact body');
+        if (Buffer.byteLength(evidence, 'utf8') > 262144)
+            throw new Error('Artifact exceeds size limit');
+        return this.#transaction(() => {
+            const state = this.state(workspaceId);
+            const action = state.actions[actionId];
+            if (!action) throw new Error('Action not found');
+            if (action.status !== 'running' || action.attemptId !== attemptId) return false;
+            const evidenceRef = this.#artifact(workspaceId, evidence);
+            this.#append(workspaceId, state.version, [{ type: 'action.finished', data: {
+                id: actionId, attemptId, status, evidenceRef
+            } }], metadata);
+            return true;
+        });
     }
     readArtifact(workspaceId: string, id: string): string {
         const row = this.#db.prepare('SELECT body FROM artifacts WHERE workspace_id=? AND id=?').get(workspaceId, id);

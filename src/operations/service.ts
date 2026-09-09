@@ -101,13 +101,23 @@ export class OperationService {
         const digest = commandDigest(input.workspaceId, work.id, work.revision, command);
         const duplicate = Object.values(latest.actions).find(action => action.key === key);
         if (duplicate) {
-            if (!isOperationCommand(duplicate.command) || duplicate.digest !== digest) throw new Error('Operation key collision with different command');
+            if (!isOperationCommand(duplicate.command) || duplicate.command.requestFingerprint !== requestFingerprint)
+                throw new Error('Operation key collision with different request');
             return duplicate as OperationAction;
         }
         const action: OperationAction = { id: randomUUID(), workId: work.id, key, command, digest,
             workRevision: work.revision, status: 'proposed' };
-        this.store.append(input.workspaceId, latest.version, [{ type: 'action.proposed', data: { action } }],
-            { actorId: input.ownerId, recordedAt: this.now() });
+        try {
+            this.store.append(input.workspaceId, latest.version, [{ type: 'action.proposed', data: { action } }],
+                { actorId: input.ownerId, recordedAt: this.now() });
+        } catch (error) {
+            if (!(error instanceof Error) || error.message !== 'Stream version conflict') throw error;
+            const raced = Object.values(this.store.state(input.workspaceId).actions).find(candidate => candidate.key === key);
+            if (!raced) throw error;
+            if (!isOperationCommand(raced.command) || raced.command.requestFingerprint !== requestFingerprint)
+                throw new Error('Operation key collision with different request');
+            return raced as OperationAction;
+        }
         return this.operationAction(this.store.state(input.workspaceId), action.id);
     }
 
@@ -174,11 +184,8 @@ export class OperationService {
             outcome = { status: 'unknown' as const,
                 evidence: 'Provider outcome unavailable or invalid. Readback or owner reconciliation required.' };
         }
-        const evidenceRef = this.store.putArtifact(input.workspaceId, outcome.evidence);
-        const state = this.store.state(input.workspaceId);
-        this.store.append(input.workspaceId, state.version, [{ type: 'action.finished', data: {
-            id: action.id, attemptId, status: outcome.status, evidenceRef
-        } }], { recordedAt: this.now() });
+        this.store.finishActionAttempt(input.workspaceId, action.id, attemptId, outcome.status, outcome.evidence,
+            { recordedAt: this.now() });
         return this.operationAction(this.store.state(input.workspaceId), action.id);
     }
 
