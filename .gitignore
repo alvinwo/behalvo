@@ -4,6 +4,8 @@ coverage/
 .env
 .env.*
 !.env.example
+# Private runtime data, including untrusted evaluation reports.
+data/evaluations/
 data/
 *.db
 *.db-*

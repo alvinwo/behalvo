@@ -1,4 +1,4 @@
-import type { ModelGateway, ModelInfo, ModelRequest, ModelResponse } from './types.js';
+import type { ModelGateway, ModelInfo, ModelRequest, ModelResponse, ModelUsage } from './types.js';
 import { PiCredentialFileStore, type PiCredential } from './pi-auth-store.js';
 
 export interface PiModelDescriptor {
@@ -18,6 +18,14 @@ export interface PiAssistantMessage {
   responseId?: string;
   stopReason?: string;
   errorMessage?: string;
+  usage?: Readonly<{
+    input?: unknown;
+    output?: unknown;
+    cacheRead?: unknown;
+    cacheWrite?: unknown;
+    totalTokens?: unknown;
+    cost?: Readonly<{ total?: unknown }>;
+  }>;
 }
 
 export type PiAuthType = 'oauth' | 'api_key';
@@ -47,7 +55,12 @@ export interface PiRuntime {
       systemPrompt?: string;
       messages: readonly Readonly<{ role: 'user'; content: string; timestamp: number }>[];
     }>,
-    options?: Readonly<{ sessionId?: string }>
+    options?: Readonly<{
+      sessionId?: string;
+      signal?: AbortSignal;
+      maxRetries?: number;
+      maxTokens?: number;
+    }>
   ): Promise<PiAssistantMessage>;
 }
 
@@ -88,6 +101,41 @@ function textFrom(message: PiAssistantMessage): string {
   if (!text)
     throw new Error('Pi provider returned no text content');
   return text;
+}
+
+function nonnegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+function nonnegativeNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function usageFrom(message: PiAssistantMessage): ModelUsage | undefined {
+  if (!message.usage) return undefined;
+  const tokens = {
+    inputTokens: nonnegativeInteger(message.usage.input),
+    outputTokens: nonnegativeInteger(message.usage.output),
+    cacheReadTokens: nonnegativeInteger(message.usage.cacheRead),
+    cacheWriteTokens: nonnegativeInteger(message.usage.cacheWrite),
+    totalTokens: nonnegativeInteger(message.usage.totalTokens)
+  };
+  const estimatedCostUsd = nonnegativeNumber(message.usage.cost?.total);
+  const reported = [...Object.values(tokens), estimatedCostUsd].some(value => value !== null && value > 0);
+  if (!reported) {
+    return {
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
+      totalTokens: null,
+      estimatedCostUsd: null,
+      source: 'pi-sdk'
+    };
+  }
+  return { ...tokens, estimatedCostUsd, source: 'pi-sdk' };
 }
 
 export class PiModelGateway implements ModelGateway {
@@ -138,18 +186,26 @@ export class PiModelGateway implements ModelGateway {
     if (!model)
       throw new Error(`Pi model not found: ${request.model.provider}/${request.model.model}`);
 
+    const options = {
+      ...(request.sessionHint ? { sessionId: request.sessionHint } : {}),
+      ...(request.signal ? { signal: request.signal } : {}),
+      ...(request.maxRetries !== undefined ? { maxRetries: request.maxRetries } : {}),
+      ...(request.maxOutputTokens !== undefined ? { maxTokens: request.maxOutputTokens } : {})
+    };
     const result = await runtime.completeSimple(
       model,
       {
         systemPrompt: request.system,
         messages: [{ role: 'user', content: request.prompt, timestamp: 0 }]
       },
-      request.sessionHint ? { sessionId: request.sessionHint } : undefined
+      Object.keys(options).length ? options : undefined
     );
 
+    const usage = usageFrom(result);
     return {
       text: textFrom(result),
-      ...(result.responseId ? { providerResponseId: result.responseId } : {})
+      ...(result.responseId ? { providerResponseId: result.responseId } : {}),
+      ...(usage ? { usage } : {})
     };
   }
 }

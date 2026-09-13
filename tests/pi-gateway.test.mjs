@@ -105,6 +105,111 @@ test('PiModelGateway maps the Pi catalog and completion without making Pi sessio
   assert.deepEqual(runtime.calls[0].options, { sessionId: 'cache-only-hint' });
 });
 
+test('PiModelGateway forwards optional request controls and normalizes Pi usage', async () => {
+  const { PiModelGateway } = await api();
+  const runtime = fakePiRuntime();
+  runtime.completeSimple = async (model, context, options) => {
+    runtime.calls.push({ model, context, options });
+    return {
+      content: [{ type: 'text', text: 'bounded response' }],
+      stopReason: 'stop',
+      usage: {
+        input: 11,
+        output: 7,
+        cacheRead: 3,
+        cacheWrite: 2,
+        totalTokens: 23,
+        cost: { input: 0.001, output: 0.002, cacheRead: 0.0001, cacheWrite: 0.0002, total: 0.0033 }
+      }
+    };
+  };
+  const gateway = PiModelGateway.fromRuntime(runtime);
+  const controller = new AbortController();
+
+  const response = await gateway.complete({
+    model: { provider: 'openai-codex', model: 'gpt-test' },
+    system: 'SYSTEM',
+    prompt: 'PROMPT',
+    sessionHint: 'cache-only-hint',
+    signal: controller.signal,
+    maxRetries: 0,
+    maxOutputTokens: 2048
+  });
+
+  assert.deepEqual(runtime.calls[0].options, {
+    sessionId: 'cache-only-hint',
+    signal: controller.signal,
+    maxRetries: 0,
+    maxTokens: 2048
+  });
+  assert.deepEqual(response.usage, {
+    inputTokens: 11,
+    outputTokens: 7,
+    cacheReadTokens: 3,
+    cacheWriteTokens: 2,
+    totalTokens: 23,
+    estimatedCostUsd: 0.0033,
+    source: 'pi-sdk'
+  });
+});
+
+test('PiModelGateway keeps missing and invalid Pi usage fields unknown', async () => {
+  const { PiModelGateway } = await api();
+  const runtime = fakePiRuntime();
+  runtime.completeSimple = async () => ({
+    content: [{ type: 'text', text: 'sanitized response' }],
+    stopReason: 'stop',
+    usage: {
+      input: -1,
+      output: 1.5,
+      cacheRead: Number.POSITIVE_INFINITY,
+      totalTokens: 0,
+      cost: { total: Number.NaN }
+    }
+  });
+
+  const response = await PiModelGateway.fromRuntime(runtime).complete({
+    model: { provider: 'openai-codex', model: 'gpt-test' }, system: 's', prompt: 'p'
+  });
+
+  assert.deepEqual(response.usage, {
+    inputTokens: null,
+    outputTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    totalTokens: null,
+    estimatedCostUsd: null,
+    source: 'pi-sdk'
+  });
+});
+
+test('PiModelGateway treats an all-zero SDK usage placeholder as unknown', async () => {
+  const { PiModelGateway } = await api();
+  const runtime = fakePiRuntime();
+  runtime.completeSimple = async () => ({
+    content: [{ type: 'text', text: 'response with unreported usage' }],
+    stopReason: 'stop',
+    usage: {
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+    }
+  });
+
+  const response = await PiModelGateway.fromRuntime(runtime).complete({
+    model: { provider: 'openai-codex', model: 'gpt-test' }, system: 's', prompt: 'p'
+  });
+
+  assert.deepEqual(response.usage, {
+    inputTokens: null,
+    outputTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    totalTokens: null,
+    estimatedCostUsd: null,
+    source: 'pi-sdk'
+  });
+});
+
 test('PiModelGateway rejects unknown models and non-text/error responses', async () => {
   const { PiModelGateway } = await api();
   const runtime = fakePiRuntime();
