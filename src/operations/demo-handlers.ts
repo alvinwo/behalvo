@@ -12,13 +12,13 @@ const PROVIDER = 'synthetic-accounts';
 export const CONTACT_RESOURCE = 'contact-profile';
 export const SUBSCRIPTION_RESOURCE = 'subscription';
 
-type ContactProfile = {
+export type ContactProfile = {
   kind: 'contact-profile';
   email: string;
   locale: string;
 };
 
-type Subscription = {
+export type Subscription = {
   kind: 'subscription';
   plan: string;
   status: 'active' | 'cancelled';
@@ -46,7 +46,7 @@ function text(value: unknown, label: string): string {
   return value;
 }
 
-function contactState(value: JsonValue): ContactProfile {
+export function contactState(value: JsonValue): ContactProfile {
   const input = record(value, 'contact state');
   exactKeys(input, ['kind', 'email', 'locale'], 'contact state');
   if (input.kind !== 'contact-profile') throw new Error('Invalid contact state kind');
@@ -57,7 +57,7 @@ function contactState(value: JsonValue): ContactProfile {
   };
 }
 
-function subscriptionState(value: JsonValue): Subscription {
+export function subscriptionState(value: JsonValue): Subscription {
   const input = record(value, 'subscription state');
   exactKeys(input, ['kind', 'plan', 'status', 'cancellationReason'], 'subscription state');
   if (input.kind !== 'subscription' || !['active', 'cancelled'].includes(String(input.status)) ||
@@ -74,6 +74,15 @@ function subscriptionState(value: JsonValue): Subscription {
 function sameState(expected: Readonly<OperationPrecondition>, actual: Readonly<OperationObservation>): boolean {
   return expected.providerVersion === actual.providerVersion &&
     JSON.stringify(expected.state) === JSON.stringify(actual.state);
+}
+
+/** Minimal provider contract shared by the in-memory demo and persistent local simulator. */
+export interface SyntheticAccountProvider {
+  identify(connection: Readonly<Connection>): string;
+  observeContact(connection: Readonly<Connection>, resourceId: string): HandlerObservation;
+  observeSubscription(connection: Readonly<Connection>, resourceId: string): HandlerObservation;
+  updateContact(connection: Readonly<Connection>, expected: ContactProfile): void;
+  cancelSubscription(connection: Readonly<Connection>, expected: Subscription): void;
 }
 
 /** In-memory provider used only by the offline operations demonstration. */
@@ -147,9 +156,16 @@ export class SyntheticOperationsProvider {
 export class SyntheticContactUpdateHandler implements OperationHandler {
   readonly provider = PROVIDER;
   readonly id = 'contact.update';
+  readonly catalog = {
+    description: 'SYNTHETIC ONLY: update an account contact email; no real account or message.',
+    connectionKind: 'synthetic account', resourceIds: [CONTACT_RESOURCE],
+    argumentsSchema: { type: 'object', required: ['email'], additionalProperties: false,
+      properties: { email: { type: 'string', minLength: 1, maxLength: 200 } } },
+    exampleArguments: { email: 'new@example.test' }
+  };
   readonly version = '1';
 
-  constructor(private readonly remote: SyntheticOperationsProvider) { }
+  constructor(private readonly remote: SyntheticAccountProvider) { }
 
   validateArguments(value: unknown): JsonValue {
     const input = record(value, 'contact arguments');
@@ -201,9 +217,16 @@ export class SyntheticContactUpdateHandler implements OperationHandler {
 export class SyntheticSubscriptionCancellationHandler implements OperationHandler {
   readonly provider = PROVIDER;
   readonly id = 'subscription.cancel';
+  readonly catalog = {
+    description: 'SYNTHETIC ONLY: cancel a simulated subscription; no real purchase or cancellation.',
+    connectionKind: 'synthetic account', resourceIds: [SUBSCRIPTION_RESOURCE],
+    argumentsSchema: { type: 'object', required: ['reason'], additionalProperties: false,
+      properties: { reason: { type: 'string', minLength: 1, maxLength: 200 } } },
+    exampleArguments: { reason: 'Synthetic dogfooding request' }
+  };
   readonly version = '1';
 
-  constructor(private readonly remote: SyntheticOperationsProvider) { }
+  constructor(private readonly remote: SyntheticAccountProvider) { }
 
   validateArguments(value: unknown): JsonValue {
     const input = record(value, 'cancellation arguments');

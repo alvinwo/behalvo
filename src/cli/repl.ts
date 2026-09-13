@@ -1,3 +1,6 @@
+import { isOperationCommand } from '../operations/validation.js';
+import { ActionReview } from './action-review.js';
+import type { OperationService } from '../operations/service.js';
 import { randomUUID } from 'node:crypto';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import type { AgentService } from '../runtime/agent-service.js';
@@ -6,6 +9,7 @@ import { buildContext } from '../memory/context.js';
 import type { ModelRegistry } from '../model/registry.js';
 import type { PiAuthInteraction, PiAuthType } from '../model/pi-gateway.js';
 import type { PiCredential } from '../model/pi-auth-store.js';
+import type { ModelRef } from '../model/types.js';
 
 export interface ReplIo {
   readLine(prompt?: string, signal?: AbortSignal): Promise<string | null>;
@@ -22,10 +26,13 @@ export interface ReplOptions {
   registry: ModelRegistry;
   service: AgentService;
   authenticator?: ReplAuthenticator;
+  operations?: OperationService;
+  clock?: () => string;
   io: ReplIo;
   workspaceId: string;
   ownerId: string;
   initialThreadId?: string;
+  onModelSelected?: (model: ModelRef) => void | Promise<void>;
 }
 
 export interface ReplResult {
@@ -43,14 +50,17 @@ const HELP = `Commands:
 /work                         List durable work
 /work <work-id>               Focus work in the current thread
 /work clear                   Clear focused work
+/actions                      Display exact operations for focused work
+/approve <action-id> <digest> Approve a command displayed by /actions (ten minutes)
 /state                        Show projected state
 /history [limit]              Show recent journal records
-/context                      Show the exact bounded context view
+/context                      Show base context (without loop protocol/transcript)
 /quit                         Exit`;
 
 export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   const { store, registry, service, io, workspaceId, ownerId } = options;
   const operator = new Operator(store);
+  const review = options.operations ? new ActionReview(store, options.operations, workspaceId, ownerId, options.clock) : undefined;
   let threadId = options.initialThreadId ?? `local-${randomUUID()}`;
   let workId: string | undefined;
 
@@ -84,6 +94,11 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           if (args.length !== 2) throw new Error('Usage: /model <provider> <model>');
           const selected = await registry.select(args[0]!, args[1]!);
           io.write(`Model selected: ${selected.provider}/${selected.model}`);
+          try {
+            await options.onModelSelected?.(selected);
+          } catch {
+            io.write('Warning: model selection is active for this session but was not saved for restart.');
+          }
           continue;
         }
         if (command === '/login') {
@@ -147,12 +162,34 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
             io.write('Focused work cleared.');
             continue;
           }
-          const work = store.state(workspaceId).works[args[0]!];
+          const state = store.state(workspaceId);
+          const work = state.works[args[0]!];
           if (!work) throw new Error(`Work not found: ${args[0]}`);
-          if (!work.threadIds.includes(threadId))
-            operator.linkThread(workspaceId, ownerId, work.id, threadId);
+          if (!work.threadIds.includes(threadId)) {
+            const pendingApproval = Object.values(state.actions).some(action => action.workId === work.id &&
+              isOperationCommand(action.command) && ['proposed', 'approved'].includes(action.status));
+            if (pendingApproval) {
+              const linkedThread = work.threadIds.at(-1);
+              if (!linkedThread) throw new Error('Pending operation work has no linked thread to resume');
+              threadId = linkedThread;
+              io.write(`Resumed existing work thread ${JSON.stringify(threadId)} to preserve prepared approval revision.`);
+            } else {
+              operator.linkThread(workspaceId, ownerId, work.id, threadId);
+            }
+          }
           workId = work.id;
           io.write(`Focused work: ${work.id} — ${work.title} on thread ${threadId}`);
+          continue;
+        }
+        if (command === '/actions') {
+          if (args.length !== 0) throw new Error('Usage: /actions');
+          if (!review) throw new Error('Operation service is unavailable');
+          review.display(workId, line => io.write(line));
+          continue;
+        }
+        if (command === '/approve') {
+          if (!review) throw new Error('Operation service is unavailable');
+          io.write(review.approve(args, workId));
           continue;
         }
         if (command === '/state') {

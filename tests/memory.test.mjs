@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import { fixture, message, createWork } from './helpers.mjs';
 const request = { workspaceId: 'personal', ownerId: 'owner', threadId: 'im', workId: 'w', windowTokens: 12000, outputReserve: 1000 };
 test('a new thread loads the same durable work without loading the entire old session', async (t) => {
@@ -85,6 +86,73 @@ test('conflicting active facts remain an explicit conflict', async (t) => {
     const resolved = f.resolveFact(f.store.state('personal'), 'owner', 'preferred.time', '2026-09-07T00:00:00.000Z');
     assert.equal(resolved.status, 'conflict');
     assert.equal(resolved.facts.length, 2);
+});
+
+test('legacy dated facts replay and unknown-onset observations are retrieved across threads', async (t) => {
+    const f = await fixture(t);
+    createWork(f);
+    f.operator.linkThread('personal', 'owner', 'w', 'web');
+    const source = f.store.ingest('personal', message('preference', { text: 'I prefer tea.' }));
+    // This shape predates observedAt and must remain replayable.
+    f.store.append('personal', f.store.state('personal').version, [{ type: 'fact.recorded', data: { fact: {
+        id: 'legacy', subject: 'owner', predicate: 'locale', value: 'en-US',
+        validFrom: '2020-01-01T00:00:00.000Z', validTo: null, sourceRecordId: source.id
+    } } }], { recordedAt: '2026-09-13T10:00:00.000Z' });
+    f.operator.recordFact('personal', 'owner', {
+        id: 'tea', subject: 'owner', predicate: 'drink.preference', value: 'tea',
+        validFrom: null, validTo: null, sourceRecordId: source.id
+    });
+    f.restart();
+    assert.equal(f.store.state('personal').facts.legacy.observedAt, source.recordedAt);
+    const state = f.store.rebuild('personal');
+    assert.equal(state.facts.legacy.observedAt, source.recordedAt);
+    const context = f.buildContext(f.store, { ...request, threadId: 'web', at: '2026-09-14T00:00:00.000Z' });
+    assert.match(context.text, /drink\.preference/);
+    assert.match(context.text, /"validFrom":null/);
+    assert.match(context.text, /"observedAt"/);
+});
+
+test('fact append rejects an observedAt that conflicts with its source record', async (t) => {
+    const f = await fixture(t);
+    const source = f.store.ingest('personal', message('grounded'));
+    const before = f.store.state('personal');
+    assert.throws(() => f.store.append('personal', before.version, [{ type: 'fact.recorded', data: { fact: {
+        id: 'forged', subject: 'owner', predicate: 'drink.preference', value: 'tea',
+        validFrom: null, validTo: null, observedAt: '2099-01-01T00:00:00.000Z', sourceRecordId: source.id
+    } } }]), /observed|source|timestamp/i);
+    assert.deepEqual(f.store.state('personal'), before);
+    f.store.rebuild('personal');
+    assert.equal(f.store.state('personal').facts.forged, undefined);
+});
+
+test('an old cached projection without observedAt is upgraded from the source record', async (t) => {
+    const f = await fixture(t);
+    const source = f.store.ingest('personal', message('legacy-cache'));
+    f.operator.recordFact('personal', 'owner', {
+        id: 'cached', subject: 'owner', predicate: 'locale', value: 'en-US',
+        validFrom: '2020-01-01T00:00:00.000Z', validTo: null, sourceRecordId: source.id
+    });
+    f.store.close();
+    const db = new DatabaseSync(f.path);
+    const row = db.prepare('SELECT state_json FROM projections WHERE workspace_id=?').get('personal');
+    const cached = JSON.parse(String(row.state_json));
+    delete cached.facts.cached.observedAt;
+    db.prepare('UPDATE projections SET state_json=? WHERE workspace_id=?').run(JSON.stringify(cached), 'personal');
+    db.close();
+    f.restart();
+    assert.equal(f.store.state('personal').facts.cached.observedAt, source.recordedAt);
+});
+
+test('legacy facts with schema-v1 fractional timestamps rebuild unchanged', async (t) => {
+    const f = await fixture(t);
+    const source = f.store.ingest('personal', message('legacy-fraction'));
+    f.store.append('personal', f.store.state('personal').version, [{ type: 'fact.recorded', data: { fact: {
+        id: 'fraction', subject: 'owner', predicate: 'legacy.time', value: 'kept',
+        validFrom: '2020-01-01T00:00:00.1Z', validTo: null,
+        observedAt: source.recordedAt, sourceRecordId: source.id
+    } } }]);
+    f.restart();
+    assert.equal(f.store.rebuild('personal').facts.fraction.validFrom, '2020-01-01T00:00:00.1Z');
 });
 test('oversized summaries are rejected instead of creating unbounded cache payloads', async (t) => {
     const f = await fixture(t);

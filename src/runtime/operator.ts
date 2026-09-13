@@ -31,11 +31,12 @@ export class Operator {
             this.store.readArtifact(workspaceId, evidenceRef);
         this.store.append(workspaceId, s.version, [{ type: 'work.phase_changed', data: { id: workId, phase, ...(evidenceRef ? { evidenceRef } : {}) } }], { actorId: ownerId, recordedAt: this.clock() });
     }
-    recordFact(workspaceId: string, ownerId: string, fact: Fact): void {
+    recordFact(workspaceId: string, ownerId: string, fact: Omit<Fact, 'observedAt'> & { observedAt?: string }): void {
         const s = this.store.state(workspaceId);
         assertOwner(s, ownerId);
-        this.store.record(workspaceId, fact.sourceRecordId);
-        this.store.append(workspaceId, s.version, [{ type: 'fact.recorded', data: { fact } }], { actorId: ownerId, causationId: fact.sourceRecordId, recordedAt: this.clock() });
+        const source = this.store.record(workspaceId, fact.sourceRecordId);
+        const grounded: Fact = { ...fact, observedAt: source.recordedAt };
+        this.store.append(workspaceId, s.version, [{ type: 'fact.recorded', data: { fact: grounded } }], { actorId: ownerId, causationId: fact.sourceRecordId, recordedAt: this.clock() });
     }
     propose(workspaceId: string, input: Proposal): Action {
         const s = this.store.state(workspaceId);

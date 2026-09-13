@@ -21,7 +21,7 @@ test('AgentService persists owner/model turns and recovers work and facts after 
     JSON.stringify({
       reply: 'I will track your Maui preparation.',
       workProposals: [{ id: 'maui', title: 'Prepare for Maui', goal: 'Ready to depart' }],
-      factProposals: [{ id: 'departure', subject: 'owner', predicate: 'trip.maui.departure', value: '2026-09-12', validFrom: '2026-09-07T00:00:00.000Z' }]
+      factProposals: [{ id: 'departure', subject: 'owner', predicate: 'trip.maui.departure', value: '2026-09-12' }]
     }),
     JSON.stringify({ reply: 'Your Maui work item is still open.', workProposals: [], factProposals: [] })
   ]);
@@ -48,12 +48,60 @@ test('AgentService rebinds fact provenance to the current owner message record',
   const gateway = new ScriptedGateway([JSON.stringify({
     reply: 'Saved.',
     workProposals: [],
-    factProposals: [{ id: 'city', subject: 'owner', predicate: 'home.city', value: 'Walnut Creek', validFrom: '2026-09-07T00:00:00.000Z' }]
+    factProposals: [{ id: 'city', subject: 'owner', predicate: 'home.city', value: 'Walnut Creek' }]
   })]);
   const service = new f.AgentService(f.store, gateway, () => f.clock.value);
   const result = await service.runOwnerTurn({ workspaceId: 'personal', ownerId: 'owner', threadId: 'im', externalId: 'u1', text: 'I live in Walnut Creek now.', model });
   assert.equal(f.store.state('personal').facts.city.sourceRecordId, result.ownerRecordId);
   assert.equal(f.store.record('personal', result.ownerRecordId).event.type, 'message.received');
+});
+
+test('ordinary preferences retain unknown onset and use the source record observation time', async (t) => {
+  const f = await fixture(t);
+  const gateway = new ScriptedGateway([JSON.stringify({
+    reply: 'Saved.', workProposals: [],
+    factProposals: [{ id: 'tea', subject: 'owner', predicate: 'drink.preference', value: 'tea' }]
+  })]);
+  const service = new f.AgentService(f.store, gateway, () => '2099-01-01T00:00:00.000Z');
+  const result = await service.runOwnerTurn({ workspaceId: 'personal', ownerId: 'owner', threadId: 'im', externalId: 'tea-1', text: 'I prefer tea.', model });
+  const fact = f.store.state('personal').facts.tea;
+  assert.equal(fact.validFrom, null);
+  assert.equal(fact.observedAt, f.store.record('personal', result.ownerRecordId).recordedAt);
+  assert.notEqual(fact.observedAt, '2099-01-01T00:00:00.000Z');
+});
+
+test('model dates must be an exact UTC timestamp in the current owner input', async (t) => {
+  const f = await fixture(t);
+  const unsupported = new ScriptedGateway([JSON.stringify({
+    reply: 'Saved.', workProposals: [],
+    factProposals: [{ id: 'move', subject: 'owner', predicate: 'home.move', value: 'September 20', validFrom: '2026-09-20T00:00:00.000Z' }]
+  })]);
+  await assert.rejects(() => new f.AgentService(f.store, unsupported).runOwnerTurn({
+    workspaceId: 'personal', ownerId: 'owner', threadId: 'im', externalId: 'move-1', text: 'I move September 20.', model
+  }), /date|timestamp|source|current owner/i);
+  assert.equal(Object.keys(f.store.state('personal').facts).length, 0);
+
+  const explicit = new ScriptedGateway([JSON.stringify({
+    reply: 'Saved.', workProposals: [],
+    factProposals: [{ id: 'move', subject: 'owner', predicate: 'home.move', value: 'planned', validFrom: '2026-09-20T00:00:00.000Z' }]
+  })]);
+  await new f.AgentService(f.store, explicit).runOwnerTurn({
+    workspaceId: 'personal', ownerId: 'owner', threadId: 'im', externalId: 'move-2', text: 'The exact start is 2026-09-20T00:00:00.000Z.', model
+  });
+  assert.equal(f.store.state('personal').facts.move.validFrom, '2026-09-20T00:00:00.000Z');
+});
+
+test('calendar-invalid UTC timestamps fail even when copied exactly from owner input', async (t) => {
+  const f = await fixture(t);
+  const gateway = new ScriptedGateway([JSON.stringify({
+    reply: 'Saved.', workProposals: [],
+    factProposals: [{ id: 'impossible', subject: 'owner', predicate: 'home.move', value: 'planned', validFrom: '2026-02-30T00:00:00.000Z' }]
+  })]);
+  await assert.rejects(() => new f.AgentService(f.store, gateway).runOwnerTurn({
+    workspaceId: 'personal', ownerId: 'owner', threadId: 'im', externalId: 'impossible-1',
+    text: 'The exact start is 2026-02-30T00:00:00.000Z.', model
+  }), /timestamp|date/i);
+  assert.equal(Object.keys(f.store.state('personal').facts).length, 0);
 });
 
 test('invalid model output leaves the durable owner input unhandled and makes no proposal state changes', async (t) => {

@@ -36,7 +36,8 @@ export interface FactProposal {
   subject: string;
   predicate: string;
   value: string;
-  validFrom: string;
+  /** Exact UTC timestamp copied from the current owner input; null when onset is unknown. */
+  validFrom: string | null;
   validTo?: string | null;
   supersedes?: string;
 }

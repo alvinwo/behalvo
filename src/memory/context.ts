@@ -24,6 +24,7 @@ export interface ContextPacket {
     text: string;
     workspaceId: string;
     stateVersion: number;
+    /** Count from the supplied counter; loop callers include the complete initial request envelope. */
     estimatedTokens: number;
     includedRecordIds: string[];
     includedSummaryIds: string[];

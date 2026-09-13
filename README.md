@@ -37,10 +37,10 @@ For the offline prepared-operations scenario:
 npm run operations:demo
 ```
 
-For real models, the optional Pi adapter exposes Pi's multi-provider catalog while keeping provider state outside the agent kernel. Current Pi releases require Node.js **22.19+**:
+For real models, the bundled, pinned Pi 0.85.1 adapter exposes Pi's multi-provider catalog while keeping provider state outside the agent kernel. Node.js **22.19+** is required:
 
 ```bash
-npm install --no-save @earendil-works/pi-ai
+npm ci
 npm run agent
 ```
 
@@ -52,6 +52,10 @@ To use an eligible ChatGPT/Codex subscription through Pi's provider-owned OAuth 
 /model openai-codex <model-id>
 ```
 
+The selected provider/model is saved per database and workspace. Startup `--model`, `BEHALVO_MODEL`, or legacy `OPERATOR_MODEL` values override it. Credentials remain separate and are never written to model settings.
+
+Use `npm run agent -- --synthetic-operations` for an isolated simulated account. Prepare in chat, review the exact command with `/actions`, approve its full digest with `/approve`, then request execution and readback in a new turn. Runs stop after eight model completions or 120 seconds; no real account handlers are shipped.
+
 See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, security boundaries, and current limitations.
 
 ## What exists in this revision
@@ -62,12 +66,13 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | Durable owner + assistant messages across process restarts | Email, WhatsApp, WeChat, SMS or phone channels |
 | WorkItems/Facts shared across explicitly linked threads | Browser automation or model-generated real-world effects |
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |
-| Optional Pi multi-provider adapter and file credential store | Live provider OAuth and model inference verification |
+| Pinned Pi multi-provider adapter and separate file credential store | Independent live-model operation-loop verification |
 | Provider-owned OAuth login flow in the REPL | Hosted multi-user deployment |
 | Strict model proposal validation and provenance rebinding | Encrypted raw message artifacts |
 | Local inspection commands for state/history/context | Production security review |
 | Versioned prepared operations with exact connection/resource bindings | Real account handlers, remote authentication or universal account discovery |
-| Synthetic contact-update and subscription-cancellation demo with readback | Production credential protection or provider write verification |
+| Opt-in persistent synthetic contact/subscription operations with readback | Production credential protection or provider write verification |
+| Bounded structured operation loop and trusted `/actions` / `/approve` commands | Autonomous retries or startup recovery of running effects |
 
 ## Mental model
 
@@ -100,7 +105,7 @@ src/
   runtime/      validated work, action, timer and AgentService operations
   operations/   versioned handler registry, prepared-operation service and synthetic demo handlers
   memory/       audience-scoped, budgeted context assembly
-  model/        provider-neutral contracts, registry, optional Pi adapter
+  model/        provider-neutral contracts, registry, bundled Pi adapter
   cli/          local REPL, app wiring and cancellable terminal input
   ports.ts      channel/effect extension contracts
   index.ts      local library entry point
@@ -108,7 +113,7 @@ src/
   operations-demo.ts  synthetic multi-operation and unknown-readback scenario
 ```
 
-One package, not a forest of empty packages. The verified core has no required runtime npm dependencies; Pi is intentionally optional. No event
+One package, not a forest of empty packages. Pi is the sole pinned runtime integration dependency and remains outside the kernel. No event
 broker, distributed workflow engine, graph database or multi-agent orchestration.
 
 ## Safety boundary

@@ -84,6 +84,7 @@ export interface OperationHandler {
     readonly provider: string;
     readonly id: string;
     readonly version: string;
+    readonly catalog?: OperationCatalog;
     validateArguments(value: unknown): JsonValue;
     identify(input: { connection: Readonly<Connection> }): Promise<string>;
     observe(input: { connection: Readonly<Connection>; resourceId: string }): Promise<HandlerObservation>;
@@ -110,7 +111,14 @@ export interface OperationHandler {
     }): HandlerVerificationVerdict;
 }
 
-export interface OperationMetadata { provider: string; id: string; version: string; }
+export interface OperationCatalog {
+    description: string;
+    connectionKind: string;
+    resourceIds: string[];
+    argumentsSchema: JsonValue;
+    exampleArguments: JsonValue;
+}
+export interface OperationMetadata { provider: string; id: string; version: string; catalog?: OperationCatalog; }
 
 export interface RegisterConnectionInput {
     workspaceId: string;

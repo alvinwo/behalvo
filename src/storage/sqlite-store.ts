@@ -39,6 +39,21 @@ export class SqliteStore {
       COMMIT;
     `);
     }
+    /** Local deployment metadata, not domain state; prevents accidental mode rebinding. */
+    bindLocalMode(mode: 'ordinary' | 'synthetic'): void {
+        if (!['ordinary', 'synthetic'].includes(mode)) throw new Error('Invalid local mode');
+        this.#transaction(() => {
+            this.#db.exec('CREATE TABLE IF NOT EXISTS local_mode (id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL)');
+            const row = this.#db.prepare('SELECT mode FROM local_mode WHERE id=1').get();
+            if (row) {
+                if (row.mode !== mode) throw new Error('Database mode mismatch; use a separate database for synthetic operations');
+                return;
+            }
+            if (mode === 'synthetic' && this.#db.prepare('SELECT 1 FROM journal LIMIT 1').get())
+                throw new Error('Existing unbound database cannot be imported into synthetic mode; choose a new database');
+            this.#db.prepare('INSERT INTO local_mode (id,mode) VALUES (1,?)').run(mode);
+        });
+    }
     close(): void { if (!this.#closed) {
         this.#db.close();
         this.#closed = true;
@@ -63,6 +78,14 @@ export class SqliteStore {
             throw new Error('Unsupported projection version; rebuild required');
         const state = JSON.parse(String(row.state_json)) as State;
         state.connections ??= {};
+        for (const fact of Object.values(state.facts)) {
+            const legacy = fact as typeof fact & { observedAt?: string };
+            if (legacy.observedAt === undefined) {
+                const source = this.#db.prepare('SELECT recorded_at FROM journal WHERE workspace_id=? AND id=?').get(workspaceId, legacy.sourceRecordId);
+                if (!source) throw new Error('Legacy fact source record is missing');
+                legacy.observedAt = String(source.recorded_at);
+            }
+        }
         return state;
     }
     state(workspaceId: string): State {
@@ -92,7 +115,9 @@ export class SqliteStore {
             instant(recordedAt);
             const record: JournalRecord = { id: randomUUID(), schemaVersion: 1, workspaceId, seq: s.version + 1,
                 recordedAt, actorId: metadata.actorId ?? 'system', causationId: metadata.causationId ?? null, event: structuredClone(event) };
-            s = reduce(s, record.event, record.seq);
+            const sourceObservedAt = record.event.type === 'fact.recorded'
+                ? this.record(workspaceId, record.event.data.fact.sourceRecordId).recordedAt : undefined;
+            s = reduce(s, record.event, record.seq, sourceObservedAt);
             this.#db.prepare('INSERT INTO journal(id,workspace_id,seq,schema_version,recorded_at,actor_id,causation_id,event_json) VALUES (?,?,?,?,?,?,?,?)')
                 .run(record.id, workspaceId, record.seq, SCHEMA, record.recordedAt, record.actorId, record.causationId, JSON.stringify(record.event));
             records.push(record);
@@ -110,8 +135,12 @@ export class SqliteStore {
         });
         return this.state(workspaceId);
     }
-    append(workspaceId: string, expectedVersion: number, events: DomainEvent[], metadata: RecordMetadata = {}): JournalRecord[] {
-        return this.#transaction(() => this.#append(workspaceId, expectedVersion, events, metadata));
+    /** Optional trusted guard runs after acquiring the writer lock, before domain mutation. */
+    append(workspaceId: string, expectedVersion: number, events: DomainEvent[], metadata: RecordMetadata = {}, beforeAppend?: () => void): JournalRecord[] {
+        return this.#transaction(() => {
+            beforeAppend?.();
+            return this.#append(workspaceId, expectedVersion, events, metadata);
+        });
     }
     #decode(row: Row): JournalRecord {
         if (Number(row.schema_version) !== SCHEMA)
@@ -139,7 +168,9 @@ export class SqliteStore {
         let state = emptyState(workspaceId);
         for (const row of rows) {
             const record = this.#decode(row);
-            state = reduce(state, record.event, record.seq);
+            const sourceObservedAt = record.event.type === 'fact.recorded'
+                ? this.record(workspaceId, record.event.data.fact.sourceRecordId).recordedAt : undefined;
+            state = reduce(state, record.event, record.seq, sourceObservedAt);
         }
         return state;
     }
@@ -151,7 +182,9 @@ export class SqliteStore {
             let s = emptyState(workspaceId);
             for (const row of rows) {
                 const record = this.#decode(row);
-                s = reduce(s, record.event, record.seq);
+                const sourceObservedAt = record.event.type === 'fact.recorded'
+                    ? this.record(workspaceId, record.event.data.fact.sourceRecordId).recordedAt : undefined;
+                s = reduce(s, record.event, record.seq, sourceObservedAt);
             }
             this.#save(s);
             return s;
@@ -225,11 +258,12 @@ export class SqliteStore {
         return this.#db.prepare(`SELECT j.* FROM inbox i JOIN journal j ON j.id=i.record_id AND j.workspace_id=i.workspace_id
       WHERE i.workspace_id=? AND i.handled=0 ORDER BY j.seq`).all(workspaceId).map(r => this.#decode(r));
     }
-    completeInbox(workspaceId: string, recordId: string, expectedVersion: number, events: DomainEvent[]): JournalRecord[] {
+    completeInbox(workspaceId: string, recordId: string, expectedVersion: number, events: DomainEvent[], beforeAppend?: () => void): JournalRecord[] {
         return this.#transaction(() => {
             const row = this.#db.prepare('SELECT handled FROM inbox WHERE workspace_id=? AND record_id=?').get(workspaceId, recordId);
             if (!row || Number(row.handled) !== 0)
                 throw new Error('Inbox record already handled or not found');
+            beforeAppend?.();
             const records = this.#append(workspaceId, expectedVersion, [...events, { type: 'inbox.handled', data: { recordId } }], { causationId: recordId });
             this.#db.prepare('UPDATE inbox SET handled=1 WHERE workspace_id=? AND record_id=?').run(workspaceId, recordId);
             return records;

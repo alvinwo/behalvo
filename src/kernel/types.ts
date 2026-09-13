@@ -50,8 +50,10 @@ export interface Fact {
     subject: string;
     predicate: string;
     value: string;
-    validFrom: string;
+    validFrom: string | null;
     validTo: string | null;
+    /** When the source record was observed by this application. */
+    observedAt: string;
     sourceRecordId: string;
     supersedes?: string;
 }
@@ -210,6 +212,8 @@ export function identifier(value: unknown, label = 'id'): asserts value is strin
         throw new Error(`Invalid ${label}`);
 }
 export function instant(value: unknown): asserts value is string {
+    // Schema-v1 journals accepted variable ISO time forms. Keep replay compatible;
+    // stricter admission rules belong at new untrusted-input boundaries.
     if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T.*Z$/.test(value) || !Number.isFinite(Date.parse(value)))
         throw new Error('Expected a UTC ISO timestamp');
 }

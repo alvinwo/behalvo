@@ -24,7 +24,7 @@ export async function runMvpDemo(dbPath: string): Promise<MvpDemoResult> {
         workProposals: [{ id: 'maui-trip', title: 'Prepare for Maui', goal: 'Be ready before departure' }],
         factProposals: [{
           id: 'maui-departure', subject: 'maui-trip', predicate: 'departure_date', value: '2026-09-12',
-          validFrom: '2026-09-07T00:00:00.000Z'
+          validFrom: null
         }]
       })
     })
