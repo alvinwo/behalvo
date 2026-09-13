@@ -7,7 +7,7 @@ A small, journal-backed agent runtime for work that survives conversations.
 Personal dogfooding first. A shared architectural foundation for later solo-business
 workflows. The project/runtime is **Behalvo**; an individual agent may have its own name, such as Jarvis or Friday. The repository now includes a **locally runnable agent MVP**; real communication channels and autonomous external effects remain out of scope.
 
-[Local MVP guide](docs/local-mvp.md) · [General operations guide](docs/general-operations.md) · [中文 MVP 说明](docs/local-mvp.zh-CN.md) ·
+[Local MVP guide](docs/local-mvp.md) · [General operations guide](docs/general-operations.md) · [Agent evaluation guide](docs/AGENT_EVALUATION.md) · [中文 MVP 说明](docs/local-mvp.zh-CN.md) ·
 [Architecture overview](docs/architecture.md) ·
 [Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) ·
 [中文架构导读](docs/architecture.zh-CN.md) ·
@@ -36,6 +36,15 @@ For the offline prepared-operations scenario:
 ```bash
 npm run operations:demo
 ```
+
+For the deterministic synthetic agent-evaluation harness:
+
+```bash
+npm run eval:agent -- --scripted
+```
+
+This scripted result is non-live evidence. Genuine live-model acceptance has not
+yet been run and remains pending configured model authorization and human review.
 
 For real models, the bundled, pinned Pi 0.85.1 adapter exposes Pi's multi-provider catalog while keeping provider state outside the agent kernel. Node.js **22.19+** is required:
 
@@ -73,6 +82,7 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | Versioned prepared operations with exact connection/resource bindings | Real account handlers, remote authentication or universal account discovery |
 | Opt-in persistent synthetic contact/subscription operations with readback | Production credential protection or provider write verification |
 | Bounded structured operation loop and trusted `/actions` / `/approve` commands | Autonomous retries or startup recovery of running effects |
+| Versioned 20-case synthetic evaluation harness with private JSON reports | Genuine live-model evaluation and manual acceptance review |
 
 ## Mental model
 
@@ -106,6 +116,7 @@ src/
   operations/   versioned handler registry, prepared-operation service and synthetic demo handlers
   memory/       audience-scoped, budgeted context assembly
   model/        provider-neutral contracts, registry, bundled Pi adapter
+  evaluation/   synthetic-v1 scenarios, bounded runner, safe report CLI
   cli/          local REPL, app wiring and cancellable terminal input
   ports.ts      channel/effect extension contracts
   index.ts      local library entry point

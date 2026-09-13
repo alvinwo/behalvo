@@ -1,5 +1,19 @@
 # Roadmap and scope ledger
 
+## Approved delivery sequence from the current revision
+
+1. Run the genuine live-model evaluation and complete its manual review. The
+   harness exists, but live acceptance has not yet been run.
+2. Add secure mobile owner control.
+3. Add one mail integration.
+4. Add a durable supervised worker.
+5. Run a two-week personal alpha.
+6. Later, add multi-account support and constrained browser capability.
+7. Only then consider a small public alpha.
+
+The deterministic `synthetic-v1` scripted suite validates the harness; it cannot
+substitute for step 1 or certify M1.1 acceptance.
+
 ## M0 — Offline foundation
 
 Implemented: journal/reducer, SQLite transactions, projection rebuild/stateAt,

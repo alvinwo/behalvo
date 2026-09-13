@@ -13,11 +13,26 @@ export interface ModelRequest {
   system: string;
   prompt: string;
   sessionHint?: string;
+  signal?: AbortSignal;
+  maxRetries?: number;
+  maxOutputTokens?: number;
+}
+
+/** Provider-reported token counts and Pi catalog cost estimate; never a billing record. */
+export interface ModelUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  totalTokens: number | null;
+  estimatedCostUsd: number | null;
+  source: 'pi-sdk';
 }
 
 export interface ModelResponse {
   text: string;
   providerResponseId?: string;
+  usage?: ModelUsage;
 }
 
 export interface ModelGateway {
