@@ -13,6 +13,7 @@ import { ScriptedEvaluationGateway } from '../dist/evaluation/scripted-gateway.j
 
 const cliPath = fileURLToPath(new URL('../dist/evaluation/main.js', import.meta.url));
 const execFile = promisify(execFileCallback);
+const node22SqliteWarning = /^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\r?\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n(?![\s\S])/;
 
 function runCli(args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -29,6 +30,31 @@ function runCli(args, options = {}) {
     child.on('close', code => resolve({ code, stdout, stderr }));
   });
 }
+
+function assertSuccessfulCliStderr(stderr) {
+  assert.ok(
+    stderr === '' || node22SqliteWarning.test(stderr),
+    `unexpected successful CLI stderr: ${JSON.stringify(stderr)}`
+  );
+}
+
+test('successful CLI subprocess stderr permits only the exact Node 22 SQLite warning', () => {
+  const warning = '(node:2277) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n'
+    + '(Use `node --trace-warnings ...` to show where the warning was created)\n';
+
+  assertSuccessfulCliStderr('');
+  assertSuccessfulCliStderr(warning);
+  assertSuccessfulCliStderr(warning.replace(/\n/g, '\r\n'));
+  for (const unexpected of [
+    `${warning}\n`,
+    `${warning.replace(/\n/g, '\r\n')}\r\n`,
+    `${warning}application diagnostic\n`,
+    warning.replace('node:2277', 'node:pid'),
+    warning.replace('\n', '\u001b[31m\n')
+  ]) {
+    assert.throws(() => assertSuccessfulCliStderr(unexpected), /unexpected successful CLI stderr/i);
+  }
+});
 
 function capturedDependencies(overrides = {}) {
   const output = { stdout: '', stderr: '' };
@@ -51,7 +77,7 @@ test('no mode prints help and list mode neither loads Pi nor creates reports', a
   const help = await runCli([], { cwd: dir });
   assert.equal(help.code, 0, help.stderr);
   assert.match(help.stdout, /Usage:.*eval:agent/s);
-  assert.equal(help.stderr, '');
+  assertSuccessfulCliStderr(help.stderr);
   assert.deepEqual(await readdir(dir), []);
 
   let liveLoads = 0;
@@ -393,7 +419,7 @@ test('scripted CLI writes canonical private evidence but terminal prints only sa
   ], { cwd: dir });
 
   assert.equal(result.code, 0, result.stderr);
-  assert.equal(result.stderr, '');
+  assertSuccessfulCliStderr(result.stderr);
   assert.match(result.stdout, /Mode\/model: scripted\/scripted-evaluation\/synthetic-v1/);
   assert.match(result.stdout, /Automatic checks: 1\/1 passed/);
   assert.match(result.stdout, /Completeness: passed; full-suite eligible: no/);
