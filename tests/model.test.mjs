@@ -14,6 +14,23 @@ test('parseAgentTurn accepts the exact provider-independent envelope', async () 
   assert.equal(turn.factProposals[0].predicate, 'travel.departure');
 });
 
+test('parseAgentTurn represents an unknown fact onset as null', async () => {
+  const { parseAgentTurn } = await api();
+  const turn = parseAgentTurn(JSON.stringify({
+    reply: 'Saved.',
+    factProposals: [{ id: 'tea', subject: 'owner', predicate: 'drink.preference', value: 'tea' }]
+  }));
+  assert.equal(turn.factProposals[0].validFrom, null);
+});
+
+test('parseAgentTurn accepts supported UTC timestamps without fractional seconds', async () => {
+  const { parseAgentTurn } = await api();
+  const turn = parseAgentTurn(JSON.stringify({
+    reply: 'Saved.', factProposals: [{ id: 'f', subject: 'owner', predicate: 'x', value: 'y', validFrom: '2026-09-20T00:00:00Z' }]
+  }));
+  assert.equal(turn.factProposals[0].validFrom, '2026-09-20T00:00:00Z');
+});
+
 test('parseAgentTurn rejects malformed JSON, unknown fields and model-forged provenance', async () => {
   const { parseAgentTurn } = await api();
   assert.throws(() => parseAgentTurn('{not-json'), /json|parse/i);

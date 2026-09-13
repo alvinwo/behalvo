@@ -15,6 +15,7 @@ export class OperationRegistry {
         if (this.#handlers.has(key)) throw new Error('Duplicate operation handler registration');
         this.#handlers.set(key, Object.freeze({
             provider: handler.provider, id: handler.id, version: handler.version,
+            ...(handler.catalog ? { catalog: structuredClone(handler.catalog) } : {}),
             validateArguments: handler.validateArguments.bind(handler),
             identify: handler.identify.bind(handler), observe: handler.observe.bind(handler),
             prepare: handler.prepare.bind(handler), comparePrecondition: handler.comparePrecondition.bind(handler),
@@ -34,7 +35,7 @@ export class OperationRegistry {
         if (filter.provider !== undefined) identifier(filter.provider, 'provider');
         return [...this.#handlers.values()]
             .filter(handler => filter.provider === undefined || handler.provider === filter.provider)
-            .map(({ provider, id, version }) => ({ provider, id, version }))
+            .map(({ provider, id, version, catalog }) => ({ provider, id, version, ...(catalog ? { catalog: structuredClone(catalog) } : {}) }))
             .sort((a, b) => `${a.provider}/${a.id}@${a.version}`.localeCompare(`${b.provider}/${b.id}@${b.version}`));
     }
 

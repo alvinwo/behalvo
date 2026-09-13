@@ -5,7 +5,7 @@ export function emptyState(workspaceId: string): State {
     return { workspaceId, ownerId: '', version: 0, works: {}, actions: {}, timers: {}, facts: {}, connections: {} };
 }
 /** Pure replay: no clock reads, random IDs, network, authorization reevaluation or LLM. */
-export function reduce(previous: State, event: DomainEvent, seq: number): State {
+export function reduce(previous: State, event: DomainEvent, seq: number, legacyFactObservedAt?: string): State {
     if (seq !== previous.version + 1)
         throw new Error('Non-contiguous journal sequence');
     const s = structuredClone(previous);
@@ -216,16 +216,26 @@ export function reduce(previous: State, event: DomainEvent, seq: number): State 
             break;
         }
         case 'fact.recorded': {
-            const f = event.data.fact;
+            // observedAt was added after schema v1 journals existed. Storage supplies
+            // the immutable source-record timestamp while replaying an older event.
+            const raw = event.data.fact as Fact & { observedAt?: string };
+            if (raw.observedAt !== undefined && legacyFactObservedAt !== undefined && raw.observedAt !== legacyFactObservedAt)
+                throw new Error('Fact observedAt conflicts with source record timestamp');
+            const groundedObservedAt = legacyFactObservedAt ?? raw.observedAt;
+            if (groundedObservedAt === null || groundedObservedAt === undefined)
+                throw new Error('Fact observation time is missing');
+            const f: Fact = { ...raw, observedAt: groundedObservedAt };
             identifier(f.id);
             nonempty(f.subject, 'subject');
             nonempty(f.predicate, 'predicate');
             nonempty(f.value, 'value');
             nonempty(f.sourceRecordId, 'sourceRecordId');
-            instant(f.validFrom);
+            instant(f.observedAt);
+            if (f.validFrom !== null)
+                instant(f.validFrom);
             if (f.validTo !== null) {
                 instant(f.validTo);
-                if (Date.parse(f.validTo) <= Date.parse(f.validFrom))
+                if (f.validFrom !== null && Date.parse(f.validTo) <= Date.parse(f.validFrom))
                     throw new Error('Invalid validity range');
             }
             if (Object.hasOwn(s.facts, f.id))
@@ -253,7 +263,8 @@ export function resolveFact(state: State, subject: string, predicate: string, at
     const time = Date.parse(at);
     const claims = Object.values(state.facts).filter(f => f.subject === subject && f.predicate === predicate);
     // A supersession starts when its replacement becomes effective, not when recorded.
-    const superseded = new Set(claims.filter(f => f.supersedes && Date.parse(f.validFrom) <= time).map(f => f.supersedes!));
-    const active = claims.filter(f => !superseded.has(f.id) && Date.parse(f.validFrom) <= time && (f.validTo === null || time < Date.parse(f.validTo)));
+    const startsAt = (fact: Fact): number => Date.parse(fact.validFrom ?? fact.observedAt);
+    const superseded = new Set(claims.filter(f => f.supersedes && startsAt(f) <= time).map(f => f.supersedes!));
+    const active = claims.filter(f => !superseded.has(f.id) && startsAt(f) <= time && (f.validTo === null || time < Date.parse(f.validTo)));
     return { status: active.length === 0 ? 'missing' : active.length === 1 ? 'resolved' : 'conflict', facts: structuredClone(active) };
 }

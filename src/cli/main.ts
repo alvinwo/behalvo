@@ -7,9 +7,11 @@ import { PiModelGateway, createPiRuntimeLoader } from '../model/pi-gateway.js';
 import { openLocalAgent } from './local-app.js';
 import { runRepl } from './repl.js';
 import { NodeLineIo } from './node-io.js';
+import { ModelSettingsStore, settingsPathForDatabase } from './model-settings.js';
 
 interface CliArgs {
   offline: boolean;
+  syntheticOperations: boolean;
   dbPath: string;
   authPath: string;
   workspaceId: string;
@@ -37,7 +39,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
   const model = parseModel(valueAfter(argv, '--model') ?? process.env.BEHALVO_MODEL ?? process.env.OPERATOR_MODEL);
   return {
     offline: argv.includes('--offline'),
-    dbPath: resolve(valueAfter(argv, '--db') ?? process.env.BEHALVO_DB ?? process.env.OPERATOR_DB ?? 'data/agent.db'),
+    syntheticOperations: argv.includes('--synthetic-operations'),
+    dbPath: resolve(valueAfter(argv, '--db') ?? (argv.includes('--synthetic-operations') ? 'data/synthetic-agent.db' : process.env.BEHALVO_DB ?? process.env.OPERATOR_DB ?? 'data/agent.db')),
     authPath: resolve(valueAfter(argv, '--auth') ?? process.env.BEHALVO_PI_AUTH ?? process.env.OPERATOR_PI_AUTH ?? 'data/pi-auth.json'),
     workspaceId: valueAfter(argv, '--workspace') ?? process.env.BEHALVO_WORKSPACE ?? process.env.OPERATOR_WORKSPACE ?? 'personal',
     ownerId: valueAfter(argv, '--owner') ?? process.env.BEHALVO_OWNER ?? process.env.OPERATOR_OWNER ?? 'owner',
@@ -70,23 +73,43 @@ async function main(): Promise<void> {
     dbPath: args.dbPath,
     workspaceId: args.workspaceId,
     ownerId: args.ownerId,
-    gateways
+    gateways,
+    syntheticOperations: args.syntheticOperations
   });
   const io = terminalIo();
   try {
+    if (args.syntheticOperations) io.write('SYNTHETIC OPERATIONS ONLY — simulated account data; no real account effects.');
     if (args.offline) {
       await app.registry.select('offline', 'deterministic');
-    } else if (args.model) {
-      await app.registry.select(args.model.provider, args.model.model);
+    } else {
+      const settings = new ModelSettingsStore(settingsPathForDatabase(args.dbPath));
+      const startupModel = args.model ?? await settings.read(args.workspaceId);
+      if (startupModel) {
+        try {
+          const selected = await app.registry.select(startupModel.provider, startupModel.model);
+          await settings.write(args.workspaceId, selected);
+          io.write(`Active model: ${selected.provider}/${selected.model}`);
+        } catch (error) {
+          if (!args.model)
+            throw new Error('Saved model selection is unavailable. Recover with --model provider/model; then use /model to inspect the catalog.');
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(`${detail}. Recover with --model provider/model or /model <provider> <model>.`);
+        }
+      } else {
+        io.write('No model selected. Run /login openai-codex oauth, then /model and /model <provider> <model>.');
+      }
     }
     await runRepl({
       store: app.store,
       registry: app.registry,
       service: app.service,
+      operations: app.operations,
       ...(!args.offline ? { authenticator: pi } : {}),
       io,
       workspaceId: args.workspaceId,
-      ownerId: args.ownerId
+      ownerId: args.ownerId,
+      ...(!args.offline ? { onModelSelected: (selected: { provider: string; model: string }) =>
+        new ModelSettingsStore(settingsPathForDatabase(args.dbPath)).write(args.workspaceId, selected) } : {})
     });
   } finally {
     io.close();

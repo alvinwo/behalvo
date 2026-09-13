@@ -255,3 +255,29 @@ The runtime rechecks local identity, generation, approval, work revision, subjec
 ## Current integration limits
 
 The repository ships no real account, banking, subscription, profile, or credential adapter. It does not discover remote resources, prove that aliases across different provider subjects refer to the same person, authenticate public callers, protect secrets, provide cross-workspace coordination, or determine that a WorkItem is complete. Recovery requires exclusive maintenance and converts interrupted attempts to unknown without dispatching them. Real integrations need provider-specific authentication, protected credentials, resource contracts, conditional-write behavior, readback semantics, rate limits, and independent security review.
+
+
+## Bounded terminal integration
+
+The local app now wires this service into a strict structured operation loop.
+See [the terminal workflow](local-mvp.md#bounded-synthetic-operations) for opt-in
+synthetic storage, exact `/actions` review and `/approve` commands, run/size limits,
+and restart behavior. Ordinary mode has an empty catalog. The demonstration above
+continues to use its in-memory provider; terminal mode uses a separate persistent
+simulator through the same minimal handler-provider contract.
+
+`prepare`, `execute` and `verify` accept an optional **trusted second argument**
+`{ signal?: AbortSignal, deadline: number }`, where `deadline` is an absolute
+wall-clock millisecond value. This is not part of the exact model-derived input.
+Without it, existing trusted callers retain their prior API behavior. With it,
+preflight and readback cannot continue journal mutations after cancellation or
+deadline. A dispatched attempt is settled as `unknown` before returning on timeout;
+late provider results are consumed without overwriting settlement. The terminal
+does not call `recoverInterrupted`; explicit recovery still requires exclusive
+maintenance with all operation workers stopped.
+
+Local app instances also bind their AgentService and OperationService to the
+startup workspace before inference, journal mutation or provider callbacks.
+Direct generic OperationService callers remain unbound unless they supply its
+optional constructor workspace binding. This prevents a workspace-bound
+synthetic provider from being dispatched under another workspace's journal.

@@ -23,6 +23,15 @@ function requiredString(object: Record<string, unknown>, key: string, label = ke
   return value;
 }
 
+function modelFactInstant(value: string): void {
+  instant(value);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value))
+    throw new Error('Expected a supported UTC ISO fact timestamp');
+  const comparable = /\.\d{3}Z$/.test(value) ? value : value.replace(/Z$/, '.000Z');
+  if (new Date(Date.parse(value)).toISOString() !== comparable)
+    throw new Error('Expected a calendar-valid UTC ISO fact timestamp');
+}
+
 function parseWork(value: unknown): WorkProposal {
   const object = plainObject(value, 'work proposal');
   exactFields(object, ['id', 'title', 'goal'], 'work proposal');
@@ -42,15 +51,21 @@ function parseFact(value: unknown): FactProposal {
   nonempty(predicate, 'fact predicate');
   if (predicate.length > 200)
     throw new Error('fact predicate is too large');
-  const validFrom = requiredString(object, 'validFrom');
-  instant(validFrom);
+  const validFromValue = object.validFrom;
+  let validFrom: string | null = null;
+  if (validFromValue !== undefined && validFromValue !== null) {
+    if (typeof validFromValue !== 'string')
+      throw new Error('validFrom must be a UTC ISO timestamp or null');
+    modelFactInstant(validFromValue);
+    validFrom = validFromValue;
+  }
   const validToValue = object.validTo;
   let validTo: string | null | undefined;
   if (validToValue !== undefined) {
     if (validToValue !== null) {
       if (typeof validToValue !== 'string')
         throw new Error('validTo must be a UTC ISO timestamp or null');
-      instant(validToValue);
+      modelFactInstant(validToValue);
     }
     validTo = validToValue;
   }

@@ -107,7 +107,7 @@ export class PiModelGateway implements ModelGateway {
         this.#runtime = null;
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(
-          `Pi model support is optional. Install ${PI_PACKAGE} on Node >=22.19 and configure provider credentials before using it. Loader error: ${detail}`,
+          `Unable to load bundled Pi model support (${PI_PACKAGE}). Use Node >=22.19 and run npm ci. Configure provider credentials only before inference. Loader error: ${detail}`,
           { cause: error }
         );
       });

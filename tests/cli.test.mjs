@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture } from './helpers.mjs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ModelSettingsStore } from '../dist/cli/model-settings.js';
 
 class ScriptedIo {
   constructor(lines) { this.lines = [...lines]; this.output = []; }
@@ -17,7 +21,7 @@ test('runRepl supports model selection, durable owner turns, work inspection and
     if (turn === 1) return { text: JSON.stringify({
       reply: 'I created a Maui preparation work item.',
       workProposals: [{ id: 'maui', title: 'Prepare for Maui', goal: 'Be ready before departure' }],
-      factProposals: [{ id: 'departure', subject: 'maui', predicate: 'departure_date', value: '2026-09-12', validFrom: '2026-09-07T00:00:00.000Z' }]
+      factProposals: [{ id: 'departure', subject: 'maui', predicate: 'departure_date', value: '2026-09-12' }]
     }) };
     assert.match(req.prompt, /Prepare for Maui/);
     return { text: JSON.stringify({ reply: 'Your Maui work is still open.', workProposals: [], factProposals: [] }) };
@@ -56,6 +60,50 @@ test('runRepl supports model selection, durable owner turns, work inspection and
   assert.match(io.output.join('\n'), /Your Maui work is still open/);
   assert.equal(f.store.state('personal').works.maui.phase, 'open');
   assert.ok(f.store.state('personal').works.maui.threadIds.includes('second-thread'));
+});
+
+test('runRepl reports successful interactive model selection for persistence', async t => {
+  const f = await fixture(t);
+  const { FakeModelGateway, ModelRegistry, AgentService, runRepl } = f;
+  const registry = new ModelRegistry([new FakeModelGateway([{ provider: 'fake', model: 'one' }], () => ({ text: 'never' }))]);
+  const selected = [];
+  await runRepl({
+    store: f.store, registry, service: new AgentService(f.store, registry),
+    io: new ScriptedIo(['/model fake one', '/quit']), workspaceId: 'personal', ownerId: 'owner',
+    onModelSelected: model => selected.push(model)
+  });
+  assert.deepEqual(selected, [{ provider: 'fake', model: 'one' }]);
+});
+
+test('failed selection persistence keeps the visible session model and warns without leaking the error', async t => {
+  const f = await fixture(t);
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-selection-failure-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const settings = new ModelSettingsStore(join(dir, 'settings.json'));
+  await settings.write('personal', { provider: 'fake', model: 'old' });
+  const old = new f.FakeModelGateway([{ provider: 'fake', model: 'old' }], () => ({
+    text: JSON.stringify({ reply: 'OLD ROUTE', workProposals: [], factProposals: [] })
+  }));
+  const current = new f.FakeModelGateway([{ provider: 'fake', model: 'new' }], () => ({
+    text: JSON.stringify({ reply: 'NEW ROUTE', workProposals: [], factProposals: [] })
+  }));
+  const registry = new f.ModelRegistry([old, current]);
+  await registry.select('fake', 'old');
+  const io = new ScriptedIo(['/model fake new', 'hello', '/quit']);
+
+  await f.runRepl({
+    store: f.store, registry, service: new f.AgentService(f.store, registry), io,
+    workspaceId: 'personal', ownerId: 'owner',
+    onModelSelected: async () => { throw new Error('disk full DO-NOT-ECHO'); }
+  });
+
+  const output = io.output.join('\n');
+  assert.match(output, /Model selected: fake\/new/);
+  assert.match(output, /warning.*not saved.*restart/i);
+  assert.match(output, /NEW ROUTE/);
+  assert.doesNotMatch(output, /DO-NOT-ECHO|disk full/);
+  assert.deepEqual(registry.selected(), { provider: 'fake', model: 'new' });
+  assert.deepEqual(await settings.read('personal'), { provider: 'fake', model: 'old' });
 });
 
 test('runRepl refuses chat until a model is selected and prints help for unknown commands', async t => {

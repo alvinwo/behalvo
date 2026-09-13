@@ -1,3 +1,4 @@
+import { holdSqliteWriteLock } from './sqlite-lock-helper.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -695,3 +696,188 @@ test('legacy accepted message reconciliation remains terminal and preserves its 
         assert.equal(f.store.state('personal').actions[action.id].evidenceRef, before.evidenceRef);
     } finally { f.store.close(); }
 });
+
+for (const stage of ['identify', 'observe']) {
+    test(`execution deadline during ${stage} preflight never dispatches late`, async () => {
+        const f = setup();
+        try {
+            registerConnection(f);
+            const action = await prepare(f); approve(f, action);
+            let release;
+            let entered;
+            const started = new Promise(resolve => { entered = resolve; });
+            f.controls[stage === 'identify' ? 'onIdentify' : 'onObserve'] = async () => {
+                entered(); await new Promise(resolve => { release = resolve; });
+            };
+            const control = new AbortController();
+            const pending = f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id },
+                { signal: control.signal, deadline: Date.now() + 1000 });
+            await started;
+            control.abort();
+            release();
+            await assert.rejects(pending, /deadline|abort|stop/i);
+            assert.equal(f.controls.executeCalls, 0);
+            assert.equal(f.store.state('personal').actions[action.id].status, 'approved');
+        } finally { f.store.close(); }
+    });
+}
+
+test('in-flight cancellation records unknown and ignores late success or rejection after store close', async () => {
+    for (const rejectLate of [false, true]) {
+        const f = setup();
+        registerConnection(f);
+        const action = await prepare(f); approve(f, action);
+        let entered, resolveEffect, rejectEffect;
+        const started = new Promise(resolve => { entered = resolve; });
+        f.controls.onExecute = () => { entered(); return new Promise((resolve, reject) => { resolveEffect = resolve; rejectEffect = reject; }); };
+        const control = new AbortController();
+        const pending = f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id },
+            { signal: control.signal, deadline: Date.now() + 1000 });
+        await started; control.abort();
+        const settled = await pending;
+        assert.equal(settled.status, 'unknown');
+        assert.equal((await f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id })).status, 'unknown');
+        assert.equal(f.controls.executeCalls, 1);
+        const before = f.store.journal('personal').length;
+        if (rejectLate) rejectEffect(new Error('late rejection'));
+        else resolveEffect({ status: 'accepted', evidence: 'late success' });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(f.store.journal('personal').length, before);
+        f.store.close();
+    }
+});
+
+test('elapsed deadline without fired abort timer blocks dispatch and late prepare/verify writes', async () => {
+    const f = setup();
+    try {
+        registerConnection(f);
+        await assert.rejects(f.service.prepare({ workspaceId: 'personal', ownerId: 'owner', workId: 'work', key: 'expired',
+            connectionId: 'connection-a', operationId: 'profile.update', operationVersion: '1', resourceId: 'profile', arguments: { city: 'X' } },
+            { deadline: Date.now() - 1 }), /deadline/i);
+        assert.equal(f.controls.identifyCalls, 0);
+        const action = await prepare(f); approve(f, action);
+        const context = { deadline: Date.now() + 10000 };
+        f.controls.onObserve = async () => { context.deadline = Date.now() - 1; };
+        await assert.rejects(f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id }, context), /deadline/i);
+        assert.equal(f.controls.executeCalls, 0);
+        delete f.controls.onObserve;
+        await f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id });
+        context.deadline = Date.now() + 10000;
+        f.controls.onObserve = async () => { context.deadline = Date.now() - 1; };
+        await assert.rejects(f.service.verify({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id }, context), /deadline/i);
+        assert.equal(f.store.state('personal').actions[action.id].verification, undefined);
+    } finally { f.store.close(); }
+});
+
+for (const stage of ['prepare', 'verify']) {
+    test(`deadline abandons deferred ${stage} readback without any late journal access`, async () => {
+        const f = setup();
+        registerConnection(f);
+        let action;
+        if (stage === 'verify') { action = await prepare(f); approve(f, action); await f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id }); }
+        let release;
+        f.controls.onObserve = () => new Promise(resolve => { release = resolve; });
+        const context = { deadline: Date.now() + 10 };
+        const pending = stage === 'prepare'
+            ? f.service.prepare({ workspaceId: 'personal', ownerId: 'owner', workId: 'work', key: 'late', connectionId: 'connection-a',
+                operationId: 'profile.update', operationVersion: '1', resourceId: 'profile', arguments: { city: 'X' } }, context)
+            : f.service.verify({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id }, context);
+        await assert.rejects(pending, /deadline/i);
+        if (action) assert.equal(f.store.state('personal').actions[action.id].verification, undefined);
+        else assert.equal(Object.keys(f.store.state('personal').actions).length, 0);
+        f.store.close(); release();
+        await new Promise(resolve => setImmediate(resolve));
+    });
+}
+
+test('never-settling effect times out inside the service and late rejection after close is consumed', async () => {
+    const f = setup(); registerConnection(f);
+    const action = await prepare(f); approve(f, action);
+    let rejectLate;
+    f.controls.onExecute = () => new Promise((_, reject) => { rejectLate = reject; });
+    const result = await f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id }, { deadline: Date.now() + 10 });
+    assert.equal(result.status, 'unknown');
+    assert.equal(f.controls.executeCalls, 1);
+    f.store.close(); rejectLate(new Error('Late provider rejection'));
+    await new Promise(resolve => setImmediate(resolve));
+});
+
+test('approval expiry during SQLite lock wait prevents action start and provider dispatch', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'behalvo-approval-lock-'));
+    const path = join(dir, 'journal.db');
+    const f = setup({ path, clock: { get value() { return new Date().toISOString(); } } });
+    let lockFinished;
+    try {
+        registerConnection(f);
+        const action = await prepare(f);
+        f.service.approveBatch({ workspaceId: 'personal', ownerId: 'owner',
+            expiresAt: new Date(Date.now() + 500).toISOString(), approvals: [{ actionId: action.id, digest: action.digest }] });
+        const originalAppend = f.store.append.bind(f.store);
+        f.store.append = (...args) => {
+            if (!lockFinished && args[2].some(event => event.type === 'action.started'))
+                lockFinished = holdSqliteWriteLock(path, 750);
+            return originalAppend(...args);
+        };
+        const before = f.store.journal('personal').length;
+        await assert.rejects(f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id },
+            { deadline: Date.now() + 10000 }), /Approval expired/i);
+        assert.ok(lockFinished);
+        assert.equal(f.store.journal('personal').length, before);
+        assert.equal(f.store.state('personal').actions[action.id].status, 'approved');
+        assert.equal(f.controls.executeCalls, 0);
+    } finally { f.store.close(); if (lockFinished) await lockFinished; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('approval expiry during durable start prevents dispatch and leaves an unknown attempt', async () => {
+    const clock = { value: NOW };
+    const f = setup({ clock });
+    try {
+        registerConnection(f);
+        const action = await prepare(f); approve(f, action);
+        const originalAppend = f.store.append.bind(f.store);
+        f.store.append = (...args) => {
+            const result = originalAppend(...args);
+            if (args[2].some(event => event.type === 'action.started')) clock.value = EXPIRY;
+            return result;
+        };
+        const result = await f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id });
+        assert.equal(result.status, 'unknown');
+        assert.equal(f.controls.executeCalls, 0);
+        assert.ok(result.attemptId);
+    } finally { f.store.close(); }
+});
+
+for (const stage of ['prepare', 'execute', 'verify']) {
+    test(`${stage} deadline is rechecked after SQLite writer lock acquisition before journal mutation`, async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'behalvo-operation-lock-'));
+        const path = join(dir, 'journal.db');
+        const f = setup({ path });
+        let lockFinished;
+        try {
+            registerConnection(f);
+            let action;
+            if (stage !== 'prepare') { action = await prepare(f); approve(f, action); }
+            if (stage === 'verify') await f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id });
+            const context = { deadline: Date.now() + 10000 };
+            const originalAppend = f.store.append.bind(f.store);
+            const eventType = { prepare: 'action.proposed', execute: 'action.started', verify: 'action.verification_recorded' }[stage];
+            f.store.append = (...args) => {
+                if (!lockFinished && args[2].some(event => event.type === eventType)) {
+                    lockFinished = holdSqliteWriteLock(path, 150);
+                    context.deadline = Date.now() + 20;
+                }
+                return originalAppend(...args);
+            };
+            const before = f.store.journal('personal').length;
+            const pending = stage === 'prepare'
+                ? f.service.prepare({ workspaceId: 'personal', ownerId: 'owner', workId: 'work', key: 'locked', connectionId: 'connection-a',
+                    operationId: 'profile.update', operationVersion: '1', resourceId: 'profile', arguments: { city: 'X' } }, context)
+                : f.service[stage]({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id }, context);
+            await assert.rejects(pending, /deadline/i);
+            assert.ok(lockFinished);
+            assert.equal(f.store.journal('personal').length, before);
+            assert.equal(f.controls.executeCalls, stage === 'verify' ? 1 : 0);
+            if (stage === 'execute') assert.equal(f.store.state('personal').actions[action.id].status, 'approved');
+        } finally { f.store.close(); if (lockFinished) await lockFinished; rmSync(dir, { recursive: true, force: true }); }
+    });
+}
