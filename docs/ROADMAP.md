@@ -14,6 +14,13 @@
 The deterministic `synthetic-v1` scripted suite validates the harness; it cannot
 substitute for step 1 or certify M1.1 acceptance.
 
+The private-storage foundation now provides opt-in authenticated SQLite payload
+encryption for new databases, separate key-file configuration, and verified
+encrypted backup/restore. It does not protect Pi credentials, model settings, or
+evaluation reports, and it does not add authentication, rotation, retention, or
+erasure. M1.1 live acceptance and M1.2 owner control remain incomplete. See the
+[private storage guide](PRIVATE_STORAGE.md).
+
 ## M0 — Offline foundation
 
 Implemented: journal/reducer, SQLite transactions, projection rebuild/stateAt,
@@ -32,7 +39,7 @@ it -> agent watches for a reply -> owner confirms the goal is resolved.
 | [01](issues/01-owner-control.md) | Authenticated owner control and approval UI | M0 |
 | [02](issues/02-model-adapter.md) | Proposal-only model adapter and bounded dispatcher | 01 |
 | [03](issues/03-email-relay.md) | One verified email/relay binding | 01, 04 |
-| [04](issues/04-private-artifacts.md) | Secrets, artifact encryption, retention/erasure | M0 |
+| [04](issues/04-private-artifacts.md) | Protected credentials/settings and retention/erasure; payload encryption foundation delivered | M0 |
 | [05](issues/05-real-followup.md) | End-to-end personal follow-up dogfood | 01–04 |
 
 ## M2 — Reliability and measured memory

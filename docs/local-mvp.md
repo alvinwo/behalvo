@@ -198,6 +198,10 @@ scripted terminal tests exercise the complete workflow without a real model or
 real account. All shipped operation effects remain synthetic: no account
 credentials, browser, shell, payment, message, or real provider write is exposed.
 
+Persistent synthetic operations cannot be combined with encrypted agent storage,
+because their independent provider sidecar is plaintext. Startup rejects that
+combination before either database is created.
+
 ## Local files
 
 By default:
@@ -215,6 +219,23 @@ BEHALVO_DB=/path/agent.db \
 BEHALVO_PI_AUTH=/path/pi-auth.json \
 npm run agent
 ```
+
+For a new opt-in encrypted database, first create a separate key and provide its
+path on every start:
+
+```bash
+npm run storage -- keygen --out /private/path/agent.behalvo-key
+npm run agent -- --db /private/data/agent.db \
+  --storage-key-file /private/path/agent.behalvo-key
+```
+
+`BEHALVO_STORAGE_KEY_FILE` is the environment alternative; the command-line path
+wins. Choose an unused database path for the first encrypted start. Existing
+plaintext databases are not converted, and a missing configured
+key fails before database creation. Backups require the dedicated verified
+`npm run storage -- backup` and `restore` commands. Read the
+[private storage guide](PRIVATE_STORAGE.md) before use; the key, Pi credentials,
+model settings, and evaluation reports are separate recovery items.
 
 Workspace and owner IDs are also configurable:
 
@@ -268,7 +289,7 @@ handler code. See [SECURITY.md](../SECURITY.md).
 - semantic/vector retrieval;
 - real account operation handlers and protected operation credentials;
 - a background 24/7 daemon;
-- encrypted message artifacts;
+- retention, erasure, and key rotation for encrypted payloads;
 - hosted multi-user deployment.
 
 Those are intentionally outside this MVP so the local state, memory, provider, and restart boundaries can be validated first.

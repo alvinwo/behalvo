@@ -106,7 +106,8 @@ test('legacy dated facts replay and unknown-onset observations are retrieved acr
     assert.equal(f.store.state('personal').facts.legacy.observedAt, source.recordedAt);
     const state = f.store.rebuild('personal');
     assert.equal(state.facts.legacy.observedAt, source.recordedAt);
-    const context = f.buildContext(f.store, { ...request, threadId: 'web', at: '2026-09-14T00:00:00.000Z' });
+    // Observe at the actual source time so this remains valid after any calendar date.
+    const context = f.buildContext(f.store, { ...request, threadId: 'web', at: source.recordedAt });
     assert.match(context.text, /drink\.preference/);
     assert.match(context.text, /"validFrom":null/);
     assert.match(context.text, /"observedAt"/);

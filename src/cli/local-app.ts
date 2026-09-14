@@ -13,6 +13,7 @@ export interface LocalAgentOptions {
   ownerId: string;
   gateways: readonly ModelGateway[];
   syntheticOperations?: boolean;
+  encryptionKey?: Uint8Array;
 }
 
 export interface LocalAgent {
@@ -26,7 +27,9 @@ export interface LocalAgent {
 }
 
 export function openLocalAgent(options: LocalAgentOptions): LocalAgent {
-  const store = new SqliteStore(options.dbPath);
+  if (options.encryptionKey !== undefined && options.syntheticOperations && options.dbPath !== ':memory:')
+    throw new Error('Encrypted storage cannot use persistent synthetic operations.');
+  const store = new SqliteStore(options.dbPath, options.encryptionKey === undefined ? {} : { encryptionKey: options.encryptionKey });
   let synthetic: PersistentSyntheticOperationsProvider | undefined;
   try {
     store.bindLocalMode(options.syntheticOperations ? 'synthetic' : 'ordinary');
