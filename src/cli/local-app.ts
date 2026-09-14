@@ -6,6 +6,7 @@ import { ModelRegistry } from '../model/registry.js';
 import { AgentService } from '../runtime/agent-service.js';
 import { Operator } from '../runtime/operator.js';
 import { SqliteStore } from '../storage/sqlite-store.js';
+import { acquireLocalProcessLock } from '../storage/process-lock.js';
 
 export interface LocalAgentOptions {
   dbPath: string;
@@ -29,9 +30,11 @@ export interface LocalAgent {
 export function openLocalAgent(options: LocalAgentOptions): LocalAgent {
   if (options.encryptionKey !== undefined && options.syntheticOperations && options.dbPath !== ':memory:')
     throw new Error('Encrypted storage cannot use persistent synthetic operations.');
-  const store = new SqliteStore(options.dbPath, options.encryptionKey === undefined ? {} : { encryptionKey: options.encryptionKey });
+  const processLock = acquireLocalProcessLock(options.dbPath);
+  let store: SqliteStore | undefined;
   let synthetic: PersistentSyntheticOperationsProvider | undefined;
   try {
+    store = new SqliteStore(processLock.dbPath, options.encryptionKey === undefined ? {} : { encryptionKey: options.encryptionKey });
     store.bindLocalMode(options.syntheticOperations ? 'synthetic' : 'ordinary');
     let state;
     try {
@@ -47,7 +50,8 @@ export function openLocalAgent(options: LocalAgentOptions): LocalAgent {
     const operationRegistry = new OperationRegistry();
     const operations = new OperationService(store, operationRegistry, undefined, options.workspaceId);
     if (options.syntheticOperations)
-      synthetic = openSyntheticOperations(store, operationRegistry, operations, options);
+      synthetic = openSyntheticOperations(store, operationRegistry, operations, { ...options, dbPath: processLock.dbPath });
+    let closed = false;
     return {
       store,
       operations,
@@ -55,11 +59,18 @@ export function openLocalAgent(options: LocalAgentOptions): LocalAgent {
       registry,
       service: new AgentService(store, registry, undefined, { service: operations, registry: operationRegistry, workspaceId: options.workspaceId }),
       operator: new Operator(store),
-      close: () => { synthetic?.close(); store.close(); }
+      close: () => {
+        if (closed) return;
+        closed = true;
+        try { synthetic?.close(); } finally {
+          try { store?.close(); } finally { processLock.release(); }
+        }
+      }
     };
   } catch (error) {
-    synthetic?.close();
-    store.close();
+    try { synthetic?.close(); } finally {
+      try { store?.close(); } finally { processLock.release(); }
+    }
     throw error;
   }
 }

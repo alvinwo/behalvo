@@ -20,4 +20,5 @@ jobs:
       - run: npm run check
       - run: npm run demo
       - run: npm run operations:demo
+      - run: npm run owner-control:demo
       - run: git diff --check

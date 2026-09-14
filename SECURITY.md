@@ -8,6 +8,8 @@ separately in `data/pi-auth.json` by default. The owner has reported a successfu
 is tested with scripted models and synthetic providers. This credential store is
 not production secrets protection.
 
+The loopback owner-control console uses a short-lived bootstrap file and in-memory bearer session for local synthetic review only. It exposes no model, login, credential, connection-binding or execute route; approval does not execute an operation. This is not remote authentication, mobile identity or production privacy.
+
 The owner ID checks assume a trusted local caller. They are not a login system,
 signature check or authorization token. External-audience context is denied.
 

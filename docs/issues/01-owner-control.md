@@ -17,3 +17,8 @@ Provide one authenticated owner interaction surface without using email as the c
 - [ ] Authenticate approval and cancellation separately from conversation content.
 - [ ] Add negative tests for impersonation, stale approval, wrong workspace and modified command.
 - [ ] Choose one practical IM or local UI first; do not claim WeChat/WhatsApp support without a working adapter.
+
+
+## Partial delivery (2026-09-14)
+
+Implemented a local loopback synthetic pairing/review console with durable approvals and cancellations. This does not close the issue: remote identity, real message preview, phone connectivity, protected credentials/settings, real-provider authorization/readback and manual live-model acceptance remain required.

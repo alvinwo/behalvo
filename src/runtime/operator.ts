@@ -76,10 +76,11 @@ export class Operator {
         this.store.append(workspaceId, s.version, [{ type: 'action.approved', data: { id: a.id, approval: { ownerId, digest, expiresAt } } }], { actorId: ownerId, recordedAt: now });
         return this.store.state(workspaceId).actions[a.id]!;
     }
-    cancelAction(workspaceId: string, ownerId: string, actionId: string, reason: string): void {
+    cancelAction(workspaceId: string, ownerId: string, actionId: string, reason: string, beforeAppend?: () => void): void {
         const s = this.store.state(workspaceId);
         assertOwner(s, ownerId);
-        this.store.append(workspaceId, s.version, [{ type: 'action.cancelled', data: { id: actionId, reason } }], { actorId: ownerId, recordedAt: this.clock() });
+        this.store.append(workspaceId, s.version, [{ type: 'action.cancelled', data: { id: actionId, reason } }],
+            { actorId: ownerId, recordedAt: this.clock() }, beforeAppend);
     }
     startEffect(workspaceId: string, actionId: string, driverChannel: string): EffectRequest | null {
         const s = this.store.state(workspaceId);
