@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -10,6 +11,8 @@ import { promisify } from 'node:util';
 import { parseEvaluationArgs, runEvaluationCli } from '../dist/evaluation/main.js';
 import { prepareReportOutput } from '../dist/evaluation/report.js';
 import { ScriptedEvaluationGateway } from '../dist/evaluation/scripted-gateway.js';
+import { PiCredentialFileStore } from '../dist/model/pi-auth-store.js';
+import { createStorageKeyFile, loadStorageKeyFile } from '../dist/storage/key-file.js';
 
 const cliPath = fileURLToPath(new URL('../dist/evaluation/main.js', import.meta.url));
 const execFile = promisify(execFileCallback);
@@ -106,6 +109,12 @@ test('CLI rejects conflicting, unknown, duplicate, and mode-inappropriate flags'
     ['--scripted', '--case', 'not-a-case'],
     ['--scripted', '--model', 'provider/model'],
     ['--scripted', '--auth', 'private.json'],
+    ['--scripted', '--model-state-key-file', 'model-state.key'],
+    ['--list', '--model-state-key-file', 'model-state.key'],
+    ['--help', '--model-state-key-file', 'model-state.key'],
+    ['--live', '--model', 'provider/model', '--model-state-key-file'],
+    ['--live', '--model', 'provider/model', '--model-state-key-file=key'],
+    ['--live', '--model', 'provider/model', '--model-state-key-file', 'one', '--model-state-key-file', 'two'],
     ['--list', '--case', 'capabilities'],
     ['--help', '--list'],
     ['positional']
@@ -184,6 +193,24 @@ test('live model and auth use explicit, Behalvo, legacy precedence and live requ
   assert.throws(() => parseEvaluationArgs(['--live', '--model', 'invalid'], {}, cwd), /provider\/model/i);
   assert.throws(() => parseEvaluationArgs(['--live', '--model', 'bad\nprovider/model'], {}, cwd), /provider\/model/i);
   assert.throws(() => parseEvaluationArgs(['--live', '--model', 'bad\u001b/provider'], {}, cwd), /provider\/model/i);
+});
+
+test('live model-state key uses explicit precedence while non-live modes ignore ambient configuration', () => {
+  const cwd = process.cwd();
+  const environment = { BEHALVO_MODEL_STATE_KEY_FILE: 'environment.key' };
+  const ambient = parseEvaluationArgs(['--live', '--model', 'provider/model'], environment, cwd);
+  assert.equal(ambient.modelStateKeyPath, join(cwd, 'environment.key'));
+  const explicit = parseEvaluationArgs([
+    '--live', '--model', 'provider/model', '--model-state-key-file', 'flag.key'
+  ], { BEHALVO_MODEL_STATE_KEY_FILE: '' }, cwd);
+  assert.equal(explicit.modelStateKeyPath, join(cwd, 'flag.key'));
+  assert.throws(() => parseEvaluationArgs(['--live', '--model', 'provider/model'], {
+    BEHALVO_MODEL_STATE_KEY_FILE: ''
+  }, cwd), /private model state configuration/i);
+  assert.deepEqual(parseEvaluationArgs([], { BEHALVO_MODEL_STATE_KEY_FILE: '' }, cwd), { kind: 'help' });
+  assert.deepEqual(parseEvaluationArgs(['--help'], { BEHALVO_MODEL_STATE_KEY_FILE: '' }, cwd), { kind: 'help' });
+  assert.deepEqual(parseEvaluationArgs(['--list'], { BEHALVO_MODEL_STATE_KEY_FILE: '/missing/key' }, cwd), { kind: 'list' });
+  assert.equal(parseEvaluationArgs(['--scripted'], { BEHALVO_MODEL_STATE_KEY_FILE: '' }, cwd).modelStateKeyPath, undefined);
 });
 
 test('private report publication creates parents, publishes atomically, and uses mode 0600', async t => {
@@ -357,6 +384,79 @@ test('malformed configured live auth is a sanitized startup error before Pi load
   assert.match(captured.output.stderr, /live evaluation could not start/i);
   assert.doesNotMatch(captured.output.stderr, /bad-auth|DO-NOT-ECHO|must not load/);
   assert.deepEqual(await readdir(dir), ['bad-auth.json']);
+});
+
+test('protected live preflight fails before gateway construction and report preparation', async t => {
+  if (process.platform === 'win32') return t.skip('protected model state requires POSIX');
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-eval-model-state-fail-'));
+  await chmod(dir, 0o700);
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const keyPath = join(dir, 'model-state.behalvo-key');
+  const authPath = join(dir, 'auth.json');
+  const reportPath = join(dir, 'report.json');
+  await createStorageKeyFile(keyPath);
+  await writeFile(authPath, 'corrupt-protected-state', { mode: 0o600 });
+  let factoryCalls = 0;
+  const captured = capturedDependencies({
+    cwd: dir,
+    env: {},
+    createLiveGateway() {
+      factoryCalls++;
+      throw new Error('must not construct');
+    }
+  });
+  const code = await runEvaluationCli([
+    '--live', '--model', 'synthetic/test', '--auth', authPath,
+    '--model-state-key-file', keyPath, '--out', reportPath,
+    '--case', 'capabilities', '--repeats', '1'
+  ], captured.dependencies);
+  assert.equal(code, 2);
+  assert.equal(factoryCalls, 0);
+  assert.equal(existsSync(reportPath), false);
+  assert.match(captured.output.stderr, /live evaluation could not start/i);
+  assert.doesNotMatch(captured.output.stderr, /corrupt-protected-state|must not construct|auth\.json/);
+});
+
+test('protected live evaluation forwards copied key bytes and sanitizes synthetic provider failure', async t => {
+  if (process.platform === 'win32') return t.skip('protected model state requires POSIX');
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-eval-model-state-forward-'));
+  await chmod(dir, 0o700);
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const keyPath = join(dir, 'model-state.behalvo-key');
+  const authPath = join(dir, 'auth.json');
+  const reportPath = join(dir, 'report.json');
+  await createStorageKeyFile(keyPath);
+  const initialKey = loadStorageKeyFile(keyPath);
+  try {
+    const store = new PiCredentialFileStore(authPath, { encryptionKey: initialKey });
+    await store.modify('synthetic', async () => ({ type: 'api_key', key: 'synthetic-fixture-only' }));
+  } finally { initialKey.fill(0); }
+
+  let factoryCalls = 0;
+  let capturedKey;
+  const captured = capturedDependencies({
+    cwd: dir,
+    env: {},
+    createLiveGateway(receivedAuthPath, options) {
+      factoryCalls++;
+      assert.equal(receivedAuthPath, authPath);
+      capturedKey = Buffer.from(options.encryptionKey);
+      return {
+        async listModels() { return [{ provider: 'synthetic', model: 'test' }]; },
+        async complete() { throw new Error('synthetic-provider-secret'); }
+      };
+    }
+  });
+  const code = await runEvaluationCli([
+    '--live', '--model', 'synthetic/test', '--auth', authPath,
+    '--model-state-key-file', keyPath, '--out', reportPath,
+    '--case', 'capabilities', '--repeats', '1'
+  ], captured.dependencies);
+  assert.equal(factoryCalls, 1);
+  assert.deepEqual(capturedKey, Buffer.from(loadStorageKeyFile(keyPath)));
+  assert.equal(code, 1);
+  assert.equal((await readFile(reportPath, 'utf8')).includes('synthetic-provider-secret'), false);
+  assert.equal(captured.output.stderr, '');
 });
 
 test('live startup errors are sanitized without auth contents or raw provider errors', async t => {

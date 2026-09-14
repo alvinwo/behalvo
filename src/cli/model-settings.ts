@@ -2,6 +2,14 @@ import { chmod, mkdir, open, readFile, rename, rm, writeFile, type FileHandle } 
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { ModelRef } from '../model/types.js';
+import {
+  MODEL_STATE_LIMITS,
+  ModelStateError,
+  validModelStateIdentifier,
+  type ModelStatePreflightOptions,
+  type ModelStateProtectionOptions
+} from '../storage/model-state-codec.js';
+import { PrivateModelStateFile } from '../storage/private-model-state-file.js';
 
 interface SettingsFile {
   version: 1;
@@ -29,21 +37,79 @@ function validate(path: string, value: unknown): asserts value is SettingsFile {
   }
 }
 
+function ownDataEntries(value: object): [string, unknown][] {
+  if (Object.getOwnPropertySymbols(value).length !== 0) throw new Error('symbol key');
+  const entries: [string, unknown][] = [];
+  for (const key of Object.getOwnPropertyNames(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable)
+      throw new Error('non-data property');
+    entries.push([key, descriptor.value]);
+  }
+  return entries;
+}
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function protectedSelection(value: unknown): ModelRef {
+  if (!plainObject(value)) throw new Error('invalid selection');
+  const entries = ownDataEntries(value);
+  if (entries.length !== 2 || entries.some(([key]) => key !== 'provider' && key !== 'model'))
+    throw new Error('invalid selection');
+  const provider = entries.find(([key]) => key === 'provider')?.[1];
+  const model = entries.find(([key]) => key === 'model')?.[1];
+  if (!validModelStateIdentifier(provider) || !validModelStateIdentifier(model))
+    throw new Error('invalid selection');
+  return { provider, model };
+}
+
+function validateProtectedSettings(value: unknown): asserts value is SettingsFile {
+  if (!plainObject(value)) throw new Error('invalid settings root');
+  const rootEntries = ownDataEntries(value);
+  if (rootEntries.length !== 2 || rootEntries.some(([key]) => key !== 'version' && key !== 'workspaces'))
+    throw new Error('invalid settings root');
+  const version = rootEntries.find(([key]) => key === 'version')?.[1];
+  const workspaces = rootEntries.find(([key]) => key === 'workspaces')?.[1];
+  if (version !== 1 || !plainObject(workspaces)) throw new Error('invalid settings root');
+  const entries = ownDataEntries(workspaces);
+  if (entries.length > MODEL_STATE_LIMITS.workspaces) throw new Error('too many workspaces');
+  for (const [workspace, selection] of entries) {
+    if (!validModelStateIdentifier(workspace)) throw new Error('invalid workspace');
+    protectedSelection(selection);
+  }
+}
+
+function emptySettings(): SettingsFile {
+  return { version: 1, workspaces: Object.create(null) as Record<string, ModelRef> };
+}
+
 export function settingsPathForDatabase(dbPath: string): string {
   return `${dbPath}.settings.json`;
 }
 
 export class ModelSettingsStore {
   #chain: Promise<void> = Promise.resolve();
+  readonly #protectedFile?: PrivateModelStateFile<SettingsFile>;
 
-  constructor(readonly path: string) {}
+  constructor(readonly path: string, options: ModelStateProtectionOptions = {}) {
+    if (options.encryptionKey !== undefined) {
+      this.#protectedFile = new PrivateModelStateFile(path, 'model-settings', options.encryptionKey, {
+        empty: emptySettings,
+        validate: validateProtectedSettings
+      });
+    }
+  }
 
   async #load(): Promise<SettingsFile> {
     let text: string;
     try {
       text = await readFile(this.path, 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, workspaces: {} };
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptySettings();
       throw error;
     }
     try {
@@ -56,9 +122,14 @@ export class ModelSettingsStore {
     }
   }
 
+  async preflight(options: ModelStatePreflightOptions = {}): Promise<void> {
+    if (this.#protectedFile) return this.#protectedFile.preflight(options);
+    await this.#load();
+  }
+
   async read(workspaceId: string): Promise<ModelRef | undefined> {
-    const workspaces = (await this.#load()).workspaces;
-    const selection = Object.hasOwn(workspaces, workspaceId) ? workspaces[workspaceId] : undefined;
+    const data = this.#protectedFile ? await this.#protectedFile.read() : await this.#load();
+    const selection = Object.hasOwn(data.workspaces, workspaceId) ? data.workspaces[workspaceId] : undefined;
     return selection ? structuredClone(selection) : undefined;
   }
 
@@ -80,6 +151,22 @@ export class ModelSettingsStore {
   }
 
   async write(workspaceId: string, selection: ModelRef): Promise<void> {
+    if (this.#protectedFile) {
+      let stored: ModelRef;
+      try {
+        if (!validModelStateIdentifier(workspaceId)) throw new Error('invalid workspace');
+        stored = protectedSelection(selection);
+      } catch {
+        throw new ModelStateError('update');
+      }
+      await this.#protectedFile.update(async data => {
+        Object.defineProperty(data.workspaces, workspaceId, {
+          value: structuredClone(stored), enumerable: true, configurable: true, writable: true
+        });
+        return { next: data, result: undefined };
+      });
+      return;
+    }
     if (!validText(workspaceId) || !validText(selection.provider) || !validText(selection.model)) throw malformed(this.path);
     const operation = this.#chain.catch(() => undefined).then(async () => {
       const lock = await this.#acquireWriteLock();

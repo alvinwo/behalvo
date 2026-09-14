@@ -73,7 +73,10 @@ Follow the URL/device-code/manual-code instructions printed by the provider. Aft
 data/pi-auth.json
 ```
 
-The file is outside the Journal, is git-ignored through `data/`, and is written with owner-only permissions on Unix-like systems. OAuth refresh updates use the same credential store.
+The default file is outside the Journal, is git-ignored through `data/`, and is
+written with owner-only permissions on Unix-like systems. A custom auth path is
+not automatically ignored by Git. OAuth refresh updates use the same credential
+store.
 
 Then list the models and select one of the model IDs Pi reports:
 
@@ -83,6 +86,11 @@ Then list the models and select one of the model IDs Pi reports:
 ```
 
 A successful `/model` selection is saved for this database and workspace and restored on the next startup. The sidecar stores only the provider and model IDs; credentials remain in the separate Pi auth file. Use `--model provider/model`, `BEHALVO_MODEL`, or `OPERATOR_MODEL` to override the saved selection. The normal precedence is `--model`, `BEHALVO_MODEL`, `OPERATOR_MODEL`, then the saved selection. `--offline` ignores the saved selection and never replaces it.
+
+If `/model <provider> <model>` activates a model but its settings write fails,
+the terminal warns that the selection is active only for the current session and
+will not survive restart. The warning never treats registry selection as proof of
+a durable save.
 
 You can also select a model at startup:
 
@@ -220,6 +228,55 @@ BEHALVO_PI_AUTH=/path/pi-auth.json \
 npm run agent
 ```
 
+### Protect Pi credentials and saved model settings
+
+On POSIX, create a model-state key in a user-owned directory and start with fresh
+auth and database/settings destinations:
+
+```bash
+install -d -m 700 "$HOME/.local/share/behalvo-private/keys" \
+  "$HOME/.local/share/behalvo-private/state"
+npm run storage -- keygen \
+  --out "$HOME/.local/share/behalvo-private/keys/model-state.behalvo-key"
+npm run agent -- \
+  --db "$HOME/.local/share/behalvo-private/state/agent.db" \
+  --auth "$HOME/.local/share/behalvo-private/state/pi-auth.json" \
+  --model-state-key-file "$HOME/.local/share/behalvo-private/keys/model-state.behalvo-key"
+```
+
+`BEHALVO_MODEL_STATE_KEY_FILE` is the only environment alternative; the explicit
+flag wins. The option applies to the selected Pi auth file and the settings file
+derived from `--db`. It does not protect SQLite. Supply `--storage-key-file`
+separately if a new database also needs payload protection; one key file may be
+selected explicitly for both boundaries, but no key is borrowed automatically.
+
+The key, auth, settings, database, SQLite companions, model-state lock files, and
+synthetic sidecars must not collide, including through `.`/`..`, symlink, or inode
+aliases. Existing protected auth/settings files must be regular, single-link,
+current-user files with mode `0600` for agent or evaluator startup. New immediate
+directories use `0700`; new data, staging, and lock files use `0600`. Startup
+preflights both protected writer stores before opening the agent database or
+loading Pi, even when `--model` is explicit.
+
+Existing plaintext and protected files are different modes. A wrong key,
+corruption, plaintext/ciphertext mismatch, unsafe mode, or missing configured key
+fails closed with a fixed message and does not modify existing bytes. There is no
+fallback, automatic import, key generation, migration, conversion, or deletion of
+old plaintext copies. Move old plaintext copies only through an operator-managed
+procedure after separately confirming the new protected files; this release does
+not provide that procedure.
+
+Protected writers wait up to five seconds for the adjacent
+`.behalvo-model-state-lock`, polling every 10 ms. They never steal it based on
+age or PID. Remove a surviving lock manually only after exclusive operator
+inspection confirms every process using that file has stopped and the path is the
+expected lock. There is no automated lock-removal command.
+
+`--offline` rejects an explicit model-state key flag and ignores the environment
+value completely, including empty and missing-file values. Evaluation accepts
+the option only with explicit `--live`; scripted/list/help paths likewise reject
+the flag and ignore its environment value.
+
 For a new opt-in encrypted database, first create a separate key and provide its
 path on every start:
 
@@ -243,9 +300,11 @@ Workspace and owner IDs are also configurable:
 BEHALVO_WORKSPACE=personal BEHALVO_OWNER=owner npm run agent
 ```
 
-The previous `OPERATOR_DB`, `OPERATOR_PI_AUTH`, `OPERATOR_WORKSPACE`, `OPERATOR_OWNER`, and `OPERATOR_MODEL` names remain supported. In ordinary mode, for database, auth, workspace, and owner values, selection order is: explicit CLI flag, matching `BEHALVO_*` variable, matching `OPERATOR_*` variable, then the existing default. Model selection adds the saved database/workspace selection after those explicit sources. Database paths, workspace/owner IDs, stored history and credential formats are unchanged; no data migration is needed. The existing exported `Operator` class also keeps its name for source compatibility.
+The previous `OPERATOR_DB`, `OPERATOR_PI_AUTH`, `OPERATOR_WORKSPACE`, `OPERATOR_OWNER`, and `OPERATOR_MODEL` names remain supported. There is no legacy model-state key alias. In ordinary mode, for database, auth, workspace, and owner values, selection order is: explicit CLI flag, matching `BEHALVO_*` variable, matching `OPERATOR_*` variable, then the existing default. Model selection adds the saved database/workspace selection after those explicit sources. Database paths, workspace/owner IDs, stored history and plaintext credential formats are unchanged; protected mode is an explicit fresh-file choice, not a migration. The existing exported `Operator` class also keeps its name for source compatibility.
 
-Do not run two Behalvo processes against the same Pi auth file in this MVP. Credential refresh is serialized and atomically written within one process; cross-process file locking is not implemented yet.
+Do not run two plaintext-mode Behalvo processes against the same Pi auth file in
+this MVP. Plaintext credential refresh is serialized only within one process.
+Protected model-state writers use the bounded cross-process lock described above.
 
 ## Memory behavior in this MVP
 
@@ -275,7 +334,9 @@ tools use trusted workspace/owner/focused-work bindings and the existing
 OperationService approval, attempt and uncertainty rules. The terminal provides
 no model approval, connection-registration, reconciliation, shell or browser tool.
 
-Credentials remain outside operation catalogs, prompts and domain state. Raw
+Credentials remain outside operation catalogs, prompts and domain state. Pi
+provider ambient environment credentials and SDK caches remain outside protected
+model-state files. Raw
 provider/handler exceptions are not copied into application-authored stop replies.
 The supported local runtime is a trusted API boundary, not a sandbox for untrusted
 handler code. See [SECURITY.md](../SECURITY.md).
@@ -289,7 +350,7 @@ handler code. See [SECURITY.md](../SECURITY.md).
 - semantic/vector retrieval;
 - real account operation handlers and protected operation credentials;
 - a background 24/7 daemon;
-- retention, erasure, and key rotation for encrypted payloads;
+- retention, erasure, and key rotation for encrypted payloads or model state;
 - hosted multi-user deployment.
 
 Those are intentionally outside this MVP so the local state, memory, provider, and restart boundaries can be validated first.

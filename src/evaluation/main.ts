@@ -12,6 +12,12 @@ import { runAgentEvaluation } from './runner.js';
 import { SYNTHETIC_V1_SCENARIOS, SYNTHETIC_V1_SCENARIO_IDS } from './scenarios.js';
 import { ScriptedEvaluationGateway } from './scripted-gateway.js';
 import type { AgentEvaluationReport, SyntheticScenarioId } from './types.js';
+import type { ModelStateProtectionOptions } from '../storage/model-state-codec.js';
+import {
+  assertModelStatePathSeparation,
+  loadModelStateProtection,
+  resolveModelStateKeyPath
+} from '../cli/model-state-config.js';
 
 const execFileAsync = promisify(execFile);
 const SCRIPTED_MODEL = { provider: 'scripted-evaluation', model: 'synthetic-v1' } as const;
@@ -34,10 +40,12 @@ Options:
   --out PATH                  Exclusive private JSON report destination
   --model PROVIDER/MODEL      Required for --live unless configured by environment
   --auth PATH                 Pi auth file path for --live; never a credential value
+  --model-state-key-file PATH Protect the selected live Pi auth file with this key
   --help                      Show this help
 
 Live model precedence: --model, BEHALVO_MODEL, OPERATOR_MODEL.
 Auth path precedence: --auth, BEHALVO_PI_AUTH, OPERATOR_PI_AUTH, data/pi-auth.json.
+Model-state key precedence: --model-state-key-file, BEHALVO_MODEL_STATE_KEY_FILE.
 No live inference occurs unless --live is explicit.
 `;
 
@@ -56,6 +64,7 @@ export type EvaluationCliCommand =
     mode: 'scripted' | 'live';
     model: ModelRef;
     authPath: string;
+    modelStateKeyPath?: string;
     caseIds?: SyntheticScenarioId[];
     repeats: number;
     maxCalls: number;
@@ -92,7 +101,10 @@ export function parseEvaluationArgs(
 ): EvaluationCliCommand {
   if (argv.length === 0) return { kind: 'help' };
   const booleanFlags = new Set(['--help', '--list', '--scripted', '--live']);
-  const valueFlags = new Set(['--case', '--repeats', '--max-calls', '--max-seconds', '--out', '--model', '--auth']);
+  const valueFlags = new Set([
+    '--case', '--repeats', '--max-calls', '--max-seconds', '--out', '--model', '--auth',
+    '--model-state-key-file'
+  ]);
   const booleans = new Set<string>();
   const values = new Map<string, string[]>();
 
@@ -131,8 +143,8 @@ export function parseEvaluationArgs(
     throw new EvaluationArgumentError('--scripted and --live are mutually exclusive.');
   if (!scripted && !live)
     throw new EvaluationArgumentError('An evaluation mode is required; use --scripted or --live.');
-  if (scripted && (values.has('--model') || values.has('--auth')))
-    throw new EvaluationArgumentError('--model and --auth can only be used with --live.');
+  if (scripted && (values.has('--model') || values.has('--auth') || values.has('--model-state-key-file')))
+    throw new EvaluationArgumentError('--model, --auth, and --model-state-key-file can only be used with --live.');
 
   const rawCases = values.get('--case') ?? [];
   const knownCases = new Set<string>(SYNTHETIC_V1_SCENARIO_IDS);
@@ -161,11 +173,18 @@ export function parseEvaluationArgs(
     throw new EvaluationArgumentError('--live requires --model provider/model, BEHALVO_MODEL, or OPERATOR_MODEL.');
   const authValue = values.get('--auth')?.[0] ??
     (env.BEHALVO_PI_AUTH || env.OPERATOR_PI_AUTH || 'data/pi-auth.json');
+  const modelStateKeyPath = resolveModelStateKeyPath(
+    values.get('--model-state-key-file')?.[0],
+    env.BEHALVO_MODEL_STATE_KEY_FILE,
+    cwd,
+    !scripted
+  );
   return {
     kind: 'run', mode: scripted ? 'scripted' : 'live', model,
     authPath: resolve(cwd, authValue),
     ...(caseIds.length > 0 ? { caseIds } : {}),
     repeats, maxCalls, maxDurationMs: maxSeconds * 1000,
+    ...(modelStateKeyPath ? { modelStateKeyPath } : {}),
     ...(values.has('--out') ? { outPath: resolve(cwd, values.get('--out')![0]!) } : {})
   };
 }
@@ -175,7 +194,10 @@ export interface EvaluationCliDependencies {
   env?: Readonly<NodeJS.ProcessEnv>;
   writeStdout?: (text: string) => void;
   writeStderr?: (text: string) => void;
-  createLiveGateway?: (authPath: string) => ModelGateway;
+  createLiveGateway?: (
+    authPath: string,
+    protectionOptions: Readonly<ModelStateProtectionOptions>
+  ) => ModelGateway;
 }
 
 function listText(): string {
@@ -256,12 +278,36 @@ export async function runEvaluationCli(
     gateway = new ScriptedEvaluationGateway();
   } else {
     const createLiveGateway = dependencies.createLiveGateway ??
-      ((authPath: string) => new PiModelGateway(createPiRuntimeLoader(authPath)));
+      ((authPath: string, protectionOptions: Readonly<ModelStateProtectionOptions>) =>
+        new PiModelGateway(
+          createPiRuntimeLoader(authPath, undefined, protectionOptions),
+          protectionOptions.encryptionKey === undefined ? {} : { sanitizeErrors: true }
+        ));
+    let protection: ModelStateProtectionOptions = {};
     try {
       // Validate a configured store without requiring a provider entry: Pi may
       // legitimately resolve ambient credentials after finding no stored value.
-      await new PiCredentialFileStore(command.authPath).read(command.model.provider);
-      gateway = createLiveGateway(command.authPath);
+      if (command.modelStateKeyPath) {
+        protection = loadModelStateProtection({
+          modelStateKeyPath: command.modelStateKeyPath,
+          authPath: command.authPath
+        });
+        assertModelStatePathSeparation({
+          modelStateKeyPath: command.modelStateKeyPath,
+          authPath: command.authPath
+        });
+        await new PiCredentialFileStore(command.authPath, protection).preflight({ writable: true });
+      } else {
+        await new PiCredentialFileStore(command.authPath).read(command.model.provider);
+      }
+      gateway = createLiveGateway(command.authPath, protection);
+    } catch {
+      writeStderr('Live evaluation could not start. Verify the configured Pi credentials and selected model.\n');
+      return 2;
+    } finally {
+      protection.encryptionKey?.fill(0);
+    }
+    try {
       const models = await gateway.listModels();
       if (!models.some(model => model.provider === command.model.provider && model.model === command.model.model))
         throw new Error('Selected live model is unavailable');

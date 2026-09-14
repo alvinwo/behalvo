@@ -275,3 +275,90 @@ test('PiModelGateway forwards provider-owned login without putting credentials i
   assert.equal(credential.type, 'oauth');
   assert.deepEqual(events, [{ type: 'progress', message: 'opening browser' }]);
 });
+
+test('protected loader eagerly captures its key and injects a protected credential store through argument three', async t => {
+  const { PiModelGateway, createPiRuntimeLoader, PiCredentialFileStore } = await api();
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-pi-protected-loader-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'auth.json');
+  const callerKey = Buffer.alloc(32, 5);
+  let received;
+  const loader = createPiRuntimeLoader(path, async () => ({
+    builtinModels(options) {
+      received = options.credentials;
+      const runtime = fakePiRuntime();
+      runtime.login = (provider, type) => received.modify(provider, async () => ({ type, key: 'synthetic-protected' }));
+      return runtime;
+    }
+  }), { encryptionKey: callerKey });
+  callerKey.fill(0);
+  const gateway = new PiModelGateway(loader, { sanitizeErrors: true });
+  await gateway.login('synthetic', 'api_key', { prompt: async () => '', notify() {} });
+  assert.ok(received instanceof PiCredentialFileStore);
+  assert.doesNotMatch((await readFile(path, 'utf8')), /synthetic-protected|synthetic/);
+  assert.equal((await received.read('synthetic')).key, 'synthetic-protected');
+});
+
+test('an injected Pi runtime refreshes synthetic OAuth credentials through the protected store', async t => {
+  const { PiModelGateway, createPiRuntimeLoader } = await api();
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-pi-protected-refresh-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'auth.json');
+  let credentials;
+  const loader = createPiRuntimeLoader(path, async () => ({
+    builtinModels(options) {
+      credentials = options.credentials;
+      const runtime = fakePiRuntime();
+      runtime.login = provider => credentials.modify(provider, async () => ({
+        type: 'oauth', access: 'synthetic-expired', refresh: 'synthetic-refresh', expires: 1
+      }));
+      runtime.completeSimple = async () => {
+        await credentials.modify('openai-codex', async current => ({
+          ...current, access: 'synthetic-refreshed', refresh: 'synthetic-rotated', expires: 2
+        }));
+        return { content: [{ type: 'text', text: 'synthetic response' }], stopReason: 'stop' };
+      };
+      return runtime;
+    }
+  }), { encryptionKey: Buffer.alloc(32, 6) });
+  const gateway = new PiModelGateway(loader, { sanitizeErrors: true });
+  await gateway.login('openai-codex', 'oauth', { prompt: async () => '', notify() {} });
+  assert.equal((await gateway.complete({
+    model: { provider: 'openai-codex', model: 'gpt-test' }, system: 'synthetic', prompt: 'synthetic'
+  })).text, 'synthetic response');
+  assert.deepEqual(await credentials.read('openai-codex'), {
+    type: 'oauth', access: 'synthetic-refreshed', refresh: 'synthetic-rotated', expires: 2
+  });
+});
+
+test('sanitized Pi gateway uses exact no-cause errors without leaking synthetic secrets', async () => {
+  const { PiModelGateway } = await api();
+  const checks = [
+    [new PiModelGateway(async () => { throw new Error('synthetic-loader-secret'); }, { sanitizeErrors: true }),
+      gateway => gateway.listModels(), 'Unable to load bundled Pi model support (@earendil-works/pi-ai). Use Node >=22.19 and run npm ci.'],
+    [new PiModelGateway(async () => ({ ...fakePiRuntime(), async login() { throw new Error('synthetic-login-secret'); } }), { sanitizeErrors: true }),
+      gateway => gateway.login('synthetic-provider-secret', 'oauth', { prompt: async () => '', notify() {} }), 'Pi login failed.'],
+    [new PiModelGateway(async () => ({ ...fakePiRuntime(), getModels() { throw new Error('synthetic-catalog-secret'); } }), { sanitizeErrors: true }),
+      gateway => gateway.listModels(), 'Pi model catalog is unavailable.'],
+    [new PiModelGateway(async () => ({ ...fakePiRuntime(), getModel() { throw new Error('synthetic-lookup-secret'); } }), { sanitizeErrors: true }),
+      gateway => gateway.complete({ model: { provider: 'p', model: 'm' }, system: 's', prompt: 'p' }), 'Pi provider request failed.'],
+    [new PiModelGateway(async () => ({ ...fakePiRuntime(), async completeSimple() { throw new Error('synthetic-provider-secret'); } }), { sanitizeErrors: true }),
+      gateway => gateway.complete({ model: { provider: 'openai-codex', model: 'gpt-test' }, system: 's', prompt: 'p' }), 'Pi provider request failed.'],
+    [new PiModelGateway(async () => ({ ...fakePiRuntime(), async completeSimple() {
+      return { content: [], stopReason: 'error', errorMessage: 'synthetic-returned-secret' };
+    } }), { sanitizeErrors: true }),
+      gateway => gateway.complete({ model: { provider: 'openai-codex', model: 'gpt-test' }, system: 's', prompt: 'p' }), 'Pi provider request failed.']
+  ];
+  for (const [gateway, operation, expected] of checks)
+    await assert.rejects(() => operation(gateway), error => error.message === expected && !Object.hasOwn(error, 'cause'));
+});
+
+test('default Pi gateway mode retains raw provider failures for existing library callers', async () => {
+  const { PiModelGateway } = await api();
+  const loginFailure = new Error('legacy login detail');
+  const gateway = new PiModelGateway(async () => ({ ...fakePiRuntime(), async login() { throw loginFailure; } }));
+  await assert.rejects(
+    () => gateway.login('synthetic', 'oauth', { prompt: async () => '', notify() {} }),
+    error => error === loginFailure
+  );
+});

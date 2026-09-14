@@ -1,5 +1,6 @@
 export { SqliteStore } from './storage/sqlite-store.js';
 export { createStorageKeyFile, loadStorageKeyFile } from './storage/key-file.js';
+export type { ModelStateProtectionOptions } from './storage/model-state-codec.js';
 export { Operator } from './runtime/operator.js';
 export { buildContext, byteBudgetEstimate } from './memory/context.js';
 export { reduce, emptyState, resolveFact } from './kernel/reducer.js';
@@ -14,9 +15,9 @@ export type { OwnerTurnInput, AgentTurnResult } from './runtime/agent-service.js
 export { ModelRegistry } from './model/registry.js';
 export { FakeModelGateway } from './model/fake-gateway.js';
 export { PiModelGateway, createPiRuntimeLoader } from './model/pi-gateway.js';
-export type { PiRuntime, PiRuntimeLoader, PiModelDescriptor, PiAssistantMessage, PiAuthType, PiAuthPrompt, PiAuthEvent, PiAuthInteraction } from './model/pi-gateway.js';
+export type { PiRuntime, PiRuntimeLoader, PiModuleImporter, PiGatewayOptions, PiModelDescriptor, PiAssistantMessage, PiAuthType, PiAuthPrompt, PiAuthEvent, PiAuthInteraction } from './model/pi-gateway.js';
 export { PiCredentialFileStore } from './model/pi-auth-store.js';
-export type { PiCredential } from './model/pi-auth-store.js';
+export type { PiCredential, PiCredentialInfo } from './model/pi-auth-store.js';
 export { BudgetedModelGateway, BudgetedModelError } from './evaluation/telemetry.js';
 export type { BudgetedModelGatewayOptions, ModelCallErrorCode, ModelCallRecord, ModelCallStatus } from './evaluation/telemetry.js';
 export { runRepl } from './cli/repl.js';

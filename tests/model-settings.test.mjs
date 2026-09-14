@@ -83,3 +83,14 @@ test('failed update releases its lock so a corrected file can be updated', async
   await store.write('personal', { provider: 'fake', model: 'one' });
   assert.deepEqual(await store.read('personal'), { provider: 'fake', model: 'one' });
 });
+
+test('plaintext model settings preflight validates existing state and preserves constructor workspace', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-settings-compat-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'settings.json');
+  const settings = new ModelSettingsStore(path);
+  await settings.preflight();
+  await settings.write('constructor', { provider: 'synthetic', model: 'compat' });
+  assert.deepEqual(await settings.read('constructor'), { provider: 'synthetic', model: 'compat' });
+  await new ModelSettingsStore(path).preflight();
+});

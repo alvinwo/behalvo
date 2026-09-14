@@ -53,3 +53,24 @@ test('PiCredentialFileStore delete removes only one provider and malformed auth 
   await import('node:fs/promises').then(fs => fs.writeFile(path, '{bad json', 'utf8'));
   await assert.rejects(() => store.read('b'), /auth|json|parse|invalid/i);
 });
+
+test('plaintext credential store supports Pi metadata, options, no-change copies, and prototype-named providers', async t => {
+  const { PiCredentialFileStore } = await api();
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-auth-compat-'));
+  t.after(() => import('node:fs/promises').then(fs => fs.rm(dir, { recursive: true, force: true })));
+  const path = join(dir, 'auth.json');
+  const store = new PiCredentialFileStore(path);
+  await store.preflight();
+  await store.modify('__proto__', async () => ({ type: 'oauth', access: 'a', refresh: 'r', expires: 1,
+    syntheticExtension: { enabled: true } }), {});
+  const before = await readFile(path);
+  const unchanged = await store.modify('__proto__', async current => {
+    current.access = 'mutated';
+    return undefined;
+  }, {});
+  assert.equal(unchanged.access, 'a');
+  assert.deepEqual(await readFile(path), before);
+  assert.deepEqual(await store.list({}), [{ providerId: '__proto__', type: 'oauth' }]);
+  assert.equal(await store.read('constructor', {}), undefined);
+  assert.deepEqual((await store.read('__proto__')).syntheticExtension, { enabled: true });
+});

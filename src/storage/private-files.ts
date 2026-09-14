@@ -94,15 +94,19 @@ export function validatePrivateFile(path: string, options: { readOnly?: boolean 
   }
 }
 
-/** @internal Read through the same validated descriptor used by private-file checks. */
-export function readPrivateFile(path: string, maximumBytes: number): Buffer {
+/** @internal Read through one validated descriptor and return its stable identity. */
+export function readPrivateFileSnapshot(
+  path: string,
+  maximumBytes: number,
+  options: { readOnly?: boolean } = {}
+): { bytes: Buffer; device: bigint; inode: bigint } {
   let descriptor: number | undefined;
   try {
     requirePosix();
     if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) fail();
-    descriptor = openValidatedPrivateFile(path, true);
-    const initial = fstatSync(descriptor);
-    if (initial.size > maximumBytes) fail();
+    descriptor = openValidatedPrivateFile(path, options.readOnly !== false);
+    const initial = fstatSync(descriptor, { bigint: true });
+    if (initial.size > BigInt(maximumBytes)) fail();
     const output = Buffer.alloc(maximumBytes + 1);
     let total = 0;
     while (total <= maximumBytes) {
@@ -111,13 +115,22 @@ export function readPrivateFile(path: string, maximumBytes: number): Buffer {
       total += count;
     }
     if (total > maximumBytes) fail();
-    return Buffer.from(output.subarray(0, total));
+    return {
+      bytes: Buffer.from(output.subarray(0, total)),
+      device: initial.dev,
+      inode: initial.ino
+    };
   } catch {
     fail();
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
   fail();
+}
+
+/** @internal Read through the same validated descriptor used by private-file checks. */
+export function readPrivateFile(path: string, maximumBytes: number): Buffer {
+  return readPrivateFileSnapshot(path, maximumBytes).bytes;
 }
 
 export function preparePrivateDatabasePath(path: string, readOnly: boolean): void {

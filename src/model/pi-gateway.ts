@@ -1,5 +1,6 @@
 import type { ModelGateway, ModelInfo, ModelRequest, ModelResponse, ModelUsage } from './types.js';
 import { PiCredentialFileStore, type PiCredential } from './pi-auth-store.js';
+import { copyModelStateKey, type ModelStateProtectionOptions } from '../storage/model-state-codec.js';
 
 export interface PiModelDescriptor {
   provider: string;
@@ -68,21 +69,29 @@ export type PiRuntimeLoader = () => Promise<PiRuntime>;
 
 const PI_PACKAGE = '@earendil-works/pi-ai';
 
-type PiModuleImporter = (specifier: string) => Promise<Record<string, unknown>>;
+export type PiModuleImporter = (specifier: string) => Promise<Record<string, unknown>>;
+
+export interface PiGatewayOptions {
+  sanitizeErrors?: boolean;
+}
 
 const defaultImporter: PiModuleImporter = new Function('specifier', 'return import(specifier)') as PiModuleImporter;
 
 export function createPiRuntimeLoader(
   authPath: string,
-  importer: PiModuleImporter = defaultImporter
+  importer: PiModuleImporter = defaultImporter,
+  options: ModelStateProtectionOptions = {}
 ): PiRuntimeLoader {
+  const protectedOptions = options.encryptionKey === undefined
+    ? undefined
+    : { encryptionKey: copyModelStateKey(options.encryptionKey) };
   return async () => {
     const module = await importer(`${PI_PACKAGE}/providers/all`);
     const builtinModels = module.builtinModels;
     if (typeof builtinModels !== 'function')
       throw new Error('pi-ai providers/all does not export builtinModels()');
     return (builtinModels as (options: { credentials: PiCredentialFileStore }) => PiRuntime)({
-      credentials: new PiCredentialFileStore(authPath)
+      credentials: new PiCredentialFileStore(authPath, protectedOptions)
     });
   };
 }
@@ -141,7 +150,10 @@ function usageFrom(message: PiAssistantMessage): ModelUsage | undefined {
 export class PiModelGateway implements ModelGateway {
   #runtime: Promise<PiRuntime> | null = null;
 
-  constructor(private readonly loader: PiRuntimeLoader = defaultPiRuntimeLoader) {}
+  constructor(
+    private readonly loader: PiRuntimeLoader = defaultPiRuntimeLoader,
+    private readonly options: PiGatewayOptions = {}
+  ) {}
 
   static fromRuntime(runtime: PiRuntime): PiModelGateway {
     return new PiModelGateway(async () => runtime);
@@ -153,6 +165,8 @@ export class PiModelGateway implements ModelGateway {
       // credential store whose serialized writes must not be split across calls.
       this.#runtime = Promise.resolve().then(() => this.loader()).catch(error => {
         this.#runtime = null;
+        if (this.options.sanitizeErrors)
+          throw new Error('Unable to load bundled Pi model support (@earendil-works/pi-ai). Use Node >=22.19 and run npm ci.');
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(
           `Unable to load bundled Pi model support (${PI_PACKAGE}). Use Node >=22.19 and run npm ci. Configure provider credentials only before inference. Loader error: ${detail}`,
@@ -165,47 +179,62 @@ export class PiModelGateway implements ModelGateway {
 
   async login(providerId: string, type: PiAuthType, interaction: PiAuthInteraction): Promise<PiCredential> {
     const runtime = await this.#getRuntime();
-    if (!runtime.login)
-      throw new Error('Loaded Pi runtime does not support provider login');
-    return runtime.login(providerId, type, interaction);
+    try {
+      if (!runtime.login)
+        throw new Error('Loaded Pi runtime does not support provider login');
+      return await runtime.login(providerId, type, interaction);
+    } catch (error) {
+      if (this.options.sanitizeErrors) throw new Error('Pi login failed.');
+      throw error;
+    }
   }
 
   async listModels(): Promise<readonly ModelInfo[]> {
     const runtime = await this.#getRuntime();
-    return runtime.getModels().map(model => ({
-      provider: model.provider,
-      model: model.id,
-      ...(model.name ? { label: model.name } : {}),
-      ...(typeof model.contextWindow === 'number' ? { contextWindow: model.contextWindow } : {})
-    }));
+    try {
+      return runtime.getModels().map(model => ({
+        provider: model.provider,
+        model: model.id,
+        ...(model.name ? { label: model.name } : {}),
+        ...(typeof model.contextWindow === 'number' ? { contextWindow: model.contextWindow } : {})
+      }));
+    } catch (error) {
+      if (this.options.sanitizeErrors) throw new Error('Pi model catalog is unavailable.');
+      throw error;
+    }
   }
 
   async complete(request: Readonly<ModelRequest>): Promise<ModelResponse> {
     const runtime = await this.#getRuntime();
-    const model = runtime.getModel(request.model.provider, request.model.model);
-    if (!model)
-      throw new Error(`Pi model not found: ${request.model.provider}/${request.model.model}`);
+    try {
+      const model = runtime.getModel(request.model.provider, request.model.model);
+      if (!model)
+        throw new Error(`Pi model not found: ${request.model.provider}/${request.model.model}`);
 
-    const options = {
-      ...(request.sessionHint ? { sessionId: request.sessionHint } : {}),
-      ...(request.signal ? { signal: request.signal } : {}),
-      ...(request.maxRetries !== undefined ? { maxRetries: request.maxRetries } : {}),
-      ...(request.maxOutputTokens !== undefined ? { maxTokens: request.maxOutputTokens } : {})
-    };
-    const result = await runtime.completeSimple(
-      model,
-      {
-        systemPrompt: request.system,
-        messages: [{ role: 'user', content: request.prompt, timestamp: 0 }]
-      },
-      Object.keys(options).length ? options : undefined
-    );
+      const options = {
+        ...(request.sessionHint ? { sessionId: request.sessionHint } : {}),
+        ...(request.signal ? { signal: request.signal } : {}),
+        ...(request.maxRetries !== undefined ? { maxRetries: request.maxRetries } : {}),
+        ...(request.maxOutputTokens !== undefined ? { maxTokens: request.maxOutputTokens } : {})
+      };
+      const result = await runtime.completeSimple(
+        model,
+        {
+          systemPrompt: request.system,
+          messages: [{ role: 'user', content: request.prompt, timestamp: 0 }]
+        },
+        Object.keys(options).length ? options : undefined
+      );
 
-    const usage = usageFrom(result);
-    return {
-      text: textFrom(result),
-      ...(result.responseId ? { providerResponseId: result.responseId } : {}),
-      ...(usage ? { usage } : {})
-    };
+      const usage = usageFrom(result);
+      return {
+        text: textFrom(result),
+        ...(result.responseId ? { providerResponseId: result.responseId } : {}),
+        ...(usage ? { usage } : {})
+      };
+    } catch (error) {
+      if (this.options.sanitizeErrors) throw new Error('Pi provider request failed.');
+      throw error;
+    }
   }
 }

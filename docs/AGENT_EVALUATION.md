@@ -64,12 +64,33 @@ Then use the exact installed provider/model ID shown by `/model`:
 npm run eval:agent -- --live --model provider/model
 ```
 
+For a fresh POSIX protected auth destination, supply the same model-state key
+used by the ordinary agent:
+
+```bash
+npm run eval:agent -- --live --model provider/model \
+  --auth "$HOME/.local/share/behalvo-private/state/pi-auth.json" \
+  --model-state-key-file "$HOME/.local/share/behalvo-private/keys/model-state.behalvo-key"
+```
+
 `--auth` accepts a filesystem path, never credential contents. Model selection
 uses `--model`, `BEHALVO_MODEL`, then `OPERATOR_MODEL`. The auth path uses
 `--auth`, `BEHALVO_PI_AUTH`, `OPERATOR_PI_AUTH`, then `data/pi-auth.json`.
+The model-state key path uses `--model-state-key-file`, then
+`BEHALVO_MODEL_STATE_KEY_FILE`; there is no legacy alias. It is accepted only in
+explicit `--live` mode. Scripted/list/help/no-argument-help paths ignore the
+environment value completely, while an explicit flag in those modes is an
+argument error.
 The evaluator validates a configured auth file, then leaves credential resolution
 to Pi's normal supported order, including provider-supported ambient credentials
 when no stored entry exists. It does not initiate login or search other paths.
+Protected live mode validates the key/path configuration and preflights the auth
+file as a writer before constructing the gateway, preparing a report, or running
+inference. Wrong keys, plaintext/ciphertext mismatch, corruption, unsafe modes,
+and collisions therefore fail with the existing sanitized startup result. The
+key protects only the selected auth file; evaluation does not read saved model
+settings. Ambient environment credentials and provider SDK caches remain outside
+this file-protection boundary.
 
 Use `--case ID` more than once only for distinct IDs. `--repeats` accepts 1..10,
 `--max-calls` accepts 1..2,400, and `--max-seconds` accepts 1..3,600. A filtered
@@ -83,6 +104,10 @@ created with permission `0600` where supported, and atomically published without
 overwriting an existing file or symlink. The `data/` tree is git-ignored. A
 custom `--out` path is the operator's responsibility: keep it private and do not
 commit or publish it.
+
+Report serialization remains plaintext JSON even when the Pi auth file is
+protected. `--model-state-key-file` does not encrypt reports, and a custom report
+path is not automatically ignored by Git.
 
 On POSIX systems, publication first validates the immediate output parent: it
 must be owned by the current user or root, and group/world-writable parents must
@@ -149,6 +174,12 @@ inference, that call becomes sanitized incomplete evidence, the private report i
 written, and the CLI exits 1. Provider failures are likewise reduced to safe
 codes. Preserve the report when investigating automatic or manual failures. Do
 not copy raw model or credential data into a public issue.
+
+The automated protected-live CLI tests use generated keys, synthetic encrypted
+credentials, and an injected one-shot gateway. They verify parsing, preflight,
+key forwarding, report ordering, and error sanitization without a real provider
+login or live model call. They remain non-live evidence. Genuine live-model
+correctness and manual acceptance are still pending.
 
 ## Manual review rubric
 
