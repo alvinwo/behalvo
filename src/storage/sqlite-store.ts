@@ -1,43 +1,40 @@
 import { DatabaseSync } from 'node:sqlite';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { emptyState, reduce } from '../kernel/reducer.js';
 import type { DomainEvent, JournalRecord, MessageInput, OutcomeStatus, RecordMetadata, State, Summary } from '../kernel/types.js';
 import { identifier, instant, nonempty } from '../kernel/types.js';
-type Row = Record<string, string | number | bigint | Uint8Array | null>;
+import type { PayloadCipher } from './payload-cipher.js';
+import { backupEncryptedStore } from './backup.js';
+import { preparePrivateDatabasePath } from './private-files.js';
+import { initializeStorage, validateStorage } from './sqlite-schema.js';
+import { artifactContext, decodeProjection, decodeRecord, decodeSummary, journalContext, messageTokens, open, projectionContext, seal, summaryContext, summaryThread, timerTokens } from './sqlite-codec.js';
+import type { Row } from './sqlite-codec.js';
 const SCHEMA = 1;
 /** Internal trusted persistence API. Do not expose append() to models or untrusted plugins. */
 export class SqliteStore {
     #db: DatabaseSync;
     #closed = false;
-    constructor(path: string) {
-        this.#db = new DatabaseSync(path);
-        this.#db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;');
-        const version = Number(this.#db.prepare('PRAGMA user_version').get()!.user_version);
-        if (version !== 0 && version !== SCHEMA) {
+    #cipher: PayloadCipher | undefined;
+    #encryptionKey: Uint8Array | undefined;
+    #readOnly: boolean;
+    constructor(path: string, options: { encryptionKey?: Uint8Array; readOnly?: boolean } = {}) {
+        if (!options || typeof options !== 'object' || Array.isArray(options) ||
+            Object.keys(options).some(key => !['encryptionKey', 'readOnly'].includes(key)) ||
+            (options.readOnly !== undefined && typeof options.readOnly !== 'boolean') ||
+            (options.encryptionKey !== undefined && (!(options.encryptionKey instanceof Uint8Array) || options.encryptionKey.byteLength !== 32)))
+            throw new Error('Invalid storage options.');
+        this.#readOnly = options.readOnly ?? false;
+        this.#encryptionKey = options.encryptionKey === undefined ? undefined : Uint8Array.from(options.encryptionKey);
+        if (options.encryptionKey !== undefined && path !== ':memory:') preparePrivateDatabasePath(path, this.#readOnly);
+        this.#db = new DatabaseSync(path, { readOnly: this.#readOnly });
+        try {
+            this.#cipher = this.#readOnly ? validateStorage(this.#db, options.encryptionKey) : initializeStorage(this.#db, options.encryptionKey);
+            // Authenticate format and key before any connection pragmas that can change disk state.
+            if (!this.#readOnly) this.#db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;');
+        } catch (error) {
             this.close();
-            throw new Error('Unsupported database schema version');
+            throw error;
         }
-        if (version === 0)
-            this.#db.exec(`
-      BEGIN IMMEDIATE;
-      CREATE TABLE journal (
-        position INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
-        workspace_id TEXT NOT NULL, seq INTEGER NOT NULL, schema_version INTEGER NOT NULL,
-        recorded_at TEXT NOT NULL, actor_id TEXT NOT NULL, causation_id TEXT,
-        event_json TEXT NOT NULL, UNIQUE(workspace_id,seq)
-      );
-      CREATE TRIGGER journal_no_update BEFORE UPDATE ON journal BEGIN SELECT RAISE(ABORT,'journal is append-only'); END;
-      CREATE TRIGGER journal_no_delete BEFORE DELETE ON journal BEGIN SELECT RAISE(ABORT,'journal is append-only'); END;
-      CREATE TABLE projections (workspace_id TEXT PRIMARY KEY, version INTEGER NOT NULL, projection_version INTEGER NOT NULL, state_json TEXT NOT NULL);
-      CREATE TABLE artifacts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, body TEXT NOT NULL);
-      CREATE TABLE inbox (workspace_id TEXT NOT NULL, source TEXT NOT NULL, external_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
-        record_id TEXT NOT NULL, handled INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(workspace_id,source,external_id));
-      CREATE INDEX inbox_pending ON inbox(workspace_id,handled);
-      CREATE TABLE summaries (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, thread_id TEXT NOT NULL,
-        source_ids TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL);
-      PRAGMA user_version=1;
-      COMMIT;
-    `);
     }
     /** Local deployment metadata, not domain state; prevents accidental mode rebinding. */
     bindLocalMode(mode: 'ordinary' | 'synthetic'): void {
@@ -56,9 +53,15 @@ export class SqliteStore {
     }
     close(): void { if (!this.#closed) {
         this.#db.close();
+        this.#encryptionKey?.fill(0);
         this.#closed = true;
     } }
+    async backup(destination: string): Promise<void> {
+        if (!this.#cipher || !this.#encryptionKey) throw new Error('Encrypted storage is required.');
+        await backupEncryptedStore(this.#db, this.#encryptionKey, destination);
+    }
     #transaction<T>(fn: () => T): T {
+        this.#writable();
         this.#db.exec('BEGIN IMMEDIATE');
         try {
             const result = fn();
@@ -70,13 +73,12 @@ export class SqliteStore {
             throw error;
         }
     }
+    #writable(): void { if (this.#readOnly) throw new Error('Store is read-only.'); }
     #load(workspaceId: string): State | undefined {
         const row = this.#db.prepare('SELECT * FROM projections WHERE workspace_id=?').get(workspaceId);
         if (!row)
             return undefined;
-        if (Number(row.projection_version) !== SCHEMA)
-            throw new Error('Unsupported projection version; rebuild required');
-        const state = JSON.parse(String(row.state_json)) as State;
+        const state = decodeProjection(row, this.#cipher);
         state.connections ??= {};
         for (const fact of Object.values(state.facts)) {
             const legacy = fact as typeof fact & { observedAt?: string };
@@ -98,7 +100,7 @@ export class SqliteStore {
     #save(s: State): void {
         this.#db.prepare(`INSERT INTO projections VALUES (?,?,?,?) ON CONFLICT(workspace_id)
       DO UPDATE SET version=excluded.version,projection_version=excluded.projection_version,state_json=excluded.state_json`)
-            .run(s.workspaceId, s.version, SCHEMA, JSON.stringify(s));
+            .run(s.workspaceId, s.version, SCHEMA, seal(JSON.stringify(s), projectionContext(s.workspaceId, s.version, SCHEMA), this.#cipher));
     }
     #append(workspaceId: string, expectedVersion: number, events: DomainEvent[], metadata: RecordMetadata = {}, creating = false): JournalRecord[] {
         let s = this.#load(workspaceId);
@@ -119,7 +121,9 @@ export class SqliteStore {
                 ? this.record(workspaceId, record.event.data.fact.sourceRecordId).recordedAt : undefined;
             s = reduce(s, record.event, record.seq, sourceObservedAt);
             this.#db.prepare('INSERT INTO journal(id,workspace_id,seq,schema_version,recorded_at,actor_id,causation_id,event_json) VALUES (?,?,?,?,?,?,?,?)')
-                .run(record.id, workspaceId, record.seq, SCHEMA, record.recordedAt, record.actorId, record.causationId, JSON.stringify(record.event));
+                .run(record.id, workspaceId, record.seq, SCHEMA, record.recordedAt,
+                    seal(record.actorId, journalContext(record, 'actor_id'), this.#cipher), record.causationId,
+                    seal(JSON.stringify(record.event), journalContext(record, 'event_json'), this.#cipher));
             records.push(record);
         }
         this.#save(s);
@@ -143,11 +147,7 @@ export class SqliteStore {
         });
     }
     #decode(row: Row): JournalRecord {
-        if (Number(row.schema_version) !== SCHEMA)
-            throw new Error('Unsupported journal schema version');
-        return { id: String(row.id), schemaVersion: 1, workspaceId: String(row.workspace_id), seq: Number(row.seq),
-            recordedAt: String(row.recorded_at), actorId: String(row.actor_id), causationId: row.causation_id === null ? null : String(row.causation_id),
-            event: JSON.parse(String(row.event_json)) as DomainEvent };
+        return decodeRecord(row, this.#cipher);
     }
     record(workspaceId: string, id: string): JournalRecord {
         const row = this.#db.prepare('SELECT * FROM journal WHERE workspace_id=? AND id=?').get(workspaceId, id);
@@ -191,8 +191,9 @@ export class SqliteStore {
         });
     }
     #artifact(workspaceId: string, body: string): string {
+        this.#writable();
         const id = randomUUID();
-        this.#db.prepare('INSERT INTO artifacts VALUES (?,?,?)').run(id, workspaceId, body);
+        this.#db.prepare('INSERT INTO artifacts VALUES (?,?,?)').run(id, workspaceId, seal(body, artifactContext(workspaceId, id), this.#cipher));
         return id;
     }
     putArtifact(workspaceId: string, body: string): string {
@@ -227,7 +228,7 @@ export class SqliteStore {
         const row = this.#db.prepare('SELECT body FROM artifacts WHERE workspace_id=? AND id=?').get(workspaceId, id);
         if (!row)
             throw new Error('Artifact not found');
-        return String(row.body);
+        return open(row.body, artifactContext(workspaceId, id), this.#cipher);
     }
     ingest(workspaceId: string, input: MessageInput): JournalRecord {
         nonempty(input.source, 'source binding');
@@ -235,21 +236,21 @@ export class SqliteStore {
         nonempty(input.text, 'message text');
         if (Buffer.byteLength(input.text, 'utf8') > 262144)
             throw new Error('Message exceeds size limit');
-        const fingerprint = createHash('sha256').update(JSON.stringify([input.source, input.externalId, input.threadId, input.senderId, input.senderRole, input.text])).digest('hex');
+        const tokens = messageTokens(workspaceId, input, this.#cipher);
         return this.#transaction(() => {
             const s = this.state(workspaceId);
             if (input.senderRole === 'owner' && input.senderId !== s.ownerId)
                 throw new Error('Owner binding mismatch');
-            const found = this.#db.prepare('SELECT * FROM inbox WHERE workspace_id=? AND source=? AND external_id=?').get(workspaceId, input.source, input.externalId);
+            const found = this.#db.prepare('SELECT * FROM inbox WHERE workspace_id=? AND source=? AND external_id=?').get(workspaceId, tokens.source, tokens.externalId);
             if (found) {
-                if (found.fingerprint !== fingerprint)
+                if (found.fingerprint !== tokens.fingerprint)
                     throw new Error('Delivery key collision');
                 return this.record(workspaceId, String(found.record_id));
             }
             const artifactId = this.#artifact(workspaceId, input.text);
             const event: DomainEvent = { type: 'message.received', data: { source: input.source, externalId: input.externalId, threadId: input.threadId, senderId: input.senderId, senderRole: input.senderRole, artifactId } };
             const record = this.#append(workspaceId, s.version, [event], { actorId: input.senderId })[0]!;
-            this.#db.prepare('INSERT INTO inbox(workspace_id,source,external_id,fingerprint,record_id) VALUES (?,?,?,?,?)').run(workspaceId, input.source, input.externalId, fingerprint, record.id);
+            this.#db.prepare('INSERT INTO inbox(workspace_id,source,external_id,fingerprint,record_id) VALUES (?,?,?,?,?)').run(workspaceId, tokens.source, tokens.externalId, tokens.fingerprint, record.id);
             return record;
         });
     }
@@ -273,8 +274,9 @@ export class SqliteStore {
     enqueueTimer(workspaceId: string, expectedVersion: number, timerId: string, at: string): JournalRecord {
         return this.#transaction(() => {
             const record = this.#append(workspaceId, expectedVersion, [{ type: 'timer.fired', data: { id: timerId } }], { recordedAt: at })[0]!;
+            const tokens = timerTokens(workspaceId, timerId, this.#cipher);
             this.#db.prepare('INSERT INTO inbox(workspace_id,source,external_id,fingerprint,record_id) VALUES (?,?,?,?,?)')
-                .run(workspaceId, 'kernel:timer', timerId, timerId, record.id);
+                .run(workspaceId, tokens.source, tokens.externalId, tokens.fingerprint, record.id);
             return record;
         });
     }
@@ -283,10 +285,16 @@ export class SqliteStore {
         identifier(threadId);
         if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10000)
             throw new Error('Invalid message limit');
+        // Encrypted mode scans one workspace's journal; it has no plaintext JSON/thread index.
+        if (this.#cipher) return this.journal(workspaceId).filter(record => record.event.type === 'message.received' && record.event.data.threadId === threadId).slice(-limit);
         return this.#db.prepare(`SELECT * FROM journal WHERE workspace_id=? AND json_extract(event_json,'$.type')='message.received'
       AND json_extract(event_json,'$.data.threadId')=? ORDER BY seq DESC LIMIT ?`).all(workspaceId, threadId, limit).map(r => this.#decode(r)).reverse();
     }
     messageCount(workspaceId: string, threadId: string): number {
+        if (this.#cipher) {
+            if (!this.#load(workspaceId)) return 0;
+            return this.journal(workspaceId).filter(record => record.event.type === 'message.received' && record.event.data.threadId === threadId).length;
+        }
         return Number(this.#db.prepare(`SELECT count(*) AS n FROM journal WHERE workspace_id=? AND json_extract(event_json,'$.type')='message.received'
       AND json_extract(event_json,'$.data.threadId')=?`).get(workspaceId, threadId)!.n);
     }
@@ -295,6 +303,7 @@ export class SqliteStore {
         sourceIds: string[];
         text: string;
     }): Summary {
+        this.#writable();
         this.state(workspaceId);
         identifier(input.threadId);
         nonempty(input.text, 'summary');
@@ -308,13 +317,15 @@ export class SqliteStore {
                 throw new Error('Summary source thread mismatch');
         }
         const summary: Summary = { id: randomUUID(), workspaceId, threadId: input.threadId, sourceIds: [...input.sourceIds], text: input.text, createdAt: new Date().toISOString() };
-        this.#db.prepare('INSERT INTO summaries VALUES (?,?,?,?,?,?)').run(summary.id, workspaceId, summary.threadId, JSON.stringify(summary.sourceIds), summary.text, summary.createdAt);
+        const thread = summaryThread(workspaceId, summary.threadId, this.#cipher);
+        this.#db.prepare('INSERT INTO summaries VALUES (?,?,?,?,?,?)').run(summary.id, workspaceId, thread,
+            seal(JSON.stringify(summary.sourceIds), summaryContext(workspaceId, summary.id, thread, summary.createdAt, 'source_ids'), this.#cipher),
+            seal(summary.text, summaryContext(workspaceId, summary.id, thread, summary.createdAt, 'body'), this.#cipher), summary.createdAt);
         return summary;
     }
     summaries(workspaceId: string, threadId: string): Summary[] {
         this.state(workspaceId);
-        return this.#db.prepare('SELECT * FROM summaries WHERE workspace_id=? AND thread_id=? ORDER BY rowid DESC LIMIT 8').all(workspaceId, threadId).map(row => ({
-            id: String(row.id), workspaceId, threadId, sourceIds: JSON.parse(String(row.source_ids)) as string[], text: String(row.body), createdAt: String(row.created_at)
-        }));
+        return this.#db.prepare('SELECT * FROM summaries WHERE workspace_id=? AND thread_id=? ORDER BY rowid DESC LIMIT 8')
+            .all(workspaceId, summaryThread(workspaceId, threadId, this.#cipher)).map(row => decodeSummary(row, threadId, this.#cipher));
     }
 }

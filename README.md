@@ -9,7 +9,7 @@ workflows. The project/runtime is **Behalvo**; an individual agent may have its 
 
 [Local MVP guide](docs/local-mvp.md) · [General operations guide](docs/general-operations.md) · [Agent evaluation guide](docs/AGENT_EVALUATION.md) · [中文 MVP 说明](docs/local-mvp.zh-CN.md) ·
 [Architecture overview](docs/architecture.md) ·
-[Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) ·
+[Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) · [Private storage guide](docs/PRIVATE_STORAGE.md) ·
 [中文架构导读](docs/architecture.zh-CN.md) ·
 [Brand](docs/BRAND.md) · [Roadmap](docs/ROADMAP.md) · [Verification](docs/VERIFICATION.md)
 
@@ -77,7 +77,9 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |
 | Pinned Pi multi-provider adapter and separate file credential store | Independent live-model operation-loop verification |
 | Provider-owned OAuth login flow in the REPL | Hosted multi-user deployment |
-| Strict model proposal validation and provenance rebinding | Encrypted raw message artifacts |
+| Strict model proposal validation and provenance rebinding | Legacy plaintext migration, key rotation or secure erasure |
+| Opt-in authenticated payload encryption for new SQLite databases | Whole-file encryption or rollback detection |
+| Verified encrypted SQLite backup and restore CLI | Protected Pi credentials, settings, or evaluation reports |
 | Local inspection commands for state/history/context | Production security review |
 | Versioned prepared operations with exact connection/resource bindings | Real account handlers, remote authentication or universal account discovery |
 | Opt-in persistent synthetic contact/subscription operations with readback | Production credential protection or provider write verification |
@@ -130,10 +132,12 @@ broker, distributed workflow engine, graph database or multi-agent orchestration
 ## Safety boundary
 
 This is a **trusted local API**. Passing `ownerId` is not remote authentication.
-Never expose it directly to an untrusted client or plugin. Artifact bodies are
-plaintext in SQLite; use synthetic data until the M1 privacy/authentication work is
-complete. It has no production credentials and all external effects require
-explicit approval. See [SECURITY.md](SECURITY.md).
+Never expose it directly to an untrusted client or plugin. SQLite remains
+plaintext by default. New databases can opt into authenticated payload encryption
+with a separate key file; metadata and several lookup patterns remain visible.
+Use synthetic data until the remaining M1 privacy/authentication work is complete.
+It has no production credentials and all external effects require explicit
+approval. See [SECURITY.md](SECURITY.md) and the [private storage guide](docs/PRIVATE_STORAGE.md).
 
 Unknown effects are not retried. Recovery requires exclusive maintenance with all
 other workers stopped. The SQLite append-only triggers prevent normal mutations,

@@ -1,4 +1,5 @@
 export { SqliteStore } from './storage/sqlite-store.js';
+export { createStorageKeyFile, loadStorageKeyFile } from './storage/key-file.js';
 export { Operator } from './runtime/operator.js';
 export { buildContext, byteBudgetEstimate } from './memory/context.js';
 export { reduce, emptyState, resolveFact } from './kernel/reducer.js';

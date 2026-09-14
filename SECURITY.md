@@ -11,9 +11,16 @@ not production secrets protection.
 The owner ID checks assume a trusted local caller. They are not a login system,
 signature check or authorization token. External-audience context is denied.
 
-SQLite artifacts are plaintext. The append-only journal triggers protect normal
-application behavior, not an adversary controlling the process or database file.
-Third-party in-process code is trusted code, regardless of the TypeScript interface.
+SQLite remains plaintext by default. New databases can opt into application-layer
+AES-256-GCM payload encryption with a separate random key file. Protected journal,
+projection, artifact, and summary payloads are authenticated, while identifiers,
+references, sequence numbers, timestamps, row counts, lengths, handled flags,
+local mode, and equality-scoped lookup tokens remain visible. This is not
+whole-file encryption, rollback detection, remote authentication, secure erasure,
+or protection from a compromised process that can access the key. Third-party
+in-process code is trusted code, regardless of the TypeScript interface. See
+[docs/PRIVATE_STORAGE.md](docs/PRIVATE_STORAGE.md) for exact file and recovery
+procedures.
 
 All implemented message effects require a current owner approval. A fake provider
 is the only shipped driver. Approval binds command contents, work revision and
@@ -55,8 +62,8 @@ provider-specific authentication, conditional-write and readback design, rate
 limits, and independent review.
 
 Before real use: authenticated owner control, webhook signature verification,
-replay protection, protected secrets, encrypted artifacts, appropriate retention
-and erasure, scoped retrieval, provider readback, rate/budget caps, safe backups,
+replay protection, protected credentials and settings, appropriate retention
+and erasure, scoped retrieval, provider readback, rate/budget caps, deployment backups,
 production loop monitoring and independent security review are required.
 
 Do not put real messages, tokens, OTPs, financial data, addresses or customer

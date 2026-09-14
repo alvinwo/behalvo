@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, cp, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,6 +26,50 @@ test('CLI main boots from an empty database in offline mode and accepts scripted
   assert.match(result.stdout, /Behalvo/);
   assert.match(result.stdout, /offline\/deterministic/);
   assert.doesNotMatch(result.stderr, /Error:/);
+});
+
+test('storage key CLI option is strict, overrides the environment, and never silently starts plaintext', async t => {
+  const { parseCliArgs } = await import('../dist/cli/main.js');
+  const before = process.env.BEHALVO_STORAGE_KEY_FILE;
+  process.env.BEHALVO_STORAGE_KEY_FILE = '/tmp/environment-key';
+  try {
+    assert.equal(parseCliArgs([]).storageKeyPath, '/tmp/environment-key');
+    assert.equal(parseCliArgs(['--storage-key-file', '/tmp/flag-key']).storageKeyPath, '/tmp/flag-key');
+    assert.throws(() => parseCliArgs(['--storage-key-file']), /storage-key-file/i);
+    assert.throws(() => parseCliArgs(['--storage-key-file', '']), /storage-key-file/i);
+    assert.throws(() => parseCliArgs(['--storage-key-file=a']), /storage-key-file/i);
+    assert.throws(() => parseCliArgs(['--storage-key-file', 'a', '--storage-key-file', 'b']), /storage-key-file/i);
+    process.env.BEHALVO_STORAGE_KEY_FILE = '';
+    assert.throws(() => parseCliArgs([]), /storage.*key/i);
+  } finally {
+    if (before === undefined) delete process.env.BEHALVO_STORAGE_KEY_FILE;
+    else process.env.BEHALVO_STORAGE_KEY_FILE = before;
+  }
+
+  const dir = await mkdtemp(join(tmpdir(), 'behalvo-main-private-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const missingKey = join(dir, 'missing.behalvo-key');
+  const db = join(dir, 'agent.db');
+  const result = await runMain(['--offline', '--db', db, '--storage-key-file', missingKey], '/quit\n');
+  assert.notEqual(result.code, 0);
+  assert.equal(existsSync(db), false);
+  assert.equal(existsSync(`${db}-wal`), false);
+
+  const { createStorageKeyFile, SqliteStore } = await import('../dist/index.js');
+  const keyPath = join(dir, 'storage.behalvo-key');
+  await createStorageKeyFile(keyPath);
+  const first = await runMain(['--offline', '--db', db, '--storage-key-file', keyPath], '/quit\n');
+  assert.equal(first.code, 0, first.stderr);
+  const second = await runMain(['--offline', '--db', db, '--storage-key-file', keyPath], '/state\n/quit\n');
+  assert.equal(second.code, 0, second.stderr);
+  assert.match(second.stdout, /"workspaceId": "personal"/);
+  assert.throws(() => new SqliteStore(db));
+
+  const syntheticDb = join(dir, 'synthetic.db');
+  const rejected = await runMain(['--offline', '--synthetic-operations', '--db', syntheticDb, '--storage-key-file', keyPath], '/quit\n');
+  assert.notEqual(rejected.code, 0);
+  assert.equal(existsSync(syntheticDb), false);
+  assert.equal(existsSync(`${syntheticDb}.synthetic.sqlite`), false);
 });
 
 test('CLI starts from a checkout path containing spaces', async t => {

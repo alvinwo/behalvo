@@ -1,7 +1,9 @@
-> **Current review:** [PR #1 review and fixes](reviews/2026-09-08-pr-1.md): 86 tests passed, with independent runtime, CLI, and security review. Earlier reports below retain their original environment and verification limits.
+> **Current local verification:** [Encrypted workspace storage foundation](verification/2026-09-14-private-storage.md): 341 of 342 tests passed with one existing environment-dependent skip, three demos passed, and scripted evaluation passed 60/60. Final exact-head CI remains pending.
 
-> **Earlier verification:** [Behalvo v0.2.1 naming patch](verification/2026-09-07-behalvo-rename.md): 68 tests passed, with backward-compatible configuration and cross-version database readback.
-> The report below is retained as the historical v0.2.0 verification record.
+> **Historical review:** [PR #1 review and fixes](reviews/2026-09-08-pr-1.md): 86 tests passed, with independent runtime, CLI, and security review.
+
+> **Historical verification:** [Behalvo v0.2.1 naming patch](verification/2026-09-07-behalvo-rename.md): 68 tests passed, with backward-compatible configuration and cross-version database readback.
+> The report below is retained as the historical v0.2.0 verification record. Each record retains its original environment and verification limits.
 
 # Verification report — local agent MVP
 

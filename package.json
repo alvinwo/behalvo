@@ -15,6 +15,7 @@
     "demo": "npm run build && node dist/demo.js",
     "check": "npm run typecheck && npm test",
     "agent": "npm run build && node dist/cli/main.js",
+    "storage": "npm run build && node dist/cli/storage-main.js",
     "eval:agent": "npm run build && node dist/evaluation/main.js",
     "mvp:demo": "npm run build && node dist/mvp-demo.js",
     "operations:demo": "npm run build && node dist/operations-demo.js"

@@ -8,8 +8,9 @@ import { openLocalAgent } from './local-app.js';
 import { runRepl } from './repl.js';
 import { NodeLineIo } from './node-io.js';
 import { ModelSettingsStore, settingsPathForDatabase } from './model-settings.js';
+import { loadStorageKeyFile } from '../storage/key-file.js';
 
-interface CliArgs {
+export interface CliArgs {
   offline: boolean;
   syntheticOperations: boolean;
   dbPath: string;
@@ -17,6 +18,7 @@ interface CliArgs {
   workspaceId: string;
   ownerId: string;
   model?: { provider: string; model: string };
+  storageKeyPath?: string;
 }
 
 function valueAfter(argv: string[], flag: string): string | undefined {
@@ -36,6 +38,15 @@ function parseModel(value: string | undefined): { provider: string; model: strin
 }
 
 export function parseCliArgs(argv: string[]): CliArgs {
+  if (argv.some(value => value.startsWith('--storage-key-file=')))
+    throw new Error('--storage-key-file requires a separate value');
+  const storageKeyFlags = argv.filter(value => value === '--storage-key-file').length;
+  if (storageKeyFlags > 1) throw new Error('--storage-key-file may be provided once');
+  const configuredStorageKey = storageKeyFlags === 1
+    ? valueAfter(argv, '--storage-key-file')
+    : process.env.BEHALVO_STORAGE_KEY_FILE;
+  if (configuredStorageKey !== undefined && configuredStorageKey.length === 0)
+    throw new Error('Configured storage key file is empty');
   const model = parseModel(valueAfter(argv, '--model') ?? process.env.BEHALVO_MODEL ?? process.env.OPERATOR_MODEL);
   return {
     offline: argv.includes('--offline'),
@@ -44,7 +55,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
     authPath: resolve(valueAfter(argv, '--auth') ?? process.env.BEHALVO_PI_AUTH ?? process.env.OPERATOR_PI_AUTH ?? 'data/pi-auth.json'),
     workspaceId: valueAfter(argv, '--workspace') ?? process.env.BEHALVO_WORKSPACE ?? process.env.OPERATOR_WORKSPACE ?? 'personal',
     ownerId: valueAfter(argv, '--owner') ?? process.env.BEHALVO_OWNER ?? process.env.OPERATOR_OWNER ?? 'owner',
-    ...(model ? { model } : {})
+    ...(model ? { model } : {}),
+    ...(configuredStorageKey ? { storageKeyPath: resolve(configuredStorageKey) } : {})
   };
 }
 
@@ -54,6 +66,9 @@ function terminalIo(): NodeLineIo {
 
 async function main(): Promise<void> {
   const args = parseCliArgs(process.argv.slice(2));
+  if (args.storageKeyPath && args.syntheticOperations)
+    throw new Error('Encrypted storage cannot use persistent synthetic operations.');
+  const encryptionKey = args.storageKeyPath ? loadStorageKeyFile(args.storageKeyPath) : undefined;
   mkdirSync(dirname(args.dbPath), { recursive: true, mode: 0o700 });
   mkdirSync(dirname(args.authPath), { recursive: true, mode: 0o700 });
 
@@ -69,13 +84,19 @@ async function main(): Promise<void> {
   );
   const pi = new PiModelGateway(createPiRuntimeLoader(args.authPath));
   const gateways = args.offline ? [offline] : [pi];
-  const app = openLocalAgent({
-    dbPath: args.dbPath,
-    workspaceId: args.workspaceId,
-    ownerId: args.ownerId,
-    gateways,
-    syntheticOperations: args.syntheticOperations
-  });
+  let app;
+  try {
+    app = openLocalAgent({
+      dbPath: args.dbPath,
+      workspaceId: args.workspaceId,
+      ownerId: args.ownerId,
+      gateways,
+      syntheticOperations: args.syntheticOperations,
+      ...(encryptionKey ? { encryptionKey } : {})
+    });
+  } finally {
+    encryptionKey?.fill(0);
+  }
   const io = terminalIo();
   try {
     if (args.syntheticOperations) io.write('SYNTHETIC OPERATIONS ONLY — simulated account data; no real account effects.');

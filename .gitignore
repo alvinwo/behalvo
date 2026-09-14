@@ -11,6 +11,7 @@ data/
 *.db-*
 *.sqlite
 *.sqlite-*
+*.behalvo-key
 *.log
 .DS_Store
 .worktrees/
