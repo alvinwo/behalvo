@@ -6,7 +6,26 @@ The offline M0 kernel uses fake providers and has no remote server. The local MV
 adds a pinned, replaceable Pi adapter that can contact model providers and stores credentials
 separately in `data/pi-auth.json` by default. The owner has reported a successful Codex login/chat; the bounded operation loop
 is tested with scripted models and synthetic providers. This credential store is
-not production secrets protection.
+plaintext by default. On POSIX, `--model-state-key-file` can opt the selected Pi
+auth file and the database-derived model-settings file into authenticated
+encryption. This local control is not a production credential-vault or readiness
+claim.
+
+SQLite payload protection and model-state protection are independent opt-ins.
+Neither key is inferred from the other, though an operator may explicitly select
+the same valid key file for both. Pi credentials are shared per provider in the
+selected auth file; they are not isolated by workspace. Saved provider/model IDs
+are scoped by database and workspace. Ambient provider credentials, provider SDK
+caches, process environment, evaluation reports, terminal input/output, swap,
+crash dumps, and process memory remain outside model-state protection.
+
+Protected model-state files use fixed, non-secret error messages and fail closed
+on wrong keys, plaintext/ciphertext mode mismatch, unsafe modes, corruption, or
+path collisions. The current process, current UID, root, same-UID code, and
+trusted path ancestors remain inside the trust boundary. A process that can read
+the key can decrypt the files. This feature adds no rollback detection, key
+rotation, plaintext migration, retention, erasure, remote identity, or protection
+against a compromised process.
 
 The loopback owner-control console uses a short-lived bootstrap file and in-memory bearer session for local synthetic review only. It exposes no model, login, credential, connection-binding or execute route; approval does not execute an operation. This is not remote authentication, mobile identity or production privacy.
 
@@ -64,7 +83,7 @@ provider-specific authentication, conditional-write and readback design, rate
 limits, and independent review.
 
 Before real use: authenticated owner control, webhook signature verification,
-replay protection, protected credentials and settings, appropriate retention
+replay protection, production credential custody, appropriate retention
 and erasure, scoped retrieval, provider readback, rate/budget caps, deployment backups,
 production loop monitoring and independent security review are required.
 

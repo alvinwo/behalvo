@@ -16,4 +16,7 @@ data/
 .DS_Store
 .worktrees/
 *.behalvo-lock
+*.behalvo-model-state-lock
+.behalvo-model-state-stage-*/
+*.settings.json
 *.behalvo-bootstrap

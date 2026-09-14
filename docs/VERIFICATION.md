@@ -1,4 +1,6 @@
-> **Current local verification:** [Owner-control verification](verification/2026-09-14-owner-control.md).
+> **Current local verification:** [Private model-state verification](verification/2026-09-14-private-model-state.md).
+
+> **Historical verification:** [Owner-control verification](verification/2026-09-14-owner-control.md).
 
 > **Historical verification:** [Private storage foundation](verification/2026-09-14-private-storage.md).
 

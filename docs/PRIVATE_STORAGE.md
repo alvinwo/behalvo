@@ -76,7 +76,32 @@ The snapshot contains only the encrypted SQLite workspace. It excludes the key,
 Pi credentials (`data/pi-auth.json`), provider/model settings
 (`<database>.settings.json`), evaluation reports, and synthetic provider
 sidecars. Those paths remain outside this encryption boundary and need their own
-backup and protection decisions.
+backup and protection decisions. This remains true when credentials and settings
+use protected model-state files: SQLite backup and restore do not include,
+coordinate, rotate, or validate them.
+
+## Protected Pi credentials and model settings
+
+The ordinary online agent and explicit live evaluator can use
+`--model-state-key-file PATH` (or `BEHALVO_MODEL_STATE_KEY_FILE`) to protect the
+selected Pi auth file. The ordinary agent also protects its derived
+`<database>.settings.json` with that same explicitly selected model-state key.
+This option is independent of `--storage-key-file`; configuring one never borrows
+or enables the other. The same key file may be selected explicitly for both, but
+key files, model-state data and SQLite/database companion paths must remain
+distinct.
+
+Back up the exact model-state key separately from every encrypted auth/settings
+copy, and record which snapshots belong together. Restoring an older protected
+auth file can restore stale or revoked refresh material; provider reauthentication
+may be required after restore or credential rotation. A matching key authenticates
+the document but does not prove freshness, so same-purpose copying and rollback
+remain possible. Old plaintext auth/settings copies are not erased or migrated.
+
+Custom auth paths outside `data/` are not automatically ignored by Git. Keep
+keys, protected files, plaintext predecessors, and recovery copies out of source
+control. Production retention, erasure, coordinated backup, key rotation and
+credential recovery remain open work.
 
 ## Security and operating limits
 
@@ -95,11 +120,11 @@ projections, artifact bodies, summary bodies, and summary source lists are
 encrypted and authenticated. An administrator can still delete or roll back a
 database, and a compromised process with the key can read or change data. There
 is no rollback detection, remote authentication, secure erasure, key rotation,
-credential vault, or memory protection.
+credential vault, coordinated model-state backup, or memory protection.
 
 Encrypted thread reads currently decrypt and scan one workspace journal, so cost
 is linear in that workspace's journal size. Retention, erasure, authenticated
-owner control, protected credentials, provider reconciliation, deployment review,
+owner control, production credential custody, provider reconciliation, deployment review,
 and independent security review remain required before real-data use. This work
 does not complete roadmap milestones M1.1 or M1.2.
 

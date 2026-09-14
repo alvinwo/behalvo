@@ -16,9 +16,11 @@ substitute for step 1 or certify M1.1 acceptance.
 
 The private-storage foundation now provides opt-in authenticated SQLite payload
 encryption for new databases, separate key-file configuration, and verified
-encrypted backup/restore. It does not protect Pi credentials, model settings, or
-evaluation reports, and it does not add authentication, rotation, retention, or
-erasure. M1.1 live acceptance and M1.2 owner control remain incomplete. See the
+encrypted backup/restore. The follow-on prerequisite adds separate, opt-in
+authenticated protection for Pi credentials and saved model settings on POSIX.
+Evaluation reports remain plaintext, and neither increment adds authentication,
+rotation, retention, or erasure. Issue 04 is therefore still open. M1.1
+live/manual acceptance and remote/mobile owner control remain incomplete. See the
 [private storage guide](PRIVATE_STORAGE.md).
 
 ## M0 — Offline foundation
@@ -72,4 +74,4 @@ An OSS launch is a separate deliberate action, not a side effect of scaffolding.
 
 ## Owner-control increment
 
-A loopback-local synthetic owner-control console now supports one-time pairing, exact review and durable approval/cancellation. Remote/mobile identity, real-message preview, live-model/manual acceptance, protected Pi credentials/settings and real-provider gates remain open.
+A loopback-local synthetic owner-control console now supports one-time pairing, exact review and durable approval/cancellation. Remote/mobile identity, real-message preview, live-model/manual acceptance and real-provider gates remain open.
