@@ -18,3 +18,12 @@ Read README, SECURITY.md and the approved architecture spec before editing.
   without a failing test and a real workflow that requires them.
 - Update the implementation status table when an interface becomes operational.
 - Record verification actually performed; do not describe configured CI as passing CI.
+
+## Agent effort policy
+
+The owner prefers effort selected by task: use `max` for planning, architecture,
+and design; `medium` for straightforward implementation, tests, and documentation;
+and `high` for complex implementation, debugging, and security/code reviews.
+Set the effort explicitly when spawning a task agent where the tool supports it.
+This policy does not change the primary chat's effort setting or expand access,
+publication, or deployment permissions.

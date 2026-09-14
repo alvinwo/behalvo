@@ -68,3 +68,8 @@ issues and attach their dependencies. Keep M1 focused on one personal workflow.
 
 Publish privately first while the project name and release license are finalized.
 An OSS launch is a separate deliberate action, not a side effect of scaffolding.
+
+
+## Owner-control increment
+
+A loopback-local synthetic owner-control console now supports one-time pairing, exact review and durable approval/cancellation. Remote/mobile identity, real-message preview, live-model/manual acceptance, protected Pi credentials/settings and real-provider gates remain open.

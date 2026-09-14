@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Behalvo local owner control</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Behalvo</p>
+      <h1>Local owner control</h1>
+      <p class="boundary">
+        Synthetic local review only. Approval records a decision; it does not execute an operation.
+      </p>
+    </header>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <section id="pairing" aria-labelledby="pairing-title">
+      <h2 id="pairing-title">Pair this browser</h2>
+      <p>
+        Select the short-lived pairing file printed by this local server. Reloading, signing out,
+        expiry, or a lost pairing response requires a server restart and a new file.
+      </p>
+      <label for="bootstrap-file">Pairing file</label>
+      <input id="bootstrap-file" type="file" accept=".behalvo-bootstrap,application/json">
+      <button id="pair" type="button">Pair local browser</button>
+    </section>
+
+    <section id="console" aria-label="Prepared-action console" hidden>
+      <div class="toolbar" aria-label="Console controls">
+        <button id="refresh" type="button">Refresh actions</button>
+        <button id="sign-out" type="button">Sign out</button>
+      </div>
+      <p class="persistence-note">
+        Signing out removes this browser's authority. Existing approvals persist.
+      </p>
+
+      <section aria-labelledby="actions-title">
+        <h2 id="actions-title">Prepared actions</h2>
+        <ul id="actions" aria-label="Prepared actions"></ul>
+      </section>
+
+      <section id="review-panel" aria-labelledby="review-title" hidden>
+        <h2 id="review-title">Exact review</h2>
+        <p>
+          Review the literal command, binding, revisions, digest, and absolute expiry before deciding.
+          Cancelling here cancels this prepared action; it does not execute a subscription cancellation.
+        </p>
+        <div id="review"></div>
+        <div class="decisions" aria-label="Decision controls">
+          <button id="approve" type="button" disabled>Approve prepared action</button>
+          <button id="cancel" type="button" disabled>Cancel prepared action</button>
+        </div>
+      </section>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

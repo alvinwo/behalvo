@@ -51,6 +51,15 @@ export class SqliteStore {
             this.#db.prepare('INSERT INTO local_mode (id,mode) VALUES (1,?)').run(mode);
         });
     }
+    /** Inspect local deployment metadata without creating or adopting a mode. */
+    localMode(): 'ordinary' | 'synthetic' | undefined {
+        const table = this.#db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='local_mode'").get();
+        if (!table) return undefined;
+        const rows = this.#db.prepare('SELECT id, mode FROM local_mode').all();
+        if (rows.length !== 1 || rows[0]!.id !== 1 || !['ordinary', 'synthetic'].includes(String(rows[0]!.mode)))
+            throw new Error('Invalid local mode');
+        return rows[0]!.mode as 'ordinary' | 'synthetic';
+    }
     close(): void { if (!this.#closed) {
         this.#db.close();
         this.#encryptionKey?.fill(0);

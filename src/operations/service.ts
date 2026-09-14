@@ -132,7 +132,7 @@ export class OperationService {
         return this.operationAction(this.store.state(input.workspaceId), action.id);
     }
 
-    approveBatch(input: ApproveOperationBatchInput): OperationAction[] {
+    approveBatch(input: ApproveOperationBatchInput, beforeAppend?: () => void): OperationAction[] {
         this.assertWorkspace(input.workspaceId);
         exactObject(input, ['workspaceId', 'ownerId', 'expiresAt', 'approvals'], 'approve operation batch input');
         const state = this.store.state(input.workspaceId);
@@ -158,7 +158,7 @@ export class OperationService {
             events.push({ type: 'action.approved', data: { id: action.id,
                 approval: { ownerId: input.ownerId, digest: item.digest, expiresAt: input.expiresAt } } });
         }
-        this.store.append(input.workspaceId, state.version, events, { actorId: input.ownerId, recordedAt: now });
+        this.store.append(input.workspaceId, state.version, events, { actorId: input.ownerId, recordedAt: now }, beforeAppend);
         const latest = this.store.state(input.workspaceId);
         return input.approvals.map(item => this.operationAction(latest, item.actionId));
     }

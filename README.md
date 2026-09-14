@@ -11,7 +11,7 @@ workflows. The project/runtime is **Behalvo**; an individual agent may have its 
 [Architecture overview](docs/architecture.md) ·
 [Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) · [Private storage guide](docs/PRIVATE_STORAGE.md) ·
 [中文架构导读](docs/architecture.zh-CN.md) ·
-[Brand](docs/BRAND.md) · [Roadmap](docs/ROADMAP.md) · [Verification](docs/VERIFICATION.md)
+[Brand](docs/BRAND.md) · [Roadmap](docs/ROADMAP.md) · [Verification](docs/VERIFICATION.md) · [Local owner control](docs/OWNER_CONTROL.md)
 
 > Documentation is English-first. Chinese companion documents are supplementary;
 > when wording differs, the English specification is authoritative.
@@ -36,6 +36,16 @@ For the offline prepared-operations scenario:
 ```bash
 npm run operations:demo
 ```
+
+For the local synthetic owner-control acceptance path:
+
+```bash
+npm run owner-control:demo
+```
+
+The owner-control `init-demo`, `serve`, and acceptance-demo commands currently
+require a POSIX platform and deliberately refuse Windows. This restriction is
+limited to the owner-control feature and its process-lock/bootstrap controls.
 
 For the deterministic synthetic agent-evaluation harness:
 
@@ -85,6 +95,7 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | Opt-in persistent synthetic contact/subscription operations with readback | Production credential protection or provider write verification |
 | Bounded structured operation loop and trusted `/actions` / `/approve` commands | Autonomous retries or startup recovery of running effects |
 | Versioned 20-case synthetic evaluation harness with private JSON reports | Genuine live-model evaluation and manual acceptance review |
+| Loopback-local synthetic owner-control pairing/review/approval/cancellation | Remote/mobile identity, protected Pi credentials/settings, real-provider control or deployment |
 
 ## Mental model
 

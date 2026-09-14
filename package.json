@@ -9,7 +9,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-control-assets.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
     "demo": "npm run build && node dist/demo.js",
@@ -18,7 +18,9 @@
     "storage": "npm run build && node dist/cli/storage-main.js",
     "eval:agent": "npm run build && node dist/evaluation/main.js",
     "mvp:demo": "npm run build && node dist/mvp-demo.js",
-    "operations:demo": "npm run build && node dist/operations-demo.js"
+    "operations:demo": "npm run build && node dist/operations-demo.js",
+    "owner-control": "npm run build && node dist/cli/owner-control-main.js",
+    "owner-control:demo": "npm run build && node dist/control-demo.js"
   },
   "devDependencies": {
     "@types/node": "22.19.7",
