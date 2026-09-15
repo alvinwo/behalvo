@@ -20,7 +20,8 @@
     "mvp:demo": "npm run build && node dist/mvp-demo.js",
     "operations:demo": "npm run build && node dist/operations-demo.js",
     "owner-control": "npm run build && node dist/cli/owner-control-main.js",
-    "owner-control:demo": "npm run build && node dist/control-demo.js"
+    "owner-control:demo": "npm run build && node dist/control-demo.js",
+    "verify": "node scripts/verify.mjs"
   },
   "devDependencies": {
     "@types/node": "22.19.7",
