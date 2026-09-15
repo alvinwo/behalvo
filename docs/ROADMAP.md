@@ -4,9 +4,9 @@
 
 1. Run the genuine live-model evaluation and complete its manual review. The
    harness exists, but live acceptance has not yet been run.
-2. Add secure mobile owner control.
-3. Add one mail integration.
-4. Add a durable supervised worker.
+2. Unify the local components into a supervised laptop service.
+3. Add secure phone owner control.
+4. Add one mail integration.
 5. Run a two-week personal alpha.
 6. Later, add multi-account support and constrained browser capability.
 7. Only then consider a small public alpha.

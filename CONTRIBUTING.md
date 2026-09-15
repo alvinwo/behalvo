@@ -5,9 +5,16 @@ terms should be opened only after the maintainer chooses a release license.
 
 Documentation is English-first. New normative docs, ADRs, issue templates and public API descriptions should be written in English; translated `*.zh-CN.md` companions are welcome but are non-authoritative.
 
-Use Node.js >=22.16, run `npm ci`, then `npm run check` and `npm run demo`.
-No live account or model key is needed. Test fixtures belong under `tests/` and
-must be synthetic. Tests execute against temporary real SQLite databases.
+Use Node.js >=22.19 and run `npm ci`. On POSIX, `npm run verify` runs the complete
+offline gates in sequence and stores private logs under `data/verification/`.
+On Windows, run `npm run check`, `npm run demo`, `npm run operations:demo`, and
+`git diff --check`; the POSIX-only `npm run owner-control:demo` must run on a
+POSIX checkout or CI before release. No live account or model key is needed.
+Test fixtures belong under `tests/` and must be synthetic. Tests execute against
+temporary real SQLite databases.
+
+For the complete repository process, including review, release, and recovery,
+use the [development workflow skill](.agents/skills/behalvo-development/SKILL.md).
 
 Preserve module boundaries. Add a failing behavior test for every new policy,
 record type, reducer transition, provider outcome and compaction behavior.

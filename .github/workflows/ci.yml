@@ -17,8 +17,11 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm run check
-      - run: npm run demo
-      - run: npm run operations:demo
-      - run: npm run owner-control:demo
-      - run: git diff --check
+      - run: npm run verify
+      - name: Retain verification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-node-${{ matrix.node }}
+          path: data/verification/
+          if-no-files-found: error
