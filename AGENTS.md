@@ -27,9 +27,9 @@ for implementation, review, release, and interrupted-work recovery.
 
 ## Agent effort policy
 
-The owner prefers effort selected by task: use `max` for planning, architecture,
-and design; `medium` for straightforward implementation, tests, and documentation;
-and `high` for complex implementation, debugging, and security/code reviews.
-Set the effort explicitly when spawning a task agent where the tool supports it.
-This policy does not change the primary chat's effort setting or expand access,
-publication, or deployment permissions.
+Before choosing a model for delegated work, read [the development model-routing
+policy](docs/MODEL_USAGE.md) and its [declarative configuration](.agents/model-usage.json).
+It requires explicit `model`, `reasoning_effort`, and `fork_turns: "none"` fields
+where the spawn tool supports them. The policy does not change the primary chat's
+effort setting, add runtime behavior, or expand access, publication, or deployment
+permissions.

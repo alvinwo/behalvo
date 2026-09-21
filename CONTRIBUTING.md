@@ -16,6 +16,8 @@ temporary real SQLite databases.
 For the complete repository process, including review, release, and recovery,
 use the [development workflow skill](.agents/skills/behalvo-development/SKILL.md).
 
+For delegated development work, follow the [model-routing policy](docs/MODEL_USAGE.md).
+
 Preserve module boundaries. Add a failing behavior test for every new policy,
 record type, reducer transition, provider outcome and compaction behavior.
 Examples of important failures: ambiguous timeouts, duplicate delivery, changed

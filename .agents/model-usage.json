@@ -1,0 +1,159 @@
+{
+  "format_version": 1,
+  "title": "Behalvo development model-routing defaults",
+  "status": "declarative-only",
+  "scope": "Development delegation in this repository; not Behalvo runtime configuration.",
+  "discovery": {
+    "rule": "Discover account-available model capabilities from the actual spawn tool. The IDs below are the exact advertised orchestration-tool IDs at policy review, not guaranteed Pi or Behalvo catalog IDs. Tool capability overrides this configuration when incompatible.",
+    "spawn": {
+      "required_fields": [
+        "model",
+        "reasoning_effort",
+        "fork_turns"
+      ],
+      "fork_turns": "none",
+      "brief_format": "compact file-based brief with checkpoint and failure evidence",
+      "service_tier": "Use standard speed where configurable; do not enable premium or fast mode only to save wall time without user authorization."
+    },
+    "availability_fallback": {
+      "capability_order": [
+        "gpt-5.6-luna",
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
+        "gpt-6-astra"
+      ],
+      "rule": "If a named model is unavailable, use the next suitable available capability in this order without dropping the role or risk floor. Preserve the role effort when supported; otherwise use a supported effort at or above the requirement, or mark the task blocked.",
+      "evidence": "Carry the compact brief, checkpoints, and failure evidence across escalation. Record every substitution or capability gap.",
+      "prohibitions": "Do not select by guessed quota, use a paid fallback, or add a new provider.",
+      "user_constraints": "Tool availability does not waive an explicit user model constraint; record an incompatible constraint as a gap."
+    }
+  },
+  "constraints": {
+    "no_live_quota_telemetry": true,
+    "no_automatic_primary_chat_effort_switch": true,
+    "no_paid_api_fallback_or_credit_purchase": true,
+    "no_global_quota_or_cost_estimates": true,
+    "one_implementation_writer": true,
+    "max_concurrent_specialists_default": 2,
+    "max_advanced_planning_agents": 1,
+    "dependent_work": "sequential",
+    "honor_specific_user_constraints": true
+  },
+  "roles": {
+    "architecture_planning": {
+      "model": "gpt-6-astra",
+      "reasoning_effort": "max",
+      "use_when": "Real architecture or design decisions only; routine work gets no extra planning agent."
+    },
+    "research": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "elevate_to": "high for conflicting sources or high-impact synthesis",
+      "note": "Integrating existing proven research is not fresh research."
+    },
+    "source_extraction_mechanical_docs": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "medium"
+    },
+    "routine_execution": {
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "medium"
+    },
+    "complex_implementation_debugging": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high"
+    },
+    "hard_escalation": {
+      "model": "gpt-6-astra",
+      "reasoning_effort": "high",
+      "use_when": "Security, concurrency, architecture, or difficult debugging; use max only for a redesign."
+    },
+    "task_review": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "mechanical_exception": "A narrow mechanical review may use gpt-5.6-terra at high effort."
+    }
+  },
+  "review": {
+    "independent_contexts_required": true,
+    "implementer_cannot_be_independent_reviewer": true,
+    "final_review_pair_per_pr": 1,
+    "final_review_routine": [
+      {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "high"
+      }
+    ],
+    "final_review_high_risk": [
+      {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "gpt-6-astra",
+        "reasoning_effort": "high"
+      }
+    ],
+    "high_risk_criteria": [
+      "security",
+      "concurrency",
+      "architecture",
+      "storage migration",
+      "unknown external effect",
+      "otherwise high-risk"
+    ],
+    "high_risk_override_precedence": true,
+    "focused_rereview": "Review changed findings only; do not repeat full reviews or tests without a reason.",
+    "unavailable_required_advanced_reviewer": "Continue safe lower-risk work, record the missing review as pending, and do not claim the gate passed or merge. Do not automatically downgrade security review.",
+    "routine_fallback": "Routine final review requires two distinct suitable models at high effort and two independent non-implementer contexts. If Terra is unavailable, Sol plus Astra may satisfy the routine pair when both are available. If two distinct suitable models or required high effort are unavailable, leave the gate pending and do not merge.",
+    "high_risk_astra_unavailable": "A high-risk final review requires Sol high plus Astra high. If Astra is unavailable, leave the gate pending and do not merge; do not downgrade.",
+    "no_self_certification": true
+  },
+  "escalation": {
+    "advance_after": "2 evidence-backed unsuccessful fixes of the same diagnosed issue with no progress; exclude expected TDD RED and routine test iterations. Do not escalate merely because a task is long.",
+    "high_risk_start": "Start advanced work for trust, cryptography, migration, or unknown-effect problems without cheap attempts.",
+    "infrastructure_failure": "Diagnose once and resume; do not hop models.",
+    "capability_chain": "For unsuccessful-fix escalation, follow the same suitable available capability order: Luna -> Terra -> Sol -> Astra. At Astra, narrow or reconsider the evidence and checkpoint for the unresolved issue; do not endlessly respawn."
+  },
+  "quota_conservation": {
+    "when_low_quota_is_explicitly_reported_or_observed": "Only when low quota is explicitly reported or observed: conserve optional parallelism and research, batch routine work, and preserve required tests and reviews. Unknown quota remains unknown.",
+    "tool_only_work": "Run direct; do not delegate an agent only to run git or tests.",
+    "small_changes": "No extra planning or research agent."
+  },
+  "ledger": {
+    "required_fields": [
+      "role",
+      "model",
+      "reasoning_effort",
+      "reason",
+      "retries",
+      "result"
+    ],
+    "rule": "Record actual available usage only; never invent usage."
+  },
+  "examples": [
+    {
+      "task": "Typo or bounded source extraction",
+      "role": "source_extraction_mechanical_docs",
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "medium"
+    },
+    {
+      "task": "Well-specified component",
+      "role": "routine_execution",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "medium"
+    },
+    {
+      "task": "Queue, encryption, or concurrency change",
+      "role": "complex_implementation_debugging",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "escalation": "gpt-6-astra for design or high-risk final review"
+    }
+  ]
+}
