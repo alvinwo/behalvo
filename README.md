@@ -115,7 +115,7 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | Opt-in persistent synthetic contact/subscription operations with readback | Production credential protection or provider write verification |
 | Bounded structured operation loop and trusted `/actions` / `/approve` commands | Autonomous retries or startup recovery of running effects |
 | Versioned 20-case synthetic evaluation harness with private JSON reports | Genuine live-model evaluation and manual acceptance review |
-| Loopback-local synthetic owner-control pairing/review/approval/cancellation | Remote/mobile identity, real-provider control or deployment |
+| Foreground loopback service with pairing, durable chat/reminders, review, approval, explicit synthetic execution/readback and status | Remote/mobile identity, OS-supervised 24/7 operation, real-provider control or deployment |
 
 ## Mental model
 

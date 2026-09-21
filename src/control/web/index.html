@@ -32,11 +32,52 @@
     <section id="console" aria-label="Prepared-action console" hidden>
       <div class="toolbar" aria-label="Console controls">
         <button id="refresh" type="button">Refresh actions</button>
+        <button id="service-refresh" type="button">Refresh service</button>
         <button id="sign-out" type="button">Sign out</button>
       </div>
       <p class="persistence-note">
         Signing out removes this browser's authority. Existing approvals persist.
       </p>
+
+      <section id="service-dashboard" aria-labelledby="service-title" hidden>
+        <h2 id="service-title">Foreground laptop service</h2>
+        <p id="service-limits" class="boundary"></p>
+        <div class="dashboard-grid">
+          <article>
+            <h3>Lifecycle and barriers</h3>
+            <pre id="service-lifecycle" class="value"></pre>
+            <p id="service-barriers" class="value"></p>
+          </article>
+          <article>
+            <h3>Chat and work focus</h3>
+            <label for="chat-thread">Thread ID</label>
+            <input id="chat-thread" autocomplete="off" value="local-chat">
+            <label for="chat-work">Focused work ID (optional)</label>
+            <input id="chat-work" autocomplete="off">
+            <label for="chat-text">Owner message</label>
+            <textarea id="chat-text" rows="5"></textarea>
+            <button id="send-chat" type="button">Queue chat</button>
+          </article>
+          <article>
+            <h3>One-shot UTC reminder</h3>
+            <label for="reminder-work">Work ID</label>
+            <input id="reminder-work" autocomplete="off">
+            <label for="reminder-due">UTC instant</label>
+            <input id="reminder-due" autocomplete="off" placeholder="2026-09-21T15:00:00.000Z">
+            <button id="create-reminder" type="button">Create reminder</button>
+            <h4>Durable reminders</h4>
+            <ul id="reminders" aria-label="Durable reminders"></ul>
+          </article>
+          <article>
+            <div class="toolbar">
+              <h3>Queue and results</h3>
+              <button id="refresh-jobs" type="button">Refresh jobs</button>
+            </div>
+            <ul id="jobs" aria-label="Service jobs"></ul>
+            <pre id="job-result" class="value" aria-label="Selected job result"></pre>
+          </article>
+        </div>
+      </section>
 
       <section aria-labelledby="actions-title">
         <h2 id="actions-title">Prepared actions</h2>
@@ -53,6 +94,8 @@
         <div class="decisions" aria-label="Decision controls">
           <button id="approve" type="button" disabled>Approve prepared action</button>
           <button id="cancel" type="button" disabled>Cancel prepared action</button>
+          <button id="execute" type="button" disabled>Explicitly execute</button>
+          <button id="readback" type="button" disabled>Request readback</button>
         </div>
       </section>
     </section>

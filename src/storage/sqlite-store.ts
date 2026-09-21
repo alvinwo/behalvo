@@ -7,9 +7,47 @@ import type { PayloadCipher } from './payload-cipher.js';
 import { backupEncryptedStore } from './backup.js';
 import { preparePrivateDatabasePath } from './private-files.js';
 import { initializeStorage, validateStorage } from './sqlite-schema.js';
-import { artifactContext, decodeProjection, decodeRecord, decodeSummary, journalContext, messageTokens, open, projectionContext, seal, summaryContext, summaryThread, timerTokens } from './sqlite-codec.js';
+import { verifyServiceEnvelope, verifyServiceModel, verifyServiceResult } from './sqlite-validation.js';
+import { artifactContext, canonicalServiceEnvelope, decodeProjection, decodeRecord, decodeServiceEnvelope, decodeServiceJob, decodeServiceReceipt, decodeSummary, journalContext, messageTokens, open, projectionContext, seal, serviceJobContext, serviceRequestContext, serviceRequestTokens, summaryContext, summaryThread, timerTokens } from './sqlite-codec.js';
 import type { Row } from './sqlite-codec.js';
+import { ServiceStorageError } from './service-jobs.js';
+import type { CompleteOwnerTurnInput, CompleteOwnerTurnResult, ServiceEnvelope, ServiceJob, ServiceJobClaim, ServiceJobPage, ServiceJobResult, ServiceQueueCounts, ServiceReceipt, ServiceReminderRequest, ServiceReminderRequestPage, ServiceRequestIdentity } from './service-jobs.js';
 const SCHEMA = 1;
+const SERVICE_QUEUE_LIMIT = 64;
+const SERVICE_STOP_REASONS = new Set([
+    'completed', 'prepared_for_review', 'model_unavailable', 'invalid_model_result', 'deadline', 'cancelled',
+    'action_ineligible', 'action_failed', 'action_unknown', 'readback_unresolved', 'process_interrupted'
+]);
+
+function serviceFailure(code: ServiceStorageError['code'], message: string): never {
+    throw new ServiceStorageError(code, message);
+}
+
+function serviceObject(value: unknown, label: string): asserts value is Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) serviceFailure('invalid', `Invalid ${label}.`);
+}
+
+function serviceString(value: unknown, label: string, max = 262144): asserts value is string {
+    if (typeof value !== 'string' || value.trim().length === 0 || Buffer.byteLength(value, 'utf8') > max)
+        serviceFailure('invalid', `Invalid ${label}.`);
+}
+
+function serviceIdentity(identity: ServiceRequestIdentity): void {
+    serviceObject(identity, 'service request identity');
+    try {
+        identifier(identity.workspaceId, 'workspaceId');
+        identifier(identity.source, 'source');
+        identifier(identity.requestId, 'requestId');
+    } catch { serviceFailure('invalid', 'Invalid service request identity.'); }
+}
+
+function serviceEnvelope(envelope: ServiceEnvelope): void {
+    try {
+        verifyServiceEnvelope(envelope);
+    } catch {
+        serviceFailure('invalid', 'Invalid service envelope.');
+    }
+}
 /** Internal trusted persistence API. Do not expose append() to models or untrusted plugins. */
 export class SqliteStore {
     #db: DatabaseSync;
@@ -17,10 +55,16 @@ export class SqliteStore {
     #cipher: PayloadCipher | undefined;
     #encryptionKey: Uint8Array | undefined;
     #readOnly: boolean;
-    constructor(path: string, options: { encryptionKey?: Uint8Array; readOnly?: boolean } = {}) {
+    #serviceQueue = false;
+    constructor(path: string, options: { encryptionKey?: Uint8Array; readOnly?: boolean;
+        serviceQueue?: { upgradeExisting: boolean }; beforeWrite?: () => void } = {}) {
         if (!options || typeof options !== 'object' || Array.isArray(options) ||
-            Object.keys(options).some(key => !['encryptionKey', 'readOnly'].includes(key)) ||
+            Object.keys(options).some(key => !['encryptionKey', 'readOnly', 'serviceQueue', 'beforeWrite'].includes(key)) ||
             (options.readOnly !== undefined && typeof options.readOnly !== 'boolean') ||
+            (options.beforeWrite !== undefined && typeof options.beforeWrite !== 'function') ||
+            (options.serviceQueue !== undefined && (!options.serviceQueue || typeof options.serviceQueue !== 'object' ||
+                Array.isArray(options.serviceQueue) || Object.keys(options.serviceQueue).length !== 1 ||
+                typeof options.serviceQueue.upgradeExisting !== 'boolean')) ||
             (options.encryptionKey !== undefined && (!(options.encryptionKey instanceof Uint8Array) || options.encryptionKey.byteLength !== 32)))
             throw new Error('Invalid storage options.');
         this.#readOnly = options.readOnly ?? false;
@@ -28,7 +72,15 @@ export class SqliteStore {
         if (options.encryptionKey !== undefined && path !== ':memory:') preparePrivateDatabasePath(path, this.#readOnly);
         this.#db = new DatabaseSync(path, { readOnly: this.#readOnly });
         try {
-            this.#cipher = this.#readOnly ? validateStorage(this.#db, options.encryptionKey) : initializeStorage(this.#db, options.encryptionKey);
+            this.#cipher = this.#readOnly ? validateStorage(this.#db, options.encryptionKey)
+                : initializeStorage(this.#db, options.encryptionKey, {
+                    ...(options.serviceQueue ? { serviceQueue: options.serviceQueue } : {}),
+                    ...(options.beforeWrite ? { beforeWrite: options.beforeWrite } : {})
+                });
+            const version = Number(this.#db.prepare('PRAGMA user_version').get()!.user_version);
+            this.#serviceQueue = version === 3 || version === 4;
+            if (options.serviceQueue && !this.#serviceQueue)
+                throw new Error('Storage upgrade is required before enabling the service queue.');
             // Authenticate format and key before any connection pragmas that can change disk state.
             if (!this.#readOnly) this.#db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;');
         } catch (error) {
@@ -83,6 +135,23 @@ export class SqliteStore {
         }
     }
     #writable(): void { if (this.#readOnly) throw new Error('Store is read-only.'); }
+    #serviceTransaction<T>(fn: (beforeCommit: () => void) => T, beforeCommit?: () => void): T {
+        this.#writable();
+        let hookFailed = false;
+        try {
+            return this.#transaction(() => fn(() => {
+                try { beforeCommit?.(); }
+                catch (error) { hookFailed = true; throw error; }
+            }));
+        } catch (error) {
+            // Trusted fault-injection callbacks retain their original errors; storage faults never do.
+            if (hookFailed || error instanceof ServiceStorageError) throw error;
+            serviceFailure('integrity', 'Service storage operation failed.');
+        }
+    }
+    #requireServiceQueue(): void {
+        if (!this.#serviceQueue) serviceFailure('invalid', 'Service queue is not enabled.');
+    }
     #load(workspaceId: string): State | undefined {
         const row = this.#db.prepare('SELECT * FROM projections WHERE workspace_id=?').get(workspaceId);
         if (!row)
@@ -336,5 +405,637 @@ export class SqliteStore {
         this.state(workspaceId);
         return this.#db.prepare('SELECT * FROM summaries WHERE workspace_id=? AND thread_id=? ORDER BY rowid DESC LIMIT 8')
             .all(workspaceId, summaryThread(workspaceId, threadId, this.#cipher)).map(row => decodeSummary(row, threadId, this.#cipher));
+    }
+
+    #serviceRequest(identity: ServiceRequestIdentity, envelope: ServiceEnvelope):
+        { row: Row; envelope: ServiceEnvelope; receipt: ServiceReceipt } | undefined {
+        const tokens = serviceRequestTokens(identity, envelope, this.#cipher);
+        const row = this.#db.prepare('SELECT * FROM service_requests WHERE workspace_id=? AND source=? AND request_id=?')
+            .get(identity.workspaceId, tokens.source, tokens.requestId) as Row | undefined;
+        if (!row) return undefined;
+        try {
+            const storedEnvelope = decodeServiceEnvelope(row, this.#cipher);
+            if (row.fingerprint !== tokens.fingerprint || canonicalServiceEnvelope(storedEnvelope) !== canonicalServiceEnvelope(envelope))
+                serviceFailure('conflict', 'Service request key was reused with different input.');
+            const receipt = decodeServiceReceipt(row, this.#cipher);
+            if (receipt.workspaceId !== identity.workspaceId || receipt.source !== identity.source ||
+                receipt.requestId !== identity.requestId || receipt.id !== row.receipt_id || receipt.admittedAt !== row.admitted_at ||
+                receipt.kind !== storedEnvelope.kind) serviceFailure('integrity', 'Invalid service request record.');
+            return { row, envelope: storedEnvelope, receipt };
+        } catch (error) {
+            if (error instanceof ServiceStorageError) throw error;
+            serviceFailure('integrity', 'Invalid service request record.');
+        }
+    }
+
+    #serviceJobRow(workspaceId: string, jobId: string): { row: Row; job: ServiceJob } | undefined {
+        const row = this.#db.prepare('SELECT * FROM service_jobs WHERE workspace_id=? AND id=?').get(workspaceId, jobId) as Row | undefined;
+        if (!row) return undefined;
+        try {
+            const job = decodeServiceJob(row, this.#cipher);
+            const claimMatches = job.status === 'queued'
+                ? job.claim === undefined && row.claim_id === null && row.instance_id === null
+                : job.claim?.jobId === job.id && job.claim.claimId === row.claim_id && job.claim.instanceId === row.instance_id;
+            if (job.id !== row.id || job.workspaceId !== row.workspace_id || job.receiptId !== row.receipt_id ||
+                job.position !== Number(row.position) || job.kind !== row.kind || job.status !== row.status ||
+                job.admittedAt !== row.admitted_at || (job.startedAt ?? null) !== row.started_at ||
+                (job.finishedAt ?? null) !== row.finished_at || (job.attemptId ?? null) !== row.attempt_id || !claimMatches)
+                serviceFailure('integrity', 'Invalid service job record.');
+            return { row, job };
+        } catch (error) {
+            if (error instanceof ServiceStorageError) throw error;
+            serviceFailure('integrity', 'Invalid service job record.');
+        }
+    }
+
+    #insertServiceRequest(identity: ServiceRequestIdentity, envelope: ServiceEnvelope, receipt: ServiceReceipt): void {
+        const tokens = serviceRequestTokens(identity, envelope, this.#cipher);
+        const row: Row = { workspace_id: identity.workspaceId, source: tokens.source, request_id: tokens.requestId,
+            fingerprint: tokens.fingerprint, receipt_id: receipt.id, admitted_at: receipt.admittedAt,
+            envelope_json: '', receipt_json: '' };
+        this.#db.prepare(`INSERT INTO service_requests
+            (workspace_id,source,request_id,fingerprint,receipt_id,admitted_at,envelope_json,receipt_json)
+            VALUES (?,?,?,?,?,?,?,?)`).run(identity.workspaceId, tokens.source, tokens.requestId, tokens.fingerprint,
+                receipt.id, receipt.admittedAt, seal(JSON.stringify(envelope), serviceRequestContext(row, 'envelope_json'), this.#cipher),
+                seal(JSON.stringify(receipt), serviceRequestContext(row, 'receipt_json'), this.#cipher));
+    }
+
+    #insertServiceJob(job: Omit<ServiceJob, 'position'>): ServiceJob {
+        const inserted = this.#db.prepare(`INSERT INTO service_jobs
+            (id,workspace_id,receipt_id,kind,status,admitted_at,started_at,finished_at,claim_id,instance_id,attempt_id,job_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(job.id, job.workspaceId, job.receiptId, job.kind, job.status,
+                job.admittedAt, null, null, null, null, null, '');
+        const position = Number(inserted.lastInsertRowid);
+        if (!Number.isSafeInteger(position) || position < 1) serviceFailure('integrity', 'Invalid service queue position.');
+        const stored: ServiceJob = { ...job, position };
+        const row = this.#db.prepare('SELECT * FROM service_jobs WHERE position=?').get(position) as Row;
+        this.#db.prepare('UPDATE service_jobs SET job_json=? WHERE position=?')
+            .run(seal(JSON.stringify(stored), serviceJobContext(row), this.#cipher), position);
+        return stored;
+    }
+
+    #updateServiceJob(row: Row, job: ServiceJob): ServiceJob {
+        const next: Row = { ...row, status: job.status, started_at: job.startedAt ?? null,
+            finished_at: job.finishedAt ?? null, claim_id: job.claim?.claimId ?? null,
+            instance_id: job.claim?.instanceId ?? null, attempt_id: job.attemptId ?? null };
+        const updated = this.#db.prepare(`UPDATE service_jobs SET status=?,started_at=?,finished_at=?,claim_id=?,instance_id=?,attempt_id=?,job_json=?
+            WHERE position=? AND id=? AND workspace_id=?`).run(String(next.status), next.started_at ?? null,
+                next.finished_at ?? null, next.claim_id ?? null, next.instance_id ?? null, next.attempt_id ?? null,
+                seal(JSON.stringify(job), serviceJobContext(next), this.#cipher), Number(row.position), String(row.id),
+                String(row.workspace_id));
+        if (updated.changes !== 1) serviceFailure('integrity', 'Service job update failed.');
+        return job;
+    }
+
+    #waitingServiceJobs(workspaceId: string): number {
+        return Number(this.#db.prepare("SELECT count(*) AS n FROM service_jobs WHERE workspace_id=? AND status='queued'").get(workspaceId)!.n);
+    }
+
+    #serviceDuplicate(identity: ServiceRequestIdentity, envelope: ServiceEnvelope):
+        { receipt: ServiceReceipt; job?: ServiceJob } | undefined {
+        const found = this.#serviceRequest(identity, envelope);
+        if (!found) return undefined;
+        if (!found.receipt.jobId) return { receipt: found.receipt };
+        const job = this.#serviceJobRow(identity.workspaceId, found.receipt.jobId)?.job;
+        if (!job || job.receiptId !== found.receipt.id) serviceFailure('integrity', 'Service receipt job is missing.');
+        return { receipt: found.receipt, job };
+    }
+
+    #ingestServiceOwner(workspaceId: string, input: MessageInput, recordedAt: string): JournalRecord {
+        const tokens = messageTokens(workspaceId, input, this.#cipher);
+        if (this.#db.prepare('SELECT 1 FROM inbox WHERE workspace_id=? AND source=? AND external_id=?')
+            .get(workspaceId, tokens.source, tokens.externalId)) serviceFailure('conflict', 'Service delivery key already exists.');
+        const artifactId = this.#artifact(workspaceId, input.text);
+        const state = this.state(workspaceId);
+        const event: DomainEvent = { type: 'message.received', data: { source: input.source, externalId: input.externalId,
+            threadId: input.threadId, senderId: input.senderId, senderRole: input.senderRole, artifactId } };
+        const record = this.#append(workspaceId, state.version, [event], { actorId: input.senderId, recordedAt })[0]!;
+        this.#db.prepare('INSERT INTO inbox(workspace_id,source,external_id,fingerprint,record_id) VALUES (?,?,?,?,?)')
+            .run(workspaceId, tokens.source, tokens.externalId, tokens.fingerprint, record.id);
+        return record;
+    }
+
+    findServiceReceipt(identity: ServiceRequestIdentity, envelope: ServiceEnvelope): ServiceReceipt | undefined {
+        this.#requireServiceQueue();
+        serviceIdentity(identity);
+        serviceEnvelope(envelope);
+        return this.#serviceRequest(identity, envelope)?.receipt;
+    }
+
+    admitOwnerTurnJob(input: ServiceRequestIdentity & {
+        ownerId: string; envelope: Extract<ServiceEnvelope, { kind: 'owner_turn' }>;
+        accepted: { threadId: string; workId?: string; model: { provider: string; model: string };
+            windowTokens: number; outputReserve: number; capability: 'prepare_only' };
+        instanceId: string; at: string;
+    }, beforeCommit?: () => void): { receipt: ServiceReceipt; job: ServiceJob; duplicate: boolean } {
+        this.#requireServiceQueue();
+        serviceIdentity(input);
+        serviceEnvelope(input.envelope);
+        if (input.envelope.kind !== 'owner_turn') serviceFailure('invalid', 'Invalid admitted owner request.');
+        return this.#serviceTransaction(checkBeforeCommit => {
+            const duplicate = this.#serviceDuplicate(input, input.envelope);
+            if (duplicate) {
+                if (!duplicate.job) serviceFailure('integrity', 'Service owner receipt has no job.');
+                return { receipt: duplicate.receipt, job: duplicate.job, duplicate: true };
+            }
+            if (this.#waitingServiceJobs(input.workspaceId) >= SERVICE_QUEUE_LIMIT)
+                serviceFailure('full', 'Service queue is full.');
+            const state = this.#load(input.workspaceId);
+            if (!state || state.ownerId !== input.ownerId) serviceFailure('invalid', 'Owner binding mismatch.');
+            try {
+                identifier(input.instanceId, 'instanceId'); instant(input.at);
+                identifier(input.accepted.threadId, 'threadId');
+                if (input.accepted.workId !== undefined) identifier(input.accepted.workId, 'workId');
+                verifyServiceModel(input.accepted.model);
+                if (!Number.isSafeInteger(input.accepted.windowTokens) || !Number.isSafeInteger(input.accepted.outputReserve) ||
+                    input.accepted.windowTokens < 1 || input.accepted.outputReserve < 0 ||
+                    input.accepted.outputReserve >= input.accepted.windowTokens || input.accepted.capability !== 'prepare_only')
+                    serviceFailure('invalid', 'Invalid admitted owner parameters.');
+            } catch (error) {
+                if (error instanceof ServiceStorageError) throw error;
+                serviceFailure('invalid', 'Invalid admitted owner request.');
+            }
+            const ownerRecord = this.#ingestServiceOwner(input.workspaceId, { source: input.source, externalId: input.requestId,
+                threadId: input.accepted.threadId, senderId: input.ownerId, senderRole: 'owner', text: input.envelope.text }, input.at);
+            const receiptId = randomUUID(), jobId = randomUUID();
+            const receipt: ServiceReceipt = { id: receiptId, workspaceId: input.workspaceId, source: input.source,
+                requestId: input.requestId, kind: 'owner_turn', admittedAt: input.at, jobId };
+            this.#insertServiceRequest(input, input.envelope, receipt);
+            const job = this.#insertServiceJob({ id: jobId, workspaceId: input.workspaceId, receiptId, kind: 'owner_turn',
+                status: 'queued', admittedAt: input.at, admittedBy: input.instanceId,
+                parameters: { kind: 'owner_turn', ownerRecordId: ownerRecord.id, threadId: input.accepted.threadId,
+                    ...(input.accepted.workId ? { workId: input.accepted.workId } : {}), model: structuredClone(input.accepted.model),
+                    windowTokens: input.accepted.windowTokens, outputReserve: input.accepted.outputReserve, capability: 'prepare_only' } });
+            checkBeforeCommit();
+            return { receipt, job, duplicate: false };
+        }, beforeCommit);
+    }
+
+    admitActionJob(input: ServiceRequestIdentity & {
+        ownerId: string; envelope: Extract<ServiceEnvelope, { kind: 'execute' | 'readback' }>;
+        instanceId: string; at: string;
+    }, beforeCommit?: () => void): { receipt: ServiceReceipt; job: ServiceJob; duplicate: boolean } {
+        this.#requireServiceQueue();
+        serviceIdentity(input); serviceEnvelope(input.envelope);
+        if (!['execute', 'readback'].includes(input.envelope.kind)) serviceFailure('invalid', 'Invalid service action request.');
+        return this.#serviceTransaction(checkBeforeCommit => {
+            const duplicate = this.#serviceDuplicate(input, input.envelope);
+            if (duplicate) {
+                if (!duplicate.job) serviceFailure('integrity', 'Service action receipt has no job.');
+                return { receipt: duplicate.receipt, job: duplicate.job, duplicate: true };
+            }
+            if (this.#waitingServiceJobs(input.workspaceId) >= SERVICE_QUEUE_LIMIT)
+                serviceFailure('full', 'Service queue is full.');
+            const state = this.#load(input.workspaceId);
+            if (!state || state.ownerId !== input.ownerId) serviceFailure('invalid', 'Owner binding mismatch.');
+            try {
+                identifier(input.instanceId, 'instanceId'); instant(input.at);
+                const action = state.actions[input.envelope.actionId];
+                if (!action || action.digest !== input.envelope.digest) serviceFailure('invalid', 'Action binding mismatch.');
+            } catch (error) {
+                if (error instanceof ServiceStorageError) throw error;
+                serviceFailure('invalid', 'Invalid service action request.');
+            }
+            const receiptId = randomUUID(), jobId = randomUUID();
+            const receipt: ServiceReceipt = { id: receiptId, workspaceId: input.workspaceId, source: input.source,
+                requestId: input.requestId, kind: input.envelope.kind, admittedAt: input.at, jobId };
+            this.#insertServiceRequest(input, input.envelope, receipt);
+            const job = this.#insertServiceJob({ id: jobId, workspaceId: input.workspaceId, receiptId,
+                kind: input.envelope.kind, status: 'queued', admittedAt: input.at, admittedBy: input.instanceId,
+                parameters: { kind: input.envelope.kind, actionId: input.envelope.actionId, digest: input.envelope.digest } });
+            checkBeforeCommit();
+            return { receipt, job, duplicate: false };
+        }, beforeCommit);
+    }
+
+    scheduleServiceReminder(input: ServiceRequestIdentity & {
+        ownerId: string; envelope: Extract<ServiceEnvelope, { kind: 'schedule_reminder' }>;
+        timerId: string; at: string;
+    }, beforeCommit?: () => void): { receipt: ServiceReceipt; duplicate: boolean } {
+        this.#requireServiceQueue();
+        serviceIdentity(input); serviceEnvelope(input.envelope);
+        if (input.envelope.kind !== 'schedule_reminder') serviceFailure('invalid', 'Invalid service reminder request.');
+        return this.#serviceTransaction(checkBeforeCommit => {
+            const duplicate = this.#serviceDuplicate(input, input.envelope);
+            if (duplicate) return { receipt: duplicate.receipt, duplicate: true };
+            const state = this.#load(input.workspaceId);
+            if (!state || state.ownerId !== input.ownerId) serviceFailure('invalid', 'Owner binding mismatch.');
+            try {
+                identifier(input.timerId, 'timerId'); instant(input.at);
+            } catch (error) {
+                if (error instanceof ServiceStorageError) throw error;
+                serviceFailure('invalid', 'Invalid service reminder request.');
+            }
+            const work = state.works[input.envelope.workId];
+            if (!work || ['done', 'cancelled'].includes(work.phase)) serviceFailure('invalid', 'Reminder work is unavailable.');
+            if (state.timers[input.timerId]) serviceFailure('conflict', 'Timer already exists.');
+            this.#append(input.workspaceId, state.version, [{ type: 'timer.scheduled', data: { timer: {
+                id: input.timerId, workId: work.id, workRevision: work.revision,
+                dueAt: input.envelope.dueAt, status: 'scheduled'
+            } } }], { actorId: input.ownerId, recordedAt: input.at });
+            const receipt: ServiceReceipt = { id: randomUUID(), workspaceId: input.workspaceId, source: input.source,
+                requestId: input.requestId, kind: 'schedule_reminder', admittedAt: input.at, timerId: input.timerId };
+            this.#insertServiceRequest(input, input.envelope, receipt);
+            checkBeforeCommit();
+            return { receipt, duplicate: false };
+        }, beforeCommit);
+    }
+
+    admitDueTimerJob(workspaceId: string, timerId: string, instanceId: string, at: string):
+        { kind: 'queued'; job: ServiceJob } | { kind: 'cancelled' | 'full' | 'unchanged' } {
+        this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); identifier(timerId, 'timerId'); identifier(instanceId, 'instanceId'); instant(at); }
+        catch { serviceFailure('invalid', 'Invalid due timer request.'); }
+        return this.#serviceTransaction(() => {
+            const state = this.state(workspaceId);
+            const timer = state.timers[timerId];
+            if (!timer || timer.status !== 'scheduled' || Date.parse(timer.dueAt) > Date.parse(at)) return { kind: 'unchanged' };
+            const work = state.works[timer.workId];
+            if (!work || ['done', 'cancelled'].includes(work.phase) || work.revision !== timer.workRevision) {
+                this.#append(workspaceId, state.version, [{ type: 'timer.cancelled', data: { id: timerId } }], { recordedAt: at });
+                return { kind: 'cancelled' };
+            }
+            if (this.#waitingServiceJobs(workspaceId) >= SERVICE_QUEUE_LIMIT) return { kind: 'full' };
+            const identity = { workspaceId, source: 'kernel:timer', requestId: timerId };
+            const envelope: Extract<ServiceEnvelope, { kind: 'reminder' }> = { kind: 'reminder', timerId, workId: timer.workId };
+            if (this.#serviceDuplicate(identity, envelope)) return { kind: 'unchanged' };
+            const timerRecord = this.#append(workspaceId, state.version,
+                [{ type: 'timer.fired', data: { id: timerId } }], { recordedAt: at })[0]!;
+            const delivery = timerTokens(workspaceId, timerId, this.#cipher);
+            this.#db.prepare('INSERT INTO inbox(workspace_id,source,external_id,fingerprint,record_id) VALUES (?,?,?,?,?)')
+                .run(workspaceId, delivery.source, delivery.externalId, delivery.fingerprint, timerRecord.id);
+            const receiptId = randomUUID(), jobId = randomUUID();
+            const receipt: ServiceReceipt = { ...identity, id: receiptId, kind: 'reminder', admittedAt: at, jobId };
+            this.#insertServiceRequest(identity, envelope, receipt);
+            const job = this.#insertServiceJob({ id: jobId, workspaceId, receiptId, kind: 'reminder', status: 'queued',
+                admittedAt: at, admittedBy: instanceId,
+                parameters: { kind: 'reminder', timerId, workId: timer.workId, timerRecordId: timerRecord.id } });
+            return { kind: 'queued', job };
+        });
+    }
+
+    serviceJob(workspaceId: string, jobId: string): ServiceJob {
+        this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); identifier(jobId, 'jobId'); } catch { serviceFailure('invalid', 'Invalid service job identity.'); }
+        const job = this.#serviceJobRow(workspaceId, jobId)?.job;
+        if (!job) serviceFailure('invalid', 'Service job not found.');
+        return job;
+    }
+
+    serviceJobReceipt(workspaceId: string, jobId: string): ServiceReceipt {
+        const job = this.serviceJob(workspaceId, jobId);
+        const row = this.#db.prepare('SELECT * FROM service_requests WHERE workspace_id=? AND receipt_id=?')
+            .get(workspaceId, job.receiptId) as Row | undefined;
+        if (!row) serviceFailure('integrity', 'Service job receipt is missing.');
+        try {
+            const receipt = decodeServiceReceipt(row, this.#cipher);
+            const envelope = decodeServiceEnvelope(row, this.#cipher);
+            const found = this.#serviceRequest({ workspaceId, source: receipt.source, requestId: receipt.requestId }, envelope);
+            if (!found || found.receipt.id !== job.receiptId || found.receipt.jobId !== job.id)
+                serviceFailure('integrity', 'Service job receipt does not match its job.');
+            return found.receipt;
+        } catch (error) {
+            if (error instanceof ServiceStorageError) throw error;
+            serviceFailure('integrity', 'Invalid service job receipt.');
+        }
+    }
+
+    serviceJobs(workspaceId: string, after = 0, limit = 50): ServiceJobPage {
+        this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); } catch { serviceFailure('invalid', 'Invalid workspace.'); }
+        this.state(workspaceId);
+        if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+            serviceFailure('invalid', 'Invalid service job page.');
+        const rows = this.#db.prepare('SELECT * FROM service_jobs WHERE workspace_id=? AND position>? ORDER BY position LIMIT ?')
+            .all(workspaceId, after, limit + 1) as Row[];
+        const hasMore = rows.length > limit;
+        const pageRows = rows.slice(0, limit);
+        const items = pageRows.map(row => this.#serviceJobRow(workspaceId, String(row.id))!.job);
+        return { items, nextAfter: hasMore ? items.at(-1)!.position : null };
+    }
+
+    serviceReminderRequests(workspaceId: string, after = 0, limit = 50): ServiceReminderRequestPage {
+        this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); } catch { serviceFailure('invalid', 'Invalid workspace.'); }
+        const state = this.state(workspaceId);
+        if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+            serviceFailure('invalid', 'Invalid service reminder page.');
+        const rows = this.#db.prepare(`SELECT r.* FROM service_requests r
+            WHERE r.workspace_id=? AND NOT EXISTS (
+                SELECT 1 FROM service_jobs j WHERE j.workspace_id=r.workspace_id AND j.receipt_id=r.receipt_id)
+            ORDER BY r.rowid`).all(workspaceId) as Row[];
+        const receipts = new Map<string, ServiceReceipt>();
+        for (const row of rows) {
+            try {
+                const receipt = decodeServiceReceipt(row, this.#cipher);
+                const envelope = decodeServiceEnvelope(row, this.#cipher);
+                const found = this.#serviceRequest({ workspaceId, source: receipt.source, requestId: receipt.requestId }, envelope);
+                if (!found || found.receipt.id !== receipt.id || envelope.kind !== 'schedule_reminder' ||
+                    receipt.kind !== 'schedule_reminder' || receipt.timerId === undefined || receipt.jobId !== undefined ||
+                    receipts.has(receipt.timerId)) serviceFailure('integrity', 'Invalid service reminder request.');
+                const timer = state.timers[receipt.timerId];
+                if (!timer || timer.workId !== envelope.workId || timer.dueAt !== envelope.dueAt)
+                    serviceFailure('integrity', 'Service reminder does not match durable timer state.');
+                receipts.set(receipt.timerId, receipt);
+            } catch (error) {
+                if (error instanceof ServiceStorageError) throw error;
+                serviceFailure('integrity', 'Invalid service reminder request.');
+            }
+        }
+        // Journal sequence provides one stable cursor for service and pre-service timers.
+        // Receipts add provenance; absence never invents an owner-service request identity.
+        const reminders: ServiceReminderRequest[] = [];
+        for (const record of this.journal(workspaceId)) {
+            if (record.event.type !== 'timer.scheduled') continue;
+            const scheduled = record.event.data.timer;
+            const timer = state.timers[scheduled.id];
+            if (!timer || timer.workId !== scheduled.workId || timer.dueAt !== scheduled.dueAt ||
+                timer.workRevision !== scheduled.workRevision)
+                serviceFailure('integrity', 'Reminder does not match durable timer state.');
+            if (record.seq > after) reminders.push({ position: record.seq, receipt: receipts.get(timer.id) ?? null,
+                timerId: timer.id, workId: timer.workId, dueAt: timer.dueAt });
+        }
+        const items = reminders.slice(0, limit);
+        return { items, nextAfter: reminders.length > limit ? items.at(-1)!.position : null };
+    }
+
+    serviceReminderRequest(workspaceId: string, timerId: string): ServiceReminderRequest | undefined {
+        try { identifier(timerId, 'timerId'); } catch { serviceFailure('invalid', 'Invalid timer identity.'); }
+        let after = 0;
+        do {
+            const page = this.serviceReminderRequests(workspaceId, after, 100);
+            const found = page.items.find(item => item.timerId === timerId);
+            if (found) return found;
+            if (page.nextAfter === null) return undefined;
+            after = page.nextAfter;
+        } while (true);
+    }
+
+    serviceQueueCounts(workspaceId: string): ServiceQueueCounts {
+        this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); } catch { serviceFailure('invalid', 'Invalid workspace.'); }
+        this.state(workspaceId);
+        const counts: Record<string, number> = { queued: 0, running: 0, finished: 0, stopped: 0, interrupted: 0 };
+        for (const row of this.#db.prepare('SELECT status,count(*) AS n FROM service_jobs WHERE workspace_id=? GROUP BY status').all(workspaceId))
+            counts[String(row.status)] = Number(row.n);
+        const oldest = this.#db.prepare("SELECT admitted_at FROM service_jobs WHERE workspace_id=? AND status='queued' ORDER BY position LIMIT 1").get(workspaceId);
+        const active = this.#db.prepare("SELECT id FROM service_jobs WHERE workspace_id=? AND status='running'").get(workspaceId);
+        return { queued: counts.queued!, running: counts.running!, finished: counts.finished!, stopped: counts.stopped!,
+            interrupted: counts.interrupted!, oldestQueuedAt: oldest ? String(oldest.admitted_at) : null,
+            activeJobId: active ? String(active.id) : null };
+    }
+
+    claimServiceJob(workspaceId: string, instanceId: string, at: string): ServiceJob | undefined {
+        this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); identifier(instanceId, 'instanceId'); instant(at); }
+        catch { serviceFailure('invalid', 'Invalid service claim.'); }
+        return this.#transaction(() => {
+            const state = this.state(workspaceId);
+            if (this.#db.prepare("SELECT 1 FROM service_jobs WHERE workspace_id=? AND status='running'").get(workspaceId)) return undefined;
+            const row = this.#db.prepare("SELECT * FROM service_jobs WHERE workspace_id=? AND status='queued' ORDER BY position LIMIT 1")
+                .get(workspaceId) as Row | undefined;
+            if (!row) return undefined;
+            const job = this.#serviceJobRow(workspaceId, String(row.id))!.job;
+            if (job.parameters.kind === 'readback') {
+                const action = state.actions[job.parameters.actionId];
+                const outcome = action?.attemptId === undefined ? undefined : this.journal(workspaceId).find(record =>
+                    record.event.type === 'action.finished' && record.event.data.id === action.id &&
+                    record.event.data.attemptId === action.attemptId);
+                if (outcome) job.actionRecordId = outcome.id;
+                else if (action && ['accepted', 'unknown', 'failed'].includes(action.status))
+                    serviceFailure('integrity', 'Readback historical outcome is missing.');
+            }
+            const claim: ServiceJobClaim = { jobId: job.id, claimId: randomUUID(), instanceId };
+            return this.#updateServiceJob(row, { ...job, status: 'running', startedAt: at, claim });
+        });
+    }
+
+    #claimedServiceJob(workspaceId: string, claim: ServiceJobClaim): { row: Row; job: ServiceJob } {
+        serviceObject(claim, 'service claim');
+        try { identifier(claim.jobId, 'jobId'); identifier(claim.claimId, 'claimId'); identifier(claim.instanceId, 'instanceId'); }
+        catch { serviceFailure('invalid', 'Invalid service claim.'); }
+        const found = this.#serviceJobRow(workspaceId, claim.jobId);
+        if (!found || found.job.status !== 'running' || found.job.claim?.claimId !== claim.claimId ||
+            found.job.claim.instanceId !== claim.instanceId) serviceFailure('conflict', 'Service claim is no longer current.');
+        return found;
+    }
+
+    #validateServiceResult(job: ServiceJob, result: ServiceJobResult,
+        status: 'finished' | 'stopped' | 'interrupted'): void {
+        try {
+            const records = new Map<string, JournalRecord>();
+            if (!Array.isArray(result.recordIds) || result.recordIds.length > 1000)
+                serviceFailure('integrity', 'Invalid service job result.');
+            for (const id of result.recordIds) {
+                identifier(id, 'recordId'); records.set(id, this.record(job.workspaceId, id));
+            }
+            verifyServiceResult(result, { ...job, status }, records);
+        } catch { serviceFailure('integrity', 'Invalid service job result provenance.'); }
+    }
+
+    completeServiceJob(workspaceId: string, claim: ServiceJobClaim, status: 'finished' | 'stopped' | 'interrupted',
+        result: ServiceJobResult, at: string, beforeCommit?: () => void): ServiceJob {
+        this.#requireServiceQueue();
+        if (!['finished', 'stopped', 'interrupted'].includes(status)) serviceFailure('invalid', 'Invalid terminal service status.');
+        try { identifier(workspaceId, 'workspaceId'); instant(at); } catch { serviceFailure('invalid', 'Invalid service completion.'); }
+        return this.#serviceTransaction(checkBeforeCommit => {
+            const found = this.#claimedServiceJob(workspaceId, claim);
+            this.#validateServiceResult(found.job, result, status);
+            const finalResult: ServiceJobResult = structuredClone(result);
+            if (found.job.kind === 'reminder' && found.job.parameters.kind === 'reminder' && status !== 'interrupted') {
+                const inbox = this.#db.prepare('SELECT handled FROM inbox WHERE workspace_id=? AND record_id=?')
+                    .get(workspaceId, found.job.parameters.timerRecordId);
+                if (!inbox || Number(inbox.handled) !== 0) serviceFailure('integrity', 'Reminder inbox record is unavailable.');
+                const state = this.state(workspaceId);
+                const handled = this.#append(workspaceId, state.version,
+                    [{ type: 'inbox.handled', data: { recordId: found.job.parameters.timerRecordId } }],
+                    { causationId: found.job.parameters.timerRecordId, recordedAt: at })[0]!;
+                this.#db.prepare('UPDATE inbox SET handled=1 WHERE workspace_id=? AND record_id=?')
+                    .run(workspaceId, found.job.parameters.timerRecordId);
+                if (!finalResult.recordIds.includes(handled.id)) finalResult.recordIds.push(handled.id);
+            }
+            this.#validateServiceResult(found.job, finalResult, status);
+            checkBeforeCommit();
+            return this.#updateServiceJob(found.row, { ...found.job, status, finishedAt: at, result: finalResult });
+        }, beforeCommit);
+    }
+
+    completeOwnerTurnJob(workspaceId: string, claim: ServiceJobClaim, input: CompleteOwnerTurnInput,
+        beforeCommit?: () => void): CompleteOwnerTurnResult {
+        this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); instant(input.at); } catch { serviceFailure('invalid', 'Invalid owner completion.'); }
+        return this.#transaction(() => {
+            const found = this.#claimedServiceJob(workspaceId, claim);
+            if (found.job.kind !== 'owner_turn' || found.job.parameters.kind !== 'owner_turn' ||
+                found.job.parameters.ownerRecordId !== input.ownerRecordId ||
+                !['finished', 'stopped'].includes(input.status) || !SERVICE_STOP_REASONS.has(input.reason))
+                serviceFailure('conflict', 'Owner completion does not match the claimed job.');
+            const pending = this.#db.prepare('SELECT handled FROM inbox WHERE workspace_id=? AND record_id=?')
+                .get(workspaceId, input.ownerRecordId);
+            if (!pending || Number(pending.handled) !== 0) serviceFailure('conflict', 'Owner inbox record is unavailable.');
+            try {
+                serviceString(input.reply.text, 'assistant reply');
+                identifier(input.reply.externalId, 'externalId'); identifier(input.reply.threadId, 'threadId');
+                if (!['agent:model', 'agent:application'].includes(input.reply.source) ||
+                    input.reply.threadId !== found.job.parameters.threadId) serviceFailure('invalid', 'Invalid owner completion reply.');
+            } catch (error) {
+                if (error instanceof ServiceStorageError) throw error;
+                serviceFailure('invalid', 'Invalid owner completion reply.');
+            }
+            const artifactId = this.#artifact(workspaceId, input.reply.text);
+            const assistantEvent: DomainEvent = { type: 'message.received', data: { source: input.reply.source,
+                externalId: input.reply.externalId, threadId: input.reply.threadId, senderId: 'agent', senderRole: 'agent', artifactId } };
+            const records = this.#append(workspaceId, input.expectedVersion,
+                [...input.events, assistantEvent, { type: 'inbox.handled', data: { recordId: input.ownerRecordId } }],
+                { causationId: input.ownerRecordId, recordedAt: input.at });
+            const assistant = records.find(record => record.event.type === 'message.received' && record.event.data.senderRole === 'agent')!;
+            this.#db.prepare('UPDATE inbox SET handled=1 WHERE workspace_id=? AND record_id=?').run(workspaceId, input.ownerRecordId);
+            const result: ServiceJobResult = { reason: input.reason, recordIds: records.map(record => record.id),
+                assistantRecordId: assistant.id };
+            this.#validateServiceResult(found.job, result, input.status);
+            beforeCommit?.();
+            const job = this.#updateServiceJob(found.row, { ...found.job, status: input.status,
+                finishedAt: input.at, result });
+            return { job, records };
+        });
+    }
+
+    startActionAttempt(workspaceId: string, expectedVersion: number, actionId: string, attemptId: string,
+        metadata: RecordMetadata = {}, beforeAppend?: () => void, claim?: ServiceJobClaim): JournalRecord {
+        if (claim) this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); identifier(actionId, 'actionId'); identifier(attemptId, 'attemptId'); }
+        catch { serviceFailure('invalid', 'Invalid action attempt.'); }
+        return this.#transaction(() => {
+            let found: { row: Row; job: ServiceJob } | undefined;
+            if (claim) {
+                found = this.#claimedServiceJob(workspaceId, claim);
+                const state = this.state(workspaceId);
+                const action = state.actions[actionId];
+                if (found.job.kind !== 'execute' || found.job.parameters.kind !== 'execute' ||
+                    found.job.parameters.actionId !== actionId || found.job.parameters.digest !== action?.digest || found.job.attemptId)
+                    serviceFailure('conflict', 'Action attempt does not match the claimed service job.');
+            }
+            beforeAppend?.();
+            const record = this.#append(workspaceId, expectedVersion,
+                [{ type: 'action.started', data: { id: actionId, attemptId } }], metadata)[0]!;
+            if (found) this.#updateServiceJob(found.row, { ...found.job, attemptId });
+            return record;
+        });
+    }
+
+    /** Atomically persist trusted readback evidence and bind its exact record to the active service claim. */
+    recordActionVerification(workspaceId: string, expectedVersion: number, actionId: string,
+        events: DomainEvent[], metadata: RecordMetadata = {}, beforeAppend?: () => void,
+        claim?: ServiceJobClaim): JournalRecord[] {
+        if (claim) this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); identifier(actionId, 'actionId'); }
+        catch { serviceFailure('invalid', 'Invalid action verification.'); }
+        return this.#transaction(() => {
+            let found: { row: Row; job: ServiceJob } | undefined;
+            if (claim) {
+                found = this.#claimedServiceJob(workspaceId, claim);
+                const state = this.state(workspaceId);
+                const action = state.actions[actionId];
+                if (!['execute', 'readback'].includes(found.job.kind) ||
+                    (found.job.parameters.kind !== 'execute' && found.job.parameters.kind !== 'readback') ||
+                    found.job.parameters.actionId !== actionId || found.job.parameters.digest !== action?.digest ||
+                    found.job.verificationRecordId !== undefined)
+                    serviceFailure('conflict', 'Action verification does not match the claimed service job.');
+                if (found.job.kind === 'readback') {
+                    const outcome = found.job.actionRecordId === undefined ? undefined
+                        : this.record(workspaceId, found.job.actionRecordId);
+                    if (outcome?.event.type !== 'action.finished' || outcome.event.data.id !== actionId ||
+                        outcome.event.data.attemptId !== action?.attemptId)
+                        serviceFailure('integrity', 'Readback historical outcome does not match its claim.');
+                }
+            }
+            beforeAppend?.();
+            const records = this.#append(workspaceId, expectedVersion, events, metadata);
+            const verification = records.filter(record => record.event.type === 'action.verification_recorded' &&
+                record.event.data.id === actionId);
+            if (verification.length !== 1 || verification[0]!.event.type !== 'action.verification_recorded' ||
+                verification[0]!.event.data.verification.status === 'owner_attested')
+                serviceFailure('integrity', 'Invalid trusted action verification record.');
+            if (found) this.#updateServiceJob(found.row, { ...found.job, verificationRecordId: verification[0]!.id });
+            return records;
+        });
+    }
+
+    inspectInterruptedServiceJobs(workspaceId: string, at: string): { repaired: number; interrupted: number } {
+        this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); instant(at); } catch { serviceFailure('invalid', 'Invalid interrupted-job inspection.'); }
+        return this.#transaction(() => {
+            this.state(workspaceId);
+            let repaired = 0, interrupted = 0;
+            const records = this.journal(workspaceId);
+            const rows = this.#db.prepare("SELECT * FROM service_jobs WHERE workspace_id=? AND status='running' ORDER BY position")
+                .all(workspaceId) as Row[];
+            for (const row of rows) {
+                const job = this.#serviceJobRow(workspaceId, String(row.id))!.job;
+                let result: ServiceJobResult | undefined;
+                let status: 'finished' | 'stopped' | 'interrupted' = 'interrupted';
+                const verification = job.verificationRecordId === undefined ? undefined
+                    : records.find(record => record.id === job.verificationRecordId);
+                if (job.verificationRecordId !== undefined &&
+                    (verification?.event.type !== 'action.verification_recorded' ||
+                    (job.parameters.kind !== 'execute' && job.parameters.kind !== 'readback') ||
+                    verification.event.data.id !== job.parameters.actionId ||
+                    verification.event.data.verification.status === 'owner_attested'))
+                    serviceFailure('integrity', 'Claimed action verification is invalid.');
+                if (job.kind === 'execute' && job.parameters.kind === 'execute' && job.attemptId) {
+                    const parameters = job.parameters;
+                    const outcome = records.find(record => record.event.type === 'action.finished' &&
+                        record.event.data.id === parameters.actionId && record.event.data.attemptId === job.attemptId);
+                    if (outcome?.event.type === 'action.finished') {
+                        const satisfied = verification?.event.type === 'action.verification_recorded' &&
+                            verification.event.data.verification.status === 'satisfied';
+                        status = outcome.event.data.status === 'accepted' && satisfied ? 'finished' : 'stopped';
+                        result = { reason: outcome.event.data.status === 'accepted'
+                            ? satisfied ? 'completed' : 'readback_unresolved'
+                            : outcome.event.data.status === 'failed' ? 'action_failed' : 'action_unknown',
+                            recordIds: [outcome.id, ...(verification ? [verification.id] : [])],
+                            actionId: parameters.actionId, attemptId: job.attemptId, actionRecordId: outcome.id,
+                            ...(verification ? { verificationRecordId: verification.id } : {}) };
+                    }
+                } else if (job.kind === 'readback' && job.parameters.kind === 'readback' && verification?.event.type === 'action.verification_recorded') {
+                    const outcome = records.find(record => record.id === job.actionRecordId);
+                    if (outcome?.event.type !== 'action.finished' || outcome.event.data.id !== job.parameters.actionId)
+                        serviceFailure('integrity', 'Readback historical outcome is missing.');
+                    const satisfied = verification.event.data.verification.status === 'satisfied';
+                    status = satisfied ? 'finished' : 'stopped';
+                    result = { reason: satisfied ? 'completed' : 'readback_unresolved', recordIds: [outcome.id, verification.id],
+                        actionId: job.parameters.actionId, actionRecordId: outcome.id, attemptId: outcome.event.data.attemptId,
+                        verificationRecordId: verification.id };
+                } else if (job.kind === 'owner_turn' && job.parameters.kind === 'owner_turn') {
+                    const parameters = job.parameters;
+                    const handled = records.find(record => record.event.type === 'inbox.handled' &&
+                        record.event.data.recordId === parameters.ownerRecordId);
+                    const assistant = records.find(record => record.event.type === 'message.received' &&
+                        record.event.data.senderRole === 'agent' && record.causationId === parameters.ownerRecordId);
+                    if (handled && assistant) {
+                        status = 'finished';
+                        result = { reason: 'completed', recordIds: [assistant.id, handled.id], assistantRecordId: assistant.id };
+                    }
+                } else if (job.kind === 'reminder' && job.parameters.kind === 'reminder') {
+                    const parameters = job.parameters;
+                    const handled = records.find(record => record.event.type === 'inbox.handled' &&
+                        record.event.data.recordId === parameters.timerRecordId);
+                    if (handled) {
+                        status = 'finished';
+                        result = { reason: 'completed', recordIds: [parameters.timerRecordId, handled.id], timerId: parameters.timerId };
+                    }
+                }
+                if (result) repaired++;
+                else {
+                    interrupted++;
+                    result = job.parameters.kind === 'reminder'
+                        ? { reason: 'process_interrupted', recordIds: [job.parameters.timerRecordId], timerId: job.parameters.timerId }
+                        : { reason: 'process_interrupted', recordIds: [] };
+                }
+                this.#validateServiceResult(job, result, status);
+                this.#updateServiceJob(row, { ...job, status, finishedAt: at, result });
+            }
+            return { repaired, interrupted };
+        });
     }
 }

@@ -1,9 +1,10 @@
-import { assertExecutionActive, withinExecution, type OperationExecutionContext } from './execution-context.js';
+import { assertExecutionActive, assertExecutionCurrent, withinExecution, type OperationExecutionContext } from './execution-context.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Approval, State } from '../kernel/types.js';
 import { identifier, instant, nonempty, required } from '../kernel/types.js';
 import { assertOwner, commandDigest } from '../kernel/policy.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
+import { isFatalServiceStorageError } from '../storage/service-jobs.js';
 import { OperationRegistry } from './registry.js';
 import type {
     ApproveOperationBatchInput, Connection, ExecuteOperationInput, OperationAction, OperationCommand,
@@ -52,7 +53,7 @@ export class OperationService {
 
     async prepare(input: PrepareOperationInput, context?: OperationExecutionContext): Promise<OperationAction> {
         this.assertWorkspace(input.workspaceId);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         exactObject(input, ['workspaceId', 'ownerId', 'workId', 'key', 'connectionId', 'operationId', 'operationVersion',
             'resourceId', 'arguments'], 'prepare operation input');
         identifier(input.workspaceId, 'workspaceId'); identifier(input.workId, 'workId');
@@ -67,7 +68,7 @@ export class OperationService {
         if (['done', 'cancelled'].includes(work.phase)) throw new Error('Work is closed');
         const connection = this.activeConnection(initial, input.connectionId);
         const handler = this.registry.resolve(connection.provider, input.operationId, input.operationVersion);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         const normalizedArguments = jsonValue(handler.validateArguments(input.arguments), 'operation arguments');
         const key = `${input.workspaceId}:${input.key}`;
         const requestFingerprint = createHash('sha256').update(canonicalJson(jsonValue([
@@ -83,16 +84,16 @@ export class OperationService {
         const initialScope = this.operationScope(initial, connection.provider, connection.subject);
         if (initialScope.blocked) throw new Error('Operation subject has an unresolved conflict barrier');
         const subject = await withinExecution(() => handler.identify({ connection: structuredClone(connection) }), context);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         nonempty(subject, 'remote subject');
         if (subject !== connection.subject) throw new Error('Remote identity does not match connection subject');
         this.assertPreparationUnchanged(input.workspaceId, input.ownerId, work.id, work.revision, connection, initialScope.revision);
         const observationRequestedAt = this.now();
         const observed = await withinExecution(() => handler.observe({ connection: structuredClone(connection), resourceId: input.resourceId }), context);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         const observation = validateObservationInput(observed, connection, input.resourceId, observationRequestedAt, this.now());
         this.assertPreparationUnchanged(input.workspaceId, input.ownerId, work.id, work.revision, connection, initialScope.revision);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         const preparation = validatePreparation(handler.prepare({
             connection: structuredClone(connection), arguments: normalizedArguments, observation: structuredClone(observation)
         }));
@@ -165,7 +166,7 @@ export class OperationService {
 
     async execute(input: ExecuteOperationInput, context?: OperationExecutionContext): Promise<OperationAction> {
         this.assertWorkspace(input.workspaceId);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         exactObject(input, ['workspaceId', 'ownerId', 'actionId'], 'execute operation input');
         const initial = this.store.state(input.workspaceId);
         assertOwner(initial, input.ownerId);
@@ -174,16 +175,16 @@ export class OperationService {
         const connection = this.boundConnection(initial, action.command);
         const handler = this.registry.resolve(action.command.provider, action.command.operationId, action.command.operationVersion);
         const subject = await withinExecution(() => handler.identify({ connection: structuredClone(connection) }), context);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         nonempty(subject, 'remote subject');
         if (subject !== action.command.subject) throw new Error('Remote identity does not match approved subject');
         this.executable(this.store.state(input.workspaceId), input.actionId, action, connection);
         const observationRequestedAt = this.now();
         const observed = await withinExecution(() => handler.observe({ connection: structuredClone(connection), resourceId: action.command.resourceId }), context);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         const observation = validateObservationInput(observed, connection, action.command.resourceId, observationRequestedAt, this.now());
         this.executable(this.store.state(input.workspaceId), input.actionId, action, connection);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         if (handler.comparePrecondition({ expected: structuredClone(action.command.precondition), actual: structuredClone(observation) }) !== true)
             throw new Error('Operation precondition is stale');
         const finalState = this.store.state(input.workspaceId);
@@ -191,17 +192,22 @@ export class OperationService {
         const attemptId = randomUUID();
         let outcome;
         // No await between the final guard, durable start and provider invocation.
-        assertExecutionActive(context);
-        this.store.append(input.workspaceId, finalState.version,
-            [{ type: 'action.started', data: { id: final.id, attemptId } }], { recordedAt: this.now() }, () => {
-                assertExecutionActive(context);
-                this.executable(this.store.state(input.workspaceId), input.actionId, action, connection);
-            });
-        try {
+        await assertExecutionCurrent(context);
+        const beforeStart = () => {
             assertExecutionActive(context);
-            // The durable start itself can block long enough for approval to expire.
-            if (!final.approval || Date.parse(final.approval.expiresAt) <= Date.parse(this.now()))
-                throw new Error('Approval expired before provider dispatch');
+            this.executable(this.store.state(input.workspaceId), input.actionId, action, connection);
+        };
+        if (context?.serviceClaim) {
+            this.store.startActionAttempt(input.workspaceId, finalState.version, final.id, attemptId,
+                { recordedAt: this.now() }, beforeStart, context.serviceClaim);
+        } else {
+            this.store.append(input.workspaceId, finalState.version,
+                [{ type: 'action.started', data: { id: final.id, attemptId } }], { recordedAt: this.now() }, beforeStart);
+        }
+        try {
+            await assertExecutionCurrent(context);
+            // This synchronous revalidation and invocation are contiguous after the last lifecycle await.
+            this.assertRunningDispatchCurrent(input.workspaceId, input.ownerId, action, connection, attemptId);
             const pending = handler.execute({
                 connection: structuredClone(connection), command: structuredClone(action.command), actionId: action.id, attemptId,
                 idempotencyKey: action.key
@@ -210,10 +216,16 @@ export class OperationService {
             const observed = Promise.resolve(pending);
             void observed.catch(() => {});
             const execution = await withinExecution(() => observed, context);
-            assertExecutionActive(context);
+            await assertExecutionCurrent(context);
             outcome = validateExecutionOutcome(execution);
             assertExecutionActive(context);
-        } catch {
+        } catch (error) {
+            if (isFatalServiceStorageError(error)) throw error;
+            try {
+                await context?.assertCurrent?.();
+            } catch (fenceError) {
+                if (isFatalServiceStorageError(fenceError)) throw fenceError;
+            }
             outcome = { status: 'unknown' as const,
                 evidence: 'Provider outcome unavailable, invalid, or run deadline reached after action.started. Readback or owner reconciliation required; no automatic retry.' };
         }
@@ -224,7 +236,7 @@ export class OperationService {
 
     async verify(input: VerifyOperationInput, context?: OperationExecutionContext): Promise<OperationAction> {
         this.assertWorkspace(input.workspaceId);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         exactObject(input, ['workspaceId', 'ownerId', 'actionId'], 'verify operation input');
         const initial = this.store.state(input.workspaceId);
         assertOwner(initial, input.ownerId);
@@ -234,21 +246,21 @@ export class OperationService {
         const connection = this.boundConnection(initial, action.command);
         const handler = this.registry.resolve(action.command.provider, action.command.operationId, action.command.operationVersion);
         const subject = await withinExecution(() => handler.identify({ connection: structuredClone(connection) }), context);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         nonempty(subject, 'remote subject');
         if (subject !== action.command.subject) throw new Error('Remote identity does not match operation subject');
         this.assertVerificationUnchanged(input.workspaceId, input.ownerId, action, connection);
         const observationRequestedAt = this.now();
         const observed = await withinExecution(() => handler.observe({ connection: structuredClone(connection), resourceId: action.command.resourceId }), context);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         const observation = validateObservationInput(observed, connection, action.command.resourceId, observationRequestedAt, this.now());
         this.assertVerificationUnchanged(input.workspaceId, input.ownerId, action, connection);
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         const verdict = validateVerdict(handler.verify({ connection: structuredClone(connection),
             command: structuredClone(action.command), observation: structuredClone(observation) }));
         const state = this.assertVerificationUnchanged(input.workspaceId, input.ownerId, action, connection);
         const verification: VerificationState = { status: verdict.status, observation, recordedAt: this.now() };
-        assertExecutionActive(context);
+        await assertExecutionCurrent(context);
         const events = [];
         if (verdict.status === 'satisfied' && action.status === 'unknown') {
             const evidenceRef = this.store.putArtifact(input.workspaceId, 'Trusted readback observed the expected operation result.');
@@ -256,8 +268,8 @@ export class OperationService {
         }
         events.push({ type: 'action.verification_recorded' as const, data: { id: action.id, verification } });
         assertExecutionActive(context);
-        this.store.append(input.workspaceId, state.version, events, { actorId: input.ownerId, recordedAt: this.now() },
-            () => assertExecutionActive(context));
+        this.store.recordActionVerification(input.workspaceId, state.version, action.id, events,
+            { actorId: input.ownerId, recordedAt: this.now() }, () => assertExecutionActive(context), context?.serviceClaim);
         return this.operationAction(this.store.state(input.workspaceId), action.id);
     }
 
@@ -356,6 +368,32 @@ export class OperationService {
         const scope = this.operationScope(state, action.command.provider, action.command.subject, action.id);
         if (scope.blocked) throw new Error('Operation subject conflict barrier');
         if (scope.revision !== action.command.subjectRevision) throw new Error('Stale operation subject revision');
+        return action;
+    }
+
+    private assertRunningDispatchCurrent(workspaceId: string, ownerId: string, expected: OperationAction,
+        connection: Connection, attemptId: string): OperationAction {
+        const state = this.store.state(workspaceId);
+        assertOwner(state, ownerId);
+        const action = this.operationAction(state, expected.id);
+        if (action.status !== 'running' || action.attemptId !== attemptId || action.digest !== expected.digest ||
+            action.workRevision !== expected.workRevision ||
+            canonicalJson(jsonValue(action.command, 'operation command')) !==
+                canonicalJson(jsonValue(expected.command, 'operation command')))
+            throw new Error('Operation action changed before provider dispatch');
+        const work = required(state.works, action.workId, 'Work');
+        if (work.revision !== action.workRevision || ['done', 'cancelled'].includes(work.phase))
+            throw new Error('Stale or closed work authorization');
+        if (!action.approval || action.approval.ownerId !== state.ownerId || action.approval.digest !== action.digest ||
+            Date.parse(action.approval.expiresAt) <= Date.parse(this.now()) ||
+            action.digest !== commandDigest(state.workspaceId, action.workId, action.workRevision, action.command))
+            throw new Error('Approval binding changed before provider dispatch');
+        const currentConnection = this.boundConnection(state, action.command);
+        if (currentConnection.id !== connection.id || currentConnection.generation !== connection.generation)
+            throw new Error('Connection generation changed before provider dispatch');
+        const scope = this.operationScope(state, action.command.provider, action.command.subject, action.id);
+        if (scope.blocked || scope.revision !== action.command.subjectRevision)
+            throw new Error('Operation subject scope changed before provider dispatch');
         return action;
     }
 

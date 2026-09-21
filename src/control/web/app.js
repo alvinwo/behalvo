@@ -4,6 +4,7 @@
   const MAXIMUM_BOOTSTRAP_BYTES = 4096;
   const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
   const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+  const ACTION_JOB_PATHS = Object.freeze({ execute: '/execute', readback: '/readback' });
 
   const byId = id => document.getElementById(id);
   const pairingPanel = byId('pairing');
@@ -18,6 +19,24 @@
   const signOutButton = byId('sign-out');
   const approveButton = byId('approve');
   const cancelButton = byId('cancel');
+  const executeButton = byId('execute');
+  const readbackButton = byId('readback');
+  const serviceRefreshButton = byId('service-refresh');
+  const serviceDashboard = byId('service-dashboard');
+  const serviceLifecycle = byId('service-lifecycle');
+  const serviceLimits = byId('service-limits');
+  const serviceBarriers = byId('service-barriers');
+  const jobsNode = byId('jobs');
+  const remindersNode = byId('reminders');
+  const jobResultNode = byId('job-result');
+  const refreshJobsButton = byId('refresh-jobs');
+  const chatThread = byId('chat-thread');
+  const chatWork = byId('chat-work');
+  const chatText = byId('chat-text');
+  const sendChatButton = byId('send-chat');
+  const reminderWork = byId('reminder-work');
+  const reminderDue = byId('reminder-due');
+  const createReminderButton = byId('create-reminder');
 
   let sessionToken = null;
   let selectedActionId = null;
@@ -30,6 +49,12 @@
   let pendingDecision = null;
   let signingOut = false;
   let actionButtons = [];
+  let servicePending = null;
+  let serviceAvailable = false;
+  let serviceRequestCounter = 0;
+  let activeExecutionRequest = null;
+  let jobDetailGeneration = 0;
+  const pendingAdmissions = { chat: null, reminder: null, readback: null };
 
   class RequestFailure extends Error {
     constructor(kind, status = 0, code = '') {
@@ -94,6 +119,17 @@
     signOutButton.disabled = sessionToken === null || signingOut;
     approveButton.disabled = decisionPending || activeReview === null || !activeReview.canApprove;
     cancelButton.disabled = decisionPending || activeReview === null || !activeReview.canCancel;
+    executeButton.disabled = decisionPending || activeReview === null || !activeReview.canExecute ||
+      typeof activeReview.executionToken !== 'string';
+    readbackButton.disabled = decisionPending || activeReview === null ||
+      !['accepted', 'unknown'].includes(String(activeReview.action.status));
+    serviceRefreshButton.disabled = sessionToken === null || servicePending !== null;
+    refreshJobsButton.disabled = sessionToken === null || !serviceAvailable || servicePending !== null;
+    sendChatButton.disabled = sessionToken === null || !serviceAvailable || servicePending !== null;
+    sendChatButton.textContent = pendingAdmissions.chat ? 'Recover chat receipt' : 'Queue chat';
+    createReminderButton.disabled = sessionToken === null || !serviceAvailable || servicePending !== null;
+    createReminderButton.textContent = pendingAdmissions.reminder ? 'Recover reminder receipt' : 'Create reminder';
+    readbackButton.textContent = pendingAdmissions.readback ? 'Recover readback receipt' : 'Request readback';
     for (const entry of actionButtons) {
       entry.button.disabled = sessionToken === null || decisionPending || listPending ||
         pendingReviews.has(entry.actionId);
@@ -106,6 +142,7 @@
       reviewExpiryTimer = null;
     }
     activeReview = null;
+    activeExecutionRequest = null;
     selectedActionId = null;
     reviewNode.textContent = '';
     reviewPanel.hidden = true;
@@ -115,6 +152,20 @@
   function clearActions() {
     actionButtons = [];
     actionList.textContent = '';
+    updateControls();
+  }
+
+  function clearService() {
+    jobDetailGeneration += 1;
+    serviceAvailable = false;
+    servicePending = null;
+    serviceDashboard.hidden = true;
+    serviceLifecycle.textContent = '';
+    serviceLimits.textContent = '';
+    serviceBarriers.textContent = '';
+    jobsNode.textContent = '';
+    remindersNode.textContent = '';
+    jobResultNode.textContent = '';
     updateControls();
   }
 
@@ -134,8 +185,12 @@
     pendingList = null;
     pendingReviews.clear();
     pendingDecision = null;
+    pendingAdmissions.chat = null;
+    pendingAdmissions.reminder = null;
+    pendingAdmissions.readback = null;
     clearReview();
     clearActions();
+    clearService();
     showPairing();
     updateControls();
   }
@@ -199,6 +254,309 @@
       (error.kind === 'network' || error.kind === 'invalid_response' || error.status === 500);
   }
 
+  function nextRequestId(purpose) {
+    serviceRequestCounter += 1;
+    return `web-${purpose}-${Date.now()}-${serviceRequestCounter}`;
+  }
+
+  function validServiceStatus(value) {
+    return isRecord(value) && ['running', 'stopping', 'faulted'].includes(value.lifecycle) &&
+      isRecord(value.model) && typeof value.model.configured === 'boolean' &&
+      isRecord(value.queue) && isRecord(value.runtime) && Array.isArray(value.unresolvedActionIds) &&
+      Array.isArray(value.unresolvedActions) &&
+      isRecord(value.limits);
+  }
+
+  function validJobSummary(job) {
+    return isRecord(job) && typeof job.id === 'string' && typeof job.requestId === 'string' &&
+      typeof job.kind === 'string' && typeof job.status === 'string' &&
+      (job.resultReason === null || typeof job.resultReason === 'string');
+  }
+
+  function renderJobDetail(job) {
+    if (!validJobSummary(job) || !isRecord(job.result) || typeof job.result.reason !== 'string')
+      throw new RequestFailure('invalid_response', 200);
+    const lines = [`Request: ${job.requestId}`, `Result: ${job.result.reason}`];
+    if (isRecord(job.result.conversation)) {
+      const conversation = job.result.conversation;
+      if (typeof conversation.threadId !== 'string' || typeof conversation.ownerText !== 'string' ||
+        typeof conversation.assistantText !== 'string') throw new RequestFailure('invalid_response', 200);
+      lines.push(`Thread: ${conversation.threadId}`, `Owner: ${conversation.ownerText}`,
+        `Assistant: ${conversation.assistantText}`);
+    }
+    if (Array.isArray(job.result.works)) {
+      for (const work of job.result.works) {
+        if (!isRecord(work) || typeof work.id !== 'string' || typeof work.title !== 'string' ||
+          typeof work.goal !== 'string' || work.phase !== 'open') throw new RequestFailure('invalid_response', 200);
+        lines.push(`New work: ${work.title} (${work.id}) — ${work.goal}`);
+      }
+    }
+    if (isRecord(job.result.action)) {
+      const action = job.result.action;
+      if (typeof action.actionId !== 'string' || !isRecord(action.outcome) ||
+        typeof action.outcome.status !== 'string') throw new RequestFailure('invalid_response', 200);
+      lines.push(`Action: ${action.actionId}`, `Outcome status: ${action.outcome.status}`,
+        `Outcome evidence: ${action.outcome.evidence ?? 'None'}`,
+        `Outcome evidence reference: ${action.outcome.evidenceRef ?? 'None'}`);
+      if (action.verification === null) lines.push('Verification status: None');
+      else {
+        if (!isRecord(action.verification) || typeof action.verification.status !== 'string' ||
+          typeof action.verification.recordedAt !== 'string') throw new RequestFailure('invalid_response', 200);
+        lines.push(`Verification status: ${action.verification.status}`,
+          `Verification recorded: ${action.verification.recordedAt}`,
+          `Verification evidence: ${action.verification.evidence ?? 'None'}`,
+          `Verification evidence reference: ${action.verification.evidenceRef ?? 'None'}`);
+      }
+    }
+    if (isRecord(job.result.reminder)) {
+      const reminder = job.result.reminder;
+      if (!validReminderSummary(reminder)) throw new RequestFailure('invalid_response', 200);
+      lines.push(`Reminder request: ${reminder.requestId ?? 'No owner-service receipt'}`, `Timer: ${reminder.timerId}`,
+        `Work: ${reminder.work.title} (${reminder.work.id})`, `Due: ${reminder.dueAt}`,
+        `Reminder status: ${reminder.status}`);
+    }
+    jobResultNode.textContent = lines.join('\n');
+  }
+
+  async function loadJobDetail(jobId) {
+    if (sessionToken === null) return;
+    const token = sessionToken;
+    const marker = viewGeneration;
+    const selection = ++jobDetailGeneration;
+    jobResultNode.textContent = '';
+    try {
+      const job = await request(`/api/jobs/${encodeURIComponent(jobId)}`, token);
+      if (token !== sessionToken || marker !== viewGeneration || selection !== jobDetailGeneration) return;
+      renderJobDetail(job);
+    } catch (error) {
+      if (token !== sessionToken || marker !== viewGeneration || selection !== jobDetailGeneration) return;
+      if (error instanceof RequestFailure && error.status === 401) expireSession();
+      else setStatus(requestFailureMessage(error), true);
+    }
+  }
+
+  function renderJobs(items) {
+    jobDetailGeneration += 1;
+    jobsNode.textContent = '';
+    jobResultNode.textContent = '';
+    for (const job of items) {
+      if (!validJobSummary(job)) throw new RequestFailure('invalid_response', 200);
+      const item = document.createElement('li');
+      const result = job.resultReason === null ? '' : ` — ${job.resultReason}`;
+      item.textContent = `${job.kind} — ${job.status}${result} — request ${job.requestId} — ${job.id} `;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Show exact result';
+      button.addEventListener('click', () => loadJobDetail(job.id));
+      item.append(button);
+      jobsNode.append(item);
+    }
+  }
+
+  async function fetchJobs(token, marker) {
+    const items = [];
+    const cursors = new Set();
+    let after = null;
+    do {
+      const path = after === null ? '/api/jobs' : `/api/jobs?after=${encodeURIComponent(after)}`;
+      const page = await request(path, token);
+      if (token !== sessionToken || marker !== viewGeneration) return false;
+      if (!isRecord(page) || !Array.isArray(page.items) ||
+        (page.nextAfter !== null && !Number.isSafeInteger(page.nextAfter)))
+        throw new RequestFailure('invalid_response', 200);
+      items.push(...page.items);
+      after = page.nextAfter;
+      if (after !== null) {
+        if (cursors.has(after)) throw new RequestFailure('invalid_response', 200);
+        cursors.add(after);
+      }
+    } while (after !== null);
+    if (token !== sessionToken || marker !== viewGeneration) return false;
+    renderJobs(items);
+    return true;
+  }
+
+  function validReminderSummary(reminder) {
+    return hasExactKeys(reminder, ['timerId', 'requestId', 'admittedAt', 'work', 'dueAt', 'status']) &&
+      typeof reminder.timerId === 'string' &&
+      ((typeof reminder.requestId === 'string' && typeof reminder.admittedAt === 'string') ||
+        (reminder.requestId === null && reminder.admittedAt === null)) && typeof reminder.dueAt === 'string' &&
+      ['scheduled', 'fired', 'cancelled'].includes(reminder.status) &&
+      hasExactKeys(reminder.work, ['id', 'title']) && typeof reminder.work.id === 'string' &&
+      typeof reminder.work.title === 'string';
+  }
+
+  function renderReminders(items) {
+    remindersNode.textContent = '';
+    for (const reminder of items) {
+      if (!validReminderSummary(reminder)) throw new RequestFailure('invalid_response', 200);
+      const item = document.createElement('li');
+      item.textContent = `${reminder.requestId ?? 'No owner-service receipt'} — ${reminder.work.title} (${reminder.work.id}) — ` +
+        `${reminder.dueAt} — ${reminder.status} — timer ${reminder.timerId}`;
+      remindersNode.append(item);
+    }
+  }
+
+  async function fetchReminders(token, marker) {
+    const items = [];
+    const cursors = new Set();
+    let after = null;
+    do {
+      const path = after === null ? '/api/reminders' : `/api/reminders?after=${encodeURIComponent(after)}`;
+      const page = await request(path, token);
+      if (token !== sessionToken || marker !== viewGeneration) return false;
+      if (!isRecord(page) || !Array.isArray(page.items) ||
+        (page.nextAfter !== null && !Number.isSafeInteger(page.nextAfter)))
+        throw new RequestFailure('invalid_response', 200);
+      items.push(...page.items);
+      after = page.nextAfter;
+      if (after !== null) {
+        if (cursors.has(after)) throw new RequestFailure('invalid_response', 200);
+        cursors.add(after);
+      }
+    } while (after !== null);
+    if (token !== sessionToken || marker !== viewGeneration) return false;
+    renderReminders(items);
+    return true;
+  }
+
+  async function loadService() {
+    if (sessionToken === null || servicePending !== null) return;
+    const token = sessionToken;
+    const marker = viewGeneration;
+    const pendingRequest = {};
+    servicePending = pendingRequest;
+    updateControls();
+    try {
+      const value = await request('/api/service', token);
+      if (marker !== viewGeneration || token !== sessionToken) return;
+      if (!validServiceStatus(value)) throw new RequestFailure('invalid_response', 200);
+      serviceAvailable = true;
+      serviceDashboard.hidden = false;
+      serviceLifecycle.textContent = JSON.stringify({
+        lifecycle: value.lifecycle,
+        databaseMode: value.databaseMode,
+        model: value.model,
+        queue: value.queue,
+        runtime: value.runtime
+      }, null, 2);
+      serviceLimits.textContent = value.limits.awakeOnly && value.limits.foreground ?
+        'Foreground and awake-only: work stops when this process or laptop stops. This is not a 24/7 daemon.' :
+        'Review the reported service lifecycle limits.';
+      const maintenance = value.unresolvedActions.filter(action => isRecord(action) &&
+        action.kind === 'crash_preserved_execution').map(action => action.actionId);
+      serviceBarriers.textContent = maintenance.length > 0 ?
+        `Crash-preserved running actions require stopped-service exclusive maintenance; never retry automatically: ${maintenance.join(', ')}` :
+        value.unresolvedActionIds.length > 0 ?
+        `Unresolved action barriers require explicit readback or review: ${value.unresolvedActionIds.join(', ')}` :
+        'No unresolved action barriers reported.';
+      if (!await fetchJobs(token, marker)) return;
+      if (!await fetchReminders(token, marker)) return;
+      if (marker === viewGeneration && token === sessionToken) setStatus('Service status and queue refreshed.');
+    } catch (error) {
+      if (marker !== viewGeneration || token !== sessionToken) return;
+      if (error instanceof RequestFailure && error.status === 401) { expireSession(); return; }
+      clearService();
+      if (error instanceof RequestFailure && error.status === 404)
+        setStatus('This local server provides prepared-action review only.');
+      else setStatus(requestFailureMessage(error), true);
+    } finally {
+      if (servicePending === pendingRequest) servicePending = null;
+      updateControls();
+    }
+  }
+
+  async function refreshJobs() {
+    if (sessionToken === null || !serviceAvailable || servicePending !== null) return;
+    const token = sessionToken;
+    const marker = viewGeneration;
+    const pendingRequest = {};
+    servicePending = pendingRequest;
+    updateControls();
+    try {
+      if (!await fetchJobs(token, marker)) return;
+      if (!await fetchReminders(token, marker)) return;
+      if (token === sessionToken && marker === viewGeneration) setStatus('Service queue refreshed.');
+    } catch (error) {
+      if (token !== sessionToken || marker !== viewGeneration) return;
+      if (error instanceof RequestFailure && error.status === 401) expireSession();
+      else setStatus(requestFailureMessage(error), true);
+    } finally {
+      if (servicePending === pendingRequest) servicePending = null;
+      updateControls();
+    }
+  }
+
+  async function admitService(kind) {
+    if (sessionToken === null || !serviceAvailable || servicePending !== null) return;
+    const token = sessionToken;
+    const marker = viewGeneration;
+    let path;
+    let submitted;
+    let pending;
+    if (kind === 'chat') {
+      const threadId = chatThread.value.trim();
+      const text = chatText.value.trim();
+      const workId = chatWork.value.trim();
+      if (!threadId || !text) { setStatus('Thread ID and owner message are required.', true); return; }
+      path = '/api/chat';
+      submitted = { threadId, text, ...(workId ? { workId } : {}) };
+      pending = pendingAdmissions.chat;
+    } else {
+      const workId = reminderWork.value.trim();
+      const dueAt = reminderDue.value.trim();
+      path = '/api/reminders';
+      submitted = { workId, dueAt };
+      pending = pendingAdmissions.reminder;
+      if (!pending && (!workId || !isCanonicalFutureInstant(dueAt))) {
+        setStatus('A work ID and canonical UTC reminder instant are required.', true);
+        return;
+      }
+    }
+    if (pending && JSON.stringify(pending.submitted) !== JSON.stringify(submitted)) {
+      setStatus(`Recover pending request ${pending.body.requestId} with its unchanged input before creating new work.`, true);
+      return;
+    }
+    const body = pending?.body ?? Object.freeze({ requestId: nextRequestId(kind), ...submitted });
+    pendingAdmissions[kind] = { submitted: Object.freeze({ ...submitted }), body };
+    const pendingRequest = {};
+    let admissionConfirmed = false;
+    servicePending = pendingRequest;
+    updateControls();
+    try {
+      const admitted = await request(path, token, 'POST', body);
+      if (token !== sessionToken || marker !== viewGeneration) return;
+      if (!isRecord(admitted) || !isRecord(admitted.receipt)) throw new RequestFailure('invalid_response', 202);
+      admissionConfirmed = true;
+      pendingAdmissions[kind] = null;
+      if (kind === 'chat') chatText.value = '';
+      else {
+        reminderWork.value = '';
+        reminderDue.value = '';
+      }
+      setStatus(`${kind === 'chat' ? 'Chat' : 'Reminder'} request durably admitted${admitted.duplicate ? ' (existing receipt)' : ''}.`);
+      await fetchJobs(token, marker);
+      if (kind === 'reminder') await fetchReminders(token, marker);
+    } catch (error) {
+      if (token !== sessionToken || marker !== viewGeneration) return;
+      if (error instanceof RequestFailure && error.status === 401) expireSession();
+      else if (admissionConfirmed)
+        setStatus('Admission confirmed, but queue refresh failed. Refresh the queue to view the admitted request.', true);
+      else if (mutationResultIsUnconfirmed(error))
+        setStatus(`Admission may have committed. Recover receipt with request ${body.requestId} and unchanged input.`, true);
+      else {
+        pendingAdmissions[kind] = null;
+        if (kind === 'reminder' && pending && error instanceof RequestFailure &&
+          error.status === 400 && error.code === 'invalid_request' && Date.parse(body.dueAt) <= Date.now())
+          setStatus('No durable reminder receipt exists for this expired request. Choose a new future time to create a reminder.', true);
+        else setStatus(requestFailureMessage(error), true);
+      }
+    } finally {
+      if (servicePending === pendingRequest) servicePending = null;
+      updateControls();
+    }
+  }
+
   function appendReviewRow(list, name, value) {
     const term = document.createElement('dt');
     const detail = document.createElement('dd');
@@ -230,7 +588,9 @@
       return false;
     }
 
-    activeReview = value;
+    const displayedReview = { ...value, canExecute: value.canExecute === true };
+    activeReview = displayedReview;
+    activeExecutionRequest = null;
     reviewNode.textContent = '';
     const rows = [
       ['Action ID', value.action.actionId],
@@ -240,12 +600,19 @@
       ['Current work revision', String(value.action.currentWorkRevision)],
       ['Phase', String(value.action.phase)],
       ['Action status', String(value.action.status)],
+      ['Outcome status', String(value.action.outcome?.status ?? value.action.status)],
+      ['Outcome evidence reference', value.action.outcome?.evidenceRef ?? 'None'],
+      ['Verification status', value.action.verification?.status ?? 'None'],
+      ['Verification recorded', value.action.verification?.recordedAt ?? 'None'],
+      ['Verification evidence reference', value.action.verification?.evidenceRef ?? 'None'],
       ['Synthetic operation', String(value.action.synthetic)],
       ['Action approval expiry', value.action.approvalExpiresAt ?? 'None'],
       ['Displayed approval expiry', value.approvalExpiresAt ?? 'None'],
       ['Review expiry', value.reviewExpiresAt],
       ['Can approve', String(value.canApprove)],
       ['Can cancel', String(value.canCancel)],
+      ['Can explicitly execute', String(value.canExecute === true)],
+      ['Execution confirmation expiry', value.executionExpiresAt ?? 'None'],
       ['Digest', value.action.digest],
       ['Current connection', JSON.stringify(value.connection, null, 2)],
       ['Complete command', JSON.stringify(value.command, null, 2)]
@@ -256,13 +623,73 @@
     reviewPanel.hidden = false;
 
     reviewExpiryTimer = setTimeout(() => {
-      if (activeReview === value) {
+      if (activeReview === displayedReview) {
         clearReview();
         setStatus('The review expired. Obtain a new review before deciding.', true);
       }
     }, reviewDeadline - Date.now());
     updateControls();
     return true;
+  }
+
+  async function runActionJob(kind) {
+    if (sessionToken === null || activeReview === null || selectedActionId === null || pendingDecision !== null) return;
+    const token = sessionToken;
+    const marker = viewGeneration;
+    const review = activeReview;
+    const actionId = selectedActionId;
+    let body;
+    if (kind === 'execute') {
+      if (!review.canExecute || typeof review.executionToken !== 'string') return;
+      if (!activeExecutionRequest || activeExecutionRequest.actionId !== actionId ||
+        activeExecutionRequest.digest !== review.action.digest ||
+        activeExecutionRequest.confirmationToken !== review.executionToken) {
+        activeExecutionRequest = { actionId, requestId: nextRequestId('execute'),
+          digest: review.action.digest, confirmationToken: review.executionToken };
+      }
+      body = { requestId: activeExecutionRequest.requestId, digest: activeExecutionRequest.digest,
+        confirmationToken: activeExecutionRequest.confirmationToken };
+    } else {
+      const pending = pendingAdmissions.readback;
+      if (pending && (pending.actionId !== actionId || pending.body.digest !== review.action.digest)) {
+        setStatus(`Recover pending request ${pending.body.requestId} from action ${pending.actionId} before creating another readback.`, true);
+        return;
+      }
+      body = pending?.body ?? Object.freeze({ requestId: nextRequestId('readback'), digest: review.action.digest });
+      pendingAdmissions.readback = { actionId, body };
+    }
+    const pending = {};
+    let admissionConfirmed = false;
+    pendingDecision = pending;
+    updateControls();
+    setStatus(`${kind === 'execute' ? 'Admitting explicit execution' : 'Admitting readback'}…`);
+    try {
+      const result = await request(`/api/actions/${encodeURIComponent(actionId)}${ACTION_JOB_PATHS[kind]}`, token, 'POST', body);
+      if (token !== sessionToken || pendingDecision !== pending) return;
+      if (!isRecord(result) || !isRecord(result.receipt) || !isRecord(result.job))
+        throw new RequestFailure('invalid_response', 202);
+      admissionConfirmed = true;
+      activeExecutionRequest = null;
+      if (kind === 'readback') pendingAdmissions.readback = null;
+      setStatus(`${kind === 'execute' ? 'Execution' : 'Readback'} request durably admitted${result.duplicate ? ' (existing receipt)' : ''}.`);
+      await fetchJobs(token, marker);
+    } catch (error) {
+      if (token !== sessionToken || pendingDecision !== pending) return;
+      if (error instanceof RequestFailure && error.status === 401) expireSession();
+      else if (admissionConfirmed)
+        setStatus('Admission confirmed, but queue refresh failed. Refresh the queue to view the admitted request.', true);
+      else if (mutationResultIsUnconfirmed(error) && kind === 'execute')
+        setStatus('Execution admission is unconfirmed. Retry this same explicit request to recover its durable receipt; do not create another request.', true);
+      else if (mutationResultIsUnconfirmed(error) && kind === 'readback')
+        setStatus(`Readback admission may have committed. Recover receipt with request ${body.requestId}.`, true);
+      else {
+        if (kind === 'readback') pendingAdmissions.readback = null;
+        setStatus(requestFailureMessage(error), true);
+      }
+    } finally {
+      if (pendingDecision === pending) pendingDecision = null;
+      updateControls();
+    }
   }
 
   function renderActions(actions) {
@@ -509,6 +936,12 @@
   signOutButton.addEventListener('click', signOut);
   approveButton.addEventListener('click', () => decide('approve'));
   cancelButton.addEventListener('click', () => decide('cancel'));
+  executeButton.addEventListener('click', () => runActionJob('execute'));
+  readbackButton.addEventListener('click', () => runActionJob('readback'));
+  serviceRefreshButton.addEventListener('click', loadService);
+  refreshJobsButton.addEventListener('click', refreshJobs);
+  sendChatButton.addEventListener('click', () => admitService('chat'));
+  createReminderButton.addEventListener('click', () => admitService('reminder'));
 
   setStatus('Select the short-lived pairing file for this local server.');
   updateControls();

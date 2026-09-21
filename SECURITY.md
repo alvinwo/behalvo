@@ -27,7 +27,7 @@ the key can decrypt the files. This feature adds no rollback detection, key
 rotation, plaintext migration, retention, erasure, remote identity, or protection
 against a compromised process.
 
-The loopback owner-control console uses a short-lived bootstrap file and in-memory bearer session for local synthetic review only. It exposes no model, login, credential, connection-binding or execute route; approval does not execute an operation. This is not remote authentication, mobile identity or production privacy.
+The loopback owner-control console uses a short-lived bootstrap file and in-memory bearer session for local synthetic review. The standalone legacy console exposes no execute route. The opt-in foreground service adapter adds bounded durable chat, reminder, explicit synthetic execution and readback routes while preserving the same local session boundary; approval still does not execute an operation. Neither mode exposes model login, credential editing or connection binding. This is not remote authentication, mobile identity, OS-supervised availability or production privacy.
 
 The owner ID checks assume a trusted local caller. They are not a login system,
 signature check or authorization token. External-audience context is denied.

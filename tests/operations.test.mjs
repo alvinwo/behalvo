@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { SqliteStore, Operator, OperationRegistry, OperationService } from '../dist/index.js';
+import { SqliteStore, Operator, OperationRegistry, OperationService, ServiceStorageError } from '../dist/index.js';
 
 const NOW = '2026-09-09T12:00:00.000Z';
 const EXPIRY = '2026-09-09T13:00:00.000Z';
@@ -747,6 +747,24 @@ test('in-flight cancellation records unknown and ignores late success or rejecti
     }
 });
 
+test('trusted storage faults after action start escape the provider catch without claiming an outcome', async () => {
+    const f = setup();
+    try {
+        registerConnection(f);
+        const action = await prepare(f); approve(f, action);
+        const context = { deadline: Date.now() + 10000, async assertCurrent() {
+            if (f.store.state('personal').actions[action.id].status === 'running')
+                throw new ServiceStorageError('integrity', 'Fixed synthetic storage fault');
+        } };
+        await assert.rejects(
+            f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id }, context),
+            error => error.code === 'integrity'
+        );
+        assert.equal(f.controls.executeCalls, 0);
+        assert.equal(f.store.state('personal').actions[action.id].status, 'running');
+    } finally { f.store.close(); }
+});
+
 test('elapsed deadline without fired abort timer blocks dispatch and late prepare/verify writes', async () => {
     const f = setup();
     try {
@@ -859,14 +877,16 @@ for (const stage of ['prepare', 'execute', 'verify']) {
             if (stage !== 'prepare') { action = await prepare(f); approve(f, action); }
             if (stage === 'verify') await f.service.execute({ workspaceId: 'personal', ownerId: 'owner', actionId: action.id });
             const context = { deadline: Date.now() + 10000 };
-            const originalAppend = f.store.append.bind(f.store);
             const eventType = { prepare: 'action.proposed', execute: 'action.started', verify: 'action.verification_recorded' }[stage];
-            f.store.append = (...args) => {
-                if (!lockFinished && args[2].some(event => event.type === eventType)) {
+            const writerName = stage === 'verify' ? 'recordActionVerification' : 'append';
+            const eventIndex = stage === 'verify' ? 3 : 2;
+            const originalWriter = f.store[writerName].bind(f.store);
+            f.store[writerName] = (...args) => {
+                if (!lockFinished && args[eventIndex].some(event => event.type === eventType)) {
                     lockFinished = holdSqliteWriteLock(path, 150);
                     context.deadline = Date.now() + 20;
                 }
-                return originalAppend(...args);
+                return originalWriter(...args);
             };
             const before = f.store.journal('personal').length;
             const pending = stage === 'prepare'
