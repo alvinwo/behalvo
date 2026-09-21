@@ -77,12 +77,16 @@ export function createOwnerControlUi(options = {}) {
   const storageCalls = [];
   const ids = [
     'pairing', 'console', 'bootstrap-file', 'status', 'actions', 'review-panel',
-    'review', 'pair', 'refresh', 'sign-out', 'approve', 'cancel'
+    'review', 'pair', 'refresh', 'service-refresh', 'sign-out', 'approve', 'cancel',
+    'service-dashboard', 'service-lifecycle', 'service-limits', 'service-barriers',
+    'chat-thread', 'chat-work', 'chat-text', 'send-chat', 'jobs', 'job-result', 'refresh-jobs', 'reminders',
+    'reminder-work', 'reminder-due', 'create-reminder', 'execute', 'readback'
   ];
   const elements = new Map(ids.map(id => [id, new TestElement('div', id)]));
   elements.get('pairing').hidden = false;
   elements.get('console').hidden = true;
   elements.get('review-panel').hidden = true;
+  elements.get('service-dashboard').hidden = true;
 
   class ClockDate extends Date {
     static now() {

@@ -3,6 +3,7 @@ import type { State, WorkItem } from '../kernel/types.js';
 import { identifier } from '../kernel/types.js';
 import { commandDigest } from '../kernel/policy.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
+import { isFatalServiceStorageError } from '../storage/service-jobs.js';
 import type { Operator } from '../runtime/operator.js';
 import type { OperationService } from '../operations/service.js';
 import type { OperationAction } from '../operations/types.js';
@@ -45,6 +46,7 @@ export interface OwnerControlServiceOptions {
   sessions: OwnerControlSessions;
   binding: ControlBinding;
   clock?: () => number;
+  onFatalStorageError?: (error: unknown) => void;
 }
 
 function digest(value: string): Buffer {
@@ -89,6 +91,7 @@ export class OwnerControlService {
   readonly #sessions: OwnerControlSessions;
   readonly #binding: ControlBinding;
   readonly #clock: () => number;
+  readonly #onFatalStorageError: ((error: unknown) => void) | undefined;
   readonly #receipts = new Map<string, ReviewReceipt>();
   #closed = false;
 
@@ -99,6 +102,7 @@ export class OwnerControlService {
     this.#sessions = options.sessions;
     this.#binding = Object.freeze({ ...options.binding });
     this.#clock = options.clock ?? Date.now;
+    this.#onFatalStorageError = options.onFatalStorageError;
   }
 
   list(principal: ControlPrincipal, after?: string): ControlActionPage {
@@ -247,7 +251,10 @@ export class OwnerControlService {
   #boundState(): State {
     let state: State;
     try { state = this.#store.state(this.#binding.workspaceId); }
-    catch { throw new OwnerControlError('unavailable'); }
+    catch (error) {
+      if (isFatalServiceStorageError(error)) this.#onFatalStorageError?.(error);
+      throw new OwnerControlError('unavailable');
+    }
     if (state.ownerId !== this.#binding.ownerId) throw new OwnerControlError('forbidden');
     return state;
   }

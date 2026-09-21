@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { SqliteStore } from '../dist/storage/sqlite-store.js';
 import { Operator, buildContext, resolveFact, AgentService, OperationRegistry, OperationService } from '../dist/index.js';
 import { validateStorage } from '../dist/storage/sqlite-schema.js';
-import { artifactContext, projectionContext, summaryContext, summaryThread } from '../dist/storage/sqlite-codec.js';
+import { artifactContext, projectionContext, serviceJobContext, summaryContext, summaryThread } from '../dist/storage/sqlite-codec.js';
 
 const owner = 'synthetic-owner-private-canary-0123456789';
 const input = { source: 'synthetic-mailbox-private-canary-0123456789', externalId: 'synthetic-delivery-private-canary-0123456789',
@@ -71,6 +71,113 @@ test('encrypted writes keep all private markers out of the live database and WAL
         }
         assert.equal(bytes.includes(Buffer.from(JSON.stringify([record.id]))), false, 'Summary source list leaked');
     }
+});
+
+test('encrypted service rows protect submitted envelopes and authenticate lifecycle metadata', async t => {
+    const directory = mkdtempSync(join(tmpdir(), 'behalvo-encrypted-service-'));
+    const path = join(directory, 'service.db');
+    const key = randomBytes(32);
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const store = new SqliteStore(path, { encryptionKey: key, serviceQueue: { upgradeExisting: false } });
+    store.createWorkspace('service-workspace', 'service-owner');
+    const markers = {
+        source: 'service-source-private-canary-0123456789', requestId: 'service-request-private-canary-0123456789',
+        threadId: 'service-thread-private-canary-0123456789', text: 'service-text-private-canary-0123456789',
+        provider: 'service-provider-private-canary-0123456789', model: 'service-model-private-canary-0123456789'
+    };
+    store.admitOwnerTurnJob({ workspaceId: 'service-workspace', source: markers.source, requestId: markers.requestId,
+        ownerId: 'service-owner', envelope: { kind: 'owner_turn', threadId: markers.threadId, text: markers.text },
+        accepted: { threadId: markers.threadId, model: { provider: markers.provider, model: markers.model },
+            windowTokens: 12000, outputReserve: 1000, capability: 'prepare_only' }, instanceId: 'instance',
+        at: '2026-09-15T12:00:00.000Z' });
+    for (const file of [path, `${path}-wal`]) if (existsSync(file)) {
+        const bytes = readFileSync(file);
+        for (const marker of Object.values(markers))
+            assert.equal(bytes.includes(Buffer.from(marker)), false, `Service marker leaked: ${marker}`);
+    }
+    store.close();
+    await verify(path, key);
+    const db = new DatabaseSync(path);
+    db.exec("UPDATE service_jobs SET admitted_at='2026-09-15T12:00:01.000Z'");
+    db.close();
+    await assert.rejects(verify(path, key), /snapshot/i);
+});
+
+test('encrypted validation rejects effect completion for an unstarted execute job', async t => {
+    const directory = mkdtempSync(join(tmpdir(), 'behalvo-encrypted-unstarted-execute-'));
+    const path = join(directory, 'service.db');
+    const key = randomBytes(32);
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const store = new SqliteStore(path, { encryptionKey: key, serviceQueue: { upgradeExisting: false } });
+    store.createWorkspace('service-workspace', 'service-owner');
+    const operator = new Operator(store, () => '2026-09-15T12:00:00.000Z');
+    operator.createWork('service-workspace', 'service-owner', {
+        id: 'work', title: 'Synthetic action', goal: 'Reject false completion', threadId: 'thread'
+    });
+    const action = operator.propose('service-workspace', { workId: 'work', key: 'action', command: {
+        kind: 'message.send', channel: 'mock-email', to: 'nobody@example.test', body: 'Synthetic body'
+    } });
+    operator.approve('service-workspace', 'service-owner', action.id, action.digest, '2026-09-15T13:00:00.000Z');
+    const admitted = store.admitActionJob({ workspaceId: 'service-workspace', source: 'owner:service', requestId: 'execute',
+        ownerId: 'service-owner', envelope: { kind: 'execute', actionId: action.id, digest: action.digest },
+        instanceId: 'instance', at: '2026-09-15T12:00:00.000Z' }).job;
+    const claimed = store.claimServiceJob('service-workspace', 'worker', '2026-09-15T12:00:00.000Z');
+    store.completeServiceJob('service-workspace', claimed.claim, 'stopped',
+        { reason: 'action_ineligible', recordIds: [] }, '2026-09-15T12:00:00.000Z');
+    store.close();
+    await verify(path, key);
+
+    const db = new DatabaseSync(path);
+    const cipher = validateStorage(db, key);
+    const row = db.prepare('SELECT * FROM service_jobs WHERE id=?').get(admitted.id);
+    const job = JSON.parse(cipher.open(row.job_json, serviceJobContext(row)));
+    job.result = { reason: 'completed', recordIds: [] };
+    db.prepare('UPDATE service_jobs SET job_json=? WHERE id=?')
+        .run(cipher.seal(JSON.stringify(job), serviceJobContext(row)), admitted.id);
+    db.close();
+    await assert.rejects(verify(path, key), /snapshot/i);
+});
+
+test('encrypted validation rejects accepted outcomes mislabeled as failed or unknown for execute and readback', async t => {
+    for (const kind of ['execute', 'readback']) await t.test(kind, async t => {
+        const directory = mkdtempSync(join(tmpdir(), 'behalvo-encrypted-result-reason-'));
+        const path = join(directory, 'service.db');
+        const key = randomBytes(32);
+        t.after(() => rmSync(directory, { recursive: true, force: true }));
+        const store = new SqliteStore(path, { encryptionKey: key, serviceQueue: { upgradeExisting: false } });
+        const at = '2026-09-15T12:00:00.000Z';
+        store.createWorkspace('workspace', 'owner');
+        const operator = new Operator(store, () => at);
+        operator.createWork('workspace', 'owner', { id: 'work', title: 'Synthetic', goal: 'Exact result', threadId: 'thread' });
+        const action = operator.propose('workspace', { workId: 'work', key: 'action', command: {
+            kind: 'message.send', channel: 'mock-email', to: 'nobody@example.test', body: 'Synthetic'
+        } });
+        operator.approve('workspace', 'owner', action.id, action.digest, '2026-09-15T13:00:00.000Z');
+        store.admitActionJob({ workspaceId: 'workspace', source: 'owner:service', requestId: 'action', ownerId: 'owner',
+            envelope: { kind, actionId: action.id, digest: action.digest }, instanceId: 'instance', at });
+        let job;
+        if (kind === 'execute') job = store.claimServiceJob('workspace', 'worker', at);
+        store.startActionAttempt('workspace', store.state('workspace').version, action.id, 'attempt', {}, undefined,
+            job?.claim);
+        store.finishActionAttempt('workspace', action.id, 'attempt', 'accepted', 'Synthetic accepted');
+        if (kind === 'readback') job = store.claimServiceJob('workspace', 'worker', at);
+        const outcome = store.journal('workspace').find(record => record.event.type === 'action.finished');
+        store.completeServiceJob('workspace', job.claim, 'stopped', { reason: 'readback_unresolved', recordIds: [outcome.id],
+            actionId: action.id, attemptId: 'attempt', actionRecordId: outcome.id }, at);
+        store.close();
+        await verify(path, key);
+        for (const reason of ['action_failed', 'action_unknown']) {
+            const db = new DatabaseSync(path);
+            const cipher = validateStorage(db, key);
+            const row = db.prepare('SELECT * FROM service_jobs WHERE id=?').get(job.id);
+            const value = JSON.parse(cipher.open(row.job_json, serviceJobContext(row)));
+            value.result.reason = reason;
+            db.prepare('UPDATE service_jobs SET job_json=? WHERE id=?')
+                .run(cipher.seal(JSON.stringify(value), serviceJobContext(row)), job.id);
+            db.close();
+            await assert.rejects(verify(path, key), /snapshot/i);
+        }
+    });
 });
 
 test('encrypted restart requires the exact key and rejects legacy conversion without modification', t => {

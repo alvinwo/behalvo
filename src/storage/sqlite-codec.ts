@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import type { DomainEvent, JournalRecord, MessageInput, State, Summary } from '../kernel/types.js';
 import type { PayloadCipher } from './payload-cipher.js';
+import type { ServiceEnvelope, ServiceJob, ServiceReceipt, ServiceRequestIdentity } from './service-jobs.js';
+import { canonicalJson } from '../operations/validation.js';
+import type { JsonValue } from '../operations/types.js';
 
 export type Row = Record<string, string | number | bigint | Uint8Array | null>;
 type Context = readonly (string | number | null)[];
@@ -55,4 +58,49 @@ export function messageTokens(workspaceId: string, input: MessageInput, cipher?:
 export function timerTokens(workspaceId: string, timerId: string, cipher?: PayloadCipher): ReturnType<typeof deliveryTokens> {
     return cipher ? deliveryTokens(workspaceId, 'kernel:timer', timerId, [timerId], cipher)
         : { source: 'kernel:timer', externalId: timerId, fingerprint: timerId };
+}
+
+export function canonicalServiceEnvelope(envelope: ServiceEnvelope): string {
+    return canonicalJson(envelope as unknown as JsonValue);
+}
+
+export function serviceRequestTokens(identity: ServiceRequestIdentity, envelope: ServiceEnvelope, cipher?: PayloadCipher): {
+    source: string; requestId: string; fingerprint: string;
+} {
+    const canonical = canonicalServiceEnvelope(envelope);
+    return cipher ? {
+        source: cipher.lookup('service/source', identity.workspaceId, [identity.source]),
+        requestId: cipher.lookup('service/request', identity.workspaceId, [identity.source, identity.requestId]),
+        fingerprint: cipher.lookup('service/fingerprint', identity.workspaceId,
+            [identity.source, identity.requestId, canonical])
+    } : {
+        source: identity.source,
+        requestId: identity.requestId,
+        fingerprint: createHash('sha256').update(JSON.stringify([identity.source, identity.requestId, canonical])).digest('hex')
+    };
+}
+
+export function serviceRequestContext(row: Row, field: 'envelope_json' | 'receipt_json'): Context {
+    return ['service_requests', field, String(row.workspace_id), String(row.source), String(row.request_id),
+        String(row.fingerprint), String(row.receipt_id), String(row.admitted_at)];
+}
+
+export function serviceJobContext(row: Row): Context {
+    return ['service_jobs', 'job_json', Number(row.position), String(row.id), String(row.workspace_id),
+        String(row.receipt_id), String(row.kind), String(row.status), String(row.admitted_at),
+        row.started_at === null ? null : String(row.started_at), row.finished_at === null ? null : String(row.finished_at),
+        row.claim_id === null ? null : String(row.claim_id), row.instance_id === null ? null : String(row.instance_id),
+        row.attempt_id === null ? null : String(row.attempt_id)];
+}
+
+export function decodeServiceReceipt(row: Row, cipher?: PayloadCipher): ServiceReceipt {
+    return JSON.parse(open(row.receipt_json, serviceRequestContext(row, 'receipt_json'), cipher)) as ServiceReceipt;
+}
+
+export function decodeServiceEnvelope(row: Row, cipher?: PayloadCipher): ServiceEnvelope {
+    return JSON.parse(open(row.envelope_json, serviceRequestContext(row, 'envelope_json'), cipher)) as ServiceEnvelope;
+}
+
+export function decodeServiceJob(row: Row, cipher?: PayloadCipher): ServiceJob {
+    return JSON.parse(open(row.job_json, serviceJobContext(row), cipher)) as ServiceJob;
 }

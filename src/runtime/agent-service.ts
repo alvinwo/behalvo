@@ -1,4 +1,5 @@
-import { assertExecutionActive, OperationStoppedError } from '../operations/execution-context.js';
+import { assertExecutionActive, executionDeadlineReached, withinExecution, OperationStoppedError,
+  type OperationExecutionContext, type TrustedExecutionFence } from '../operations/execution-context.js';
 import { OperationLoop, type OperationLoopOptions, type OperationLoopResult } from './operation-loop.js';
 import { randomUUID } from 'node:crypto';
 import type { DomainEvent, Fact, JournalRecord } from '../kernel/types.js';
@@ -9,6 +10,7 @@ import type { AgentTurn, ModelGateway, ModelRef } from '../model/types.js';
 import { parseAgentTurn } from '../model/validation.js';
 import { Operator } from './operator.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
+import type { ServiceJob, ServiceStopReason } from '../storage/service-jobs.js';
 
 const AGENT_SYSTEM = `You are the reasoning component of Behalvo.
 The application's journal and projected state are authoritative. Never claim you executed an external action.
@@ -36,6 +38,13 @@ export interface AgentTurnResult {
   turn: AgentTurn;
 }
 
+export interface AdmittedOwnerTurnInput {
+  workspaceId: string;
+  ownerId: string;
+  job: ServiceJob;
+  fence: TrustedExecutionFence;
+}
+
 /**
  * Trusted application boundary between untrusted model output and durable domain state.
  * The model receives a projection/context view and can only return validated proposals.
@@ -44,6 +53,7 @@ export class AgentService {
   readonly #operator: Operator;
   readonly #loop: OperationLoop | undefined;
   readonly #workspaceId: string | undefined;
+  readonly #clock: () => string;
 
   constructor(
     private readonly store: SqliteStore,
@@ -52,6 +62,7 @@ export class AgentService {
     operations?: OperationLoopOptions
   ) {
     this.#operator = new Operator(store, clock);
+    this.#clock = clock;
     this.#workspaceId = operations?.workspaceId;
     this.#loop = operations ? new OperationLoop(store, operations) : undefined;
   }
@@ -83,6 +94,41 @@ export class AgentService {
         this.#operator.linkThread(input.workspaceId, input.ownerId, input.workId, input.threadId);
     }
 
+    return this.#processOwnerRecord(input, ownerRecord);
+  }
+
+  async processAdmittedOwnerTurn(input: AdmittedOwnerTurnInput): Promise<AgentTurnResult> {
+    if (this.#workspaceId !== undefined && input.workspaceId !== this.#workspaceId)
+      throw new Error('Agent service workspace binding mismatch');
+    const initial = this.store.state(input.workspaceId);
+    assertOwner(initial, input.ownerId);
+    const job = input.job;
+    if (job.workspaceId !== input.workspaceId || job.status !== 'running' || !job.claim ||
+        job.kind !== 'owner_turn' || job.parameters.kind !== 'owner_turn')
+      throw new Error('Invalid admitted owner job');
+    const ownerRecord = this.store.record(input.workspaceId, job.parameters.ownerRecordId);
+    if (ownerRecord.event.type !== 'message.received' || ownerRecord.event.data.senderRole !== 'owner' ||
+        ownerRecord.event.data.threadId !== job.parameters.threadId)
+      throw new Error('Invalid admitted owner record');
+    if (!this.store.inbox(input.workspaceId).some(record => record.id === ownerRecord.id))
+      throw new Error('Inbox record already handled or not found');
+    const text = this.store.readArtifact(input.workspaceId, ownerRecord.event.data.artifactId);
+    const parameters = job.parameters;
+    if (parameters.workId) {
+      const work = initial.works[parameters.workId];
+      if (!work || !work.threadIds.includes(parameters.threadId))
+        throw new Error('Admitted owner work binding is no longer valid');
+    }
+    return this.#processOwnerRecord({ workspaceId: input.workspaceId, ownerId: input.ownerId,
+      threadId: parameters.threadId, externalId: ownerRecord.event.data.externalId, text,
+      model: parameters.model, ...(parameters.workId ? { workId: parameters.workId } : {}),
+      windowTokens: parameters.windowTokens, outputReserve: parameters.outputReserve }, ownerRecord,
+      { job, fence: input.fence });
+  }
+
+  async #processOwnerRecord(input: OwnerTurnInput, ownerRecord: JournalRecord,
+    admitted?: { job: ServiceJob; fence: TrustedExecutionFence }): Promise<AgentTurnResult> {
+
     const request = {
       model: input.model,
       system: AGENT_SYSTEM,
@@ -91,6 +137,10 @@ export class AgentService {
     };
     const binding = { workspaceId: input.workspaceId, ownerId: input.ownerId,
       ownerRecordId: ownerRecord.id, inputBudgetBytes: (input.windowTokens ?? 64000) - (input.outputReserve ?? 8000),
+      ...(admitted ? { capability: 'prepare_only' as const, executionContext: {
+        signal: admitted.fence.signal, deadline: admitted.fence.deadline,
+        assertCurrent: () => admitted.fence.assertCurrent()
+      } } : {}),
       ...(input.workId ? { workId: input.workId } : {}) };
     const context = buildContext(this.store, {
       workspaceId: input.workspaceId,
@@ -104,19 +154,35 @@ export class AgentService {
     });
 
     request.prompt = context.text;
-    const result: OperationLoopResult = this.#loop
-      ? await this.#loop.run(this.gateway, request, binding)
-      : await this.gateway.complete(request).then(response => ({ turn: parseAgentTurn(response.text),
-          applicationAuthored: false, ...(response.providerResponseId ? { providerResponseId: response.providerResponseId } : {}) }));
+    let result: OperationLoopResult;
+    if (this.#loop) result = await this.#loop.run(this.gateway, request, binding);
+    else if (!admitted) result = await this.gateway.complete(request).then(response => ({ turn: parseAgentTurn(response.text),
+      applicationAuthored: false, ...(response.providerResponseId ? { providerResponseId: response.providerResponseId } : {}) }));
+    else {
+      const context: OperationExecutionContext = { signal: admitted.fence.signal, deadline: admitted.fence.deadline,
+        assertCurrent: () => admitted.fence.assertCurrent() };
+      try {
+        const response = await withinExecution(() => this.gateway.complete({ ...request, signal: admitted.fence.signal }), context);
+        result = { turn: parseAgentTurn(response.text), applicationAuthored: false, deadline: context.deadline,
+          ...(response.providerResponseId ? { providerResponseId: response.providerResponseId } : {}) };
+      } catch (error) {
+        if (!(error instanceof OperationStoppedError)) throw error;
+        result = { turn: { reply: 'Service inference stopped before a model result was committed.',
+          workProposals: [], factProposals: [] }, applicationAuthored: true, deadline: context.deadline,
+          stopReason: executionDeadlineReached(context, error) ? 'deadline' : 'cancelled' };
+      }
+    }
     let turn = result.turn;
     let applicationAuthored = result.applicationAuthored;
+    let stopReason: ServiceStopReason = result.stopReason ?? 'completed';
 
     const current = this.store.state(input.workspaceId);
     const proposedWorkIds = new Set<string>();
     const events: DomainEvent[] = [];
 
     try {
-      if (result.deadline !== undefined && Date.now() >= result.deadline) throw new Error('Run deadline');
+      if (!applicationAuthored && result.deadline !== undefined && Date.now() >= result.deadline)
+        throw new Error('Run deadline');
       for (const proposal of turn.workProposals) {
         if (Object.hasOwn(current.works, proposal.id) || proposedWorkIds.has(proposal.id))
           throw new Error(`Work already exists: ${proposal.id}`);
@@ -151,17 +217,38 @@ export class AgentService {
 
       let preview = current;
       for (const event of events) preview = reduce(preview, event, preview.version + 1);
-      if (result.deadline !== undefined && Date.now() >= result.deadline) throw new Error('Run deadline');
+      if (!applicationAuthored && result.deadline !== undefined && Date.now() >= result.deadline)
+        throw new Error('Run deadline');
     } catch (error) {
       if (!this.#loop) throw error;
       events.length = 0;
       applicationAuthored = true;
+      stopReason = 'invalid_model_result';
       turn = { reply: 'Operation run stopped: final proposals were rejected or the run deadline elapsed. No final proposals were committed. Inspect /actions for independently recorded operation outcomes.',
         workProposals: [], factProposals: [] };
     }
 
-    const assistantArtifactId = this.store.putArtifact(input.workspaceId, turn.reply);
     const assistantExternalId = result.providerResponseId ?? `agent-${randomUUID()}`;
+    if (admitted) {
+      const version = this.store.state(input.workspaceId).version;
+      const completed = this.store.completeOwnerTurnJob(input.workspaceId, admitted.job.claim!, {
+        ownerRecordId: ownerRecord.id, expectedVersion: version, events,
+        reply: { text: turn.reply, source: applicationAuthored ? 'agent:application' : 'agent:model',
+          externalId: assistantExternalId, threadId: input.threadId },
+        status: stopReason === 'completed' || stopReason === 'prepared_for_review' ? 'finished' : 'stopped',
+        reason: stopReason, at: this.#clock()
+      }, () => {
+        admitted.fence.assertSettlementCurrent?.();
+        if (!applicationAuthored || !admitted.fence.assertSettlementCurrent)
+          assertExecutionActive({ signal: admitted.fence.signal, deadline: admitted.fence.deadline });
+      });
+      const assistantRecord = completed.records.find((record): record is JournalRecord =>
+        record.event.type === 'message.received' && record.event.data.senderRole === 'agent');
+      if (!assistantRecord) throw new Error('Assistant message was not committed');
+      return { ownerRecordId: ownerRecord.id, assistantRecordId: assistantRecord.id, context, turn };
+    }
+
+    const assistantArtifactId = this.store.putArtifact(input.workspaceId, turn.reply);
     const assistantEvent: DomainEvent = {
       type: 'message.received',
       data: {

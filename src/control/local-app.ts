@@ -5,10 +5,12 @@ import { acquireLocalProcessLock } from '../storage/process-lock.js';
 import { SqliteStore } from '../storage/sqlite-store.js';
 import { OwnerControlService } from './review-service.js';
 import { OwnerControlSessions } from './session.js';
+import type { ServiceControlAdapter } from './types.js';
 
 export interface OwnerControlApp {
   readonly sessions: OwnerControlSessions;
   readonly service: OwnerControlService;
+  readonly serviceControl?: ServiceControlAdapter;
   close(): void;
 }
 

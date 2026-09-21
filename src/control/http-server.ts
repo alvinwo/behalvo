@@ -53,7 +53,9 @@ interface FileIdentity {
 type Route =
   | { readonly kind: 'asset'; readonly asset: keyof ControlAssets; readonly contentType: string }
   | { readonly kind: 'bootstrap' | 'logout' | 'list' }
-  | { readonly kind: 'review' | 'approve' | 'cancel'; readonly actionId: string };
+  | { readonly kind: 'service-status' | 'jobs' | 'chat' | 'reminders' }
+  | { readonly kind: 'job'; readonly jobId: string }
+  | { readonly kind: 'review' | 'approve' | 'cancel' | 'execute' | 'readback'; readonly actionId: string };
 
 class TransportError extends Error {
   readonly status: number;
@@ -154,7 +156,12 @@ function admitTransport(req: IncomingMessage, origin: string): URL {
   return url;
 }
 
-function selectRoute(url: URL): Route {
+function decodedIdentifier(value: string): string {
+  try { return decodeURIComponent(value); }
+  catch { throw new TransportError(400); }
+}
+
+function selectRoute(url: URL, serviceEnabled: boolean): Route {
   if (url.pathname === '/') return { kind: 'asset', asset: 'html', contentType: 'text/html; charset=utf-8' };
   if (url.pathname === '/app.js')
     return { kind: 'asset', asset: 'javascript', contentType: 'text/javascript; charset=utf-8' };
@@ -163,20 +170,28 @@ function selectRoute(url: URL): Route {
   if (url.pathname === '/api/session/bootstrap') return { kind: 'bootstrap' };
   if (url.pathname === '/api/session/logout') return { kind: 'logout' };
   if (url.pathname === '/api/actions') return { kind: 'list' };
-  const match = /^\/api\/actions\/([^/]+)\/(review|approve|cancel)$/.exec(url.pathname);
+  if (serviceEnabled) {
+    if (url.pathname === '/api/service') return { kind: 'service-status' };
+    if (url.pathname === '/api/jobs') return { kind: 'jobs' };
+    if (url.pathname === '/api/chat') return { kind: 'chat' };
+    if (url.pathname === '/api/reminders') return { kind: 'reminders' };
+    const job = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
+    if (job) return { kind: 'job', jobId: decodedIdentifier(job[1]!) };
+  }
+  const actions = serviceEnabled ? 'review|approve|cancel|execute|readback' : 'review|approve|cancel';
+  const match = new RegExp(`^/api/actions/([^/]+)/(${actions})$`).exec(url.pathname);
   if (match) {
-    let actionId: string;
-    try { actionId = decodeURIComponent(match[1]!); }
-    catch { throw new TransportError(400); }
-    return { kind: match[2] as 'review' | 'approve' | 'cancel', actionId };
+    return { kind: match[2] as 'review' | 'approve' | 'cancel' | 'execute' | 'readback',
+      actionId: decodedIdentifier(match[1]!) };
   }
   throw new OwnerControlError('not_found');
 }
 
 function admitRoute(req: IncomingMessage, url: URL, route: Route): void {
-  const expectedMethod = route.kind === 'asset' || route.kind === 'list' ? 'GET' : 'POST';
-  if (req.method !== expectedMethod) throw new TransportError(405);
-  if (route.kind === 'list') {
+  const permittedMethods = route.kind === 'reminders' ? ['GET', 'POST']
+    : [['asset', 'list', 'service-status', 'jobs', 'job'].includes(route.kind) ? 'GET' : 'POST'];
+  if (!permittedMethods.includes(req.method ?? '')) throw new TransportError(405);
+  if (route.kind === 'list' || route.kind === 'jobs' || (route.kind === 'reminders' && req.method === 'GET')) {
     const after = url.searchParams.getAll('after');
     if ([...url.searchParams.keys()].some(name => name !== 'after') || after.length > 1)
       throw new TransportError(400);
@@ -263,7 +278,7 @@ export async function startOwnerControlServer(options: {
     void (async () => {
       if (closing) throw new OwnerControlError('unavailable');
       const url = admitTransport(req, origin);
-      const route = selectRoute(url);
+      const route = selectRoute(url, options.app.serviceControl !== undefined);
       admitRoute(req, url, route);
 
       if (route.kind === 'asset') {
@@ -273,7 +288,24 @@ export async function startOwnerControlServer(options: {
       if (route.kind === 'list') {
         const principal = options.app.sessions.authenticate(bearer(req));
         const after = url.searchParams.getAll('after')[0];
-        sendJson(res, 200, options.app.service.list(principal, after), MAXIMUM_LIST_BYTES);
+        sendJson(res, 200, (options.app.serviceControl ?? options.app.service).list(principal, after), MAXIMUM_LIST_BYTES);
+        return;
+      }
+      if (route.kind === 'service-status' || route.kind === 'jobs' || route.kind === 'job' ||
+          (route.kind === 'reminders' && req.method === 'GET')) {
+        const adapter = options.app.serviceControl;
+        if (!adapter) throw new OwnerControlError('not_found');
+        const principal = options.app.sessions.authenticate(bearer(req));
+        if (route.kind === 'service-status') sendJson(res, 200, adapter.status(principal));
+        else if (route.kind === 'job') sendJson(res, 200, adapter.job(principal, route.jobId));
+        else {
+          const afterText = url.searchParams.getAll('after')[0];
+          if (afterText !== undefined && !/^(0|[1-9][0-9]*)$/.test(afterText)) throw new TransportError(400);
+          const after = afterText === undefined ? undefined : Number(afterText);
+          if (after !== undefined && !Number.isSafeInteger(after)) throw new TransportError(400);
+          sendJson(res, 200, route.kind === 'reminders' ? adapter.reminders(principal, after)
+            : adapter.jobs(principal, after), MAXIMUM_LIST_BYTES);
+        }
         return;
       }
 
@@ -293,22 +325,37 @@ export async function startOwnerControlServer(options: {
       }
 
       const principal = options.app.sessions.authenticate(bearer(req));
+      const control = options.app.serviceControl ?? options.app.service;
       if (route.kind === 'logout') {
         exactKeys(body, []);
-        options.app.service.logout(principal);
+        control.logout(principal);
         sendEmpty(res, 204);
         return;
       }
       if (route.kind === 'review') {
         exactKeys(body, []);
-        sendJson(res, 200, options.app.service.review(principal, route.actionId), MAXIMUM_REVIEW_BYTES);
+        sendJson(res, 200, control.review(principal, route.actionId), MAXIMUM_REVIEW_BYTES);
+        return;
+      }
+      const adapter = options.app.serviceControl;
+      if (route.kind === 'chat' || route.kind === 'reminders' || route.kind === 'execute' || route.kind === 'readback') {
+        if (!adapter) throw new OwnerControlError('not_found');
+        let result: unknown;
+        if (route.kind === 'chat') result = adapter.chat(principal, body);
+        else if (route.kind === 'reminders') result = adapter.reminder(principal, body);
+        else if (route.kind === 'execute') result = adapter.execute(principal, route.actionId, body);
+        else {
+          if (route.kind !== 'readback') throw new TransportError(400);
+          result = adapter.readback(principal, route.actionId, body);
+        }
+        sendJson(res, 202, result);
         return;
       }
       exactKeys(body, ['reviewToken', 'digest']);
       const input = { reviewToken: body.reviewToken, digest: body.digest } as { reviewToken: string; digest: string };
       if (route.kind !== 'approve' && route.kind !== 'cancel') throw new TransportError(400);
-      const result = route.kind === 'approve' ? options.app.service.approve(principal, route.actionId, input)
-        : options.app.service.cancel(principal, route.actionId, input);
+      const result = route.kind === 'approve' ? control.approve(principal, route.actionId, input)
+        : control.cancel(principal, route.actionId, input);
       sendJson(res, 200, result);
     })().catch(error => {
       req.resume();

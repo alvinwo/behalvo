@@ -79,9 +79,38 @@ input {
 }
 
 button,
-input {
+input,
+textarea {
   padding: 0.6rem 0.85rem;
   font: inherit;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+article {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid #d8dce8;
+  border-radius: 0.4rem;
+  background: #fff;
+}
+
+article h3 {
+  margin-top: 0;
+}
+
+pre {
+  margin: 0;
+  font: 0.9rem/1.45 ui-monospace, monospace;
 }
 
 button {
@@ -167,13 +196,15 @@ dd {
   }
 
   .toolbar,
-  .decisions {
+  .decisions,
+  .dashboard-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
   }
 
   button,
-  input {
+  input,
+  textarea {
     width: 100%;
   }
 }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SqliteStore, Operator, OperationService, OperationRegistry, AgentService } from '../dist/index.js';
+import { SqliteStore, Operator, OperationService, OperationRegistry, AgentService, ServiceStorageError } from '../dist/index.js';
 
 const final = (reply = 'Finished reading.') => ({ reply, workProposals: [], factProposals: [] });
 const tool = (name, args = {}) => ({ tool: { name, arguments: args } });
@@ -189,6 +189,25 @@ test('direct operation loop rejects wrong owner before any inference or context 
             { model: { provider: 'fake', model: 'one' }, system: 'private', prompt: 'private' },
             { workspaceId: 'ws', ownerId: 'intruder', ownerRecordId: 'record', workId: 'work' }), /owner/i);
         assert.equal(calls, 0);
+    } finally { f.store.close(); }
+});
+
+test('trusted storage integrity faults escape the broad model and tool stop boundary', async () => {
+    const { OperationLoop } = await import('../dist/runtime/operation-loop.js');
+    const f = fixture([]);
+    const originalState = f.store.state.bind(f.store);
+    let reads = 0;
+    f.store.state = (...args) => {
+        reads++;
+        if (reads === 2) throw new ServiceStorageError('integrity', 'Fixed synthetic storage fault');
+        return originalState(...args);
+    };
+    try {
+        const loop = new OperationLoop(f.store, { service: f.operations, registry: f.registry });
+        await assert.rejects(loop.run({ async complete() { return { text: JSON.stringify(tool('catalog')) }; } },
+            { model: { provider: 'fake', model: 'one' }, system: 'private', prompt: 'private' },
+            { workspaceId: 'ws', ownerId: 'owner', ownerRecordId: 'record', workId: 'work' }),
+            error => error.code === 'integrity');
     } finally { f.store.close(); }
 });
 

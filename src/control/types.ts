@@ -1,5 +1,8 @@
 import type { Action, WorkPhase } from '../kernel/types.js';
-import type { Connection, OperationCommand } from '../operations/types.js';
+import type { Connection, OperationCommand, VerificationState } from '../operations/types.js';
+import type { ServiceJobKind, ServiceJobStatus, ServiceQueueCounts, ServiceReceipt,
+  ServiceStopReason } from '../storage/service-jobs.js';
+import type { ServiceRuntimeSnapshot } from '../runtime/service-runtime.js';
 
 export interface ControlBinding {
   readonly workspaceId: string;
@@ -72,4 +75,101 @@ export interface ControlReview {
 export interface ControlDecisionInput {
   reviewToken: string;
   digest: string;
+}
+
+export interface ControlServiceActionSummary extends ControlActionSummary {
+  outcome: { status: Action['status']; evidenceRef: string | null };
+  verification: { status: VerificationState['status']; recordedAt: string; evidenceRef: string | null } | null;
+}
+
+export interface ControlServiceActionPage {
+  workspaceId: string;
+  items: ControlServiceActionSummary[];
+  nextAfter: string | null;
+}
+
+export interface ControlExecutionReview extends Omit<ControlReview, 'action'> {
+  action: ControlServiceActionSummary;
+  executionToken?: string;
+  executionExpiresAt?: string;
+  canExecute: boolean;
+}
+
+export interface ControlAdmission {
+  receipt: ServiceReceipt;
+  job: ControlJobSummary;
+  duplicate: boolean;
+}
+
+export interface ControlJobSummary {
+  id: string;
+  position: number;
+  requestId: string;
+  kind: ServiceJobKind;
+  status: ServiceJobStatus;
+  admittedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  focus: { threadId: string; workId: string | null } | null;
+  actionId: string | null;
+  resultReason: ServiceStopReason | null;
+}
+
+export interface ControlJobResult {
+  reason: ServiceStopReason;
+  conversation?: { threadId: string; ownerText: string; assistantText: string };
+  works?: Array<{ id: string; title: string; goal: string; phase: 'open' }>;
+  action?: {
+    actionId: string;
+    outcome: { status: Action['status']; evidenceRef: string | null; evidence: string | null };
+    verification: { status: VerificationState['status']; recordedAt: string;
+      evidenceRef: string | null; evidence: string | null } | null;
+  };
+  reminder?: ControlReminderSummary;
+}
+
+export interface ControlJobDetail extends ControlJobSummary {
+  result: ControlJobResult | null;
+}
+
+export interface ControlJobPage { items: ControlJobSummary[]; nextAfter: number | null }
+
+export interface ControlReminderSummary {
+  timerId: string;
+  /** Both null when the timer has no owner-service scheduling receipt. */
+  requestId: string | null;
+  admittedAt: string | null;
+  work: { id: string; title: string };
+  dueAt: string;
+  status: 'scheduled' | 'fired' | 'cancelled';
+}
+
+export interface ControlReminderPage { items: ControlReminderSummary[]; nextAfter: number | null }
+
+export interface ControlServiceStatus {
+  lifecycle: 'running' | 'stopping' | 'faulted';
+  databaseMode: 'plaintext' | 'encrypted';
+  model: { configured: boolean; selection: { provider: string; model: string } | null };
+  queue: ServiceQueueCounts;
+  runtime: ServiceRuntimeSnapshot;
+  unresolvedActionIds: string[];
+  unresolvedActions: Array<{ actionId: string; status: Action['status'];
+    kind: 'active_execution' | 'crash_preserved_execution' | 'unknown_outcome' | 'accepted_unverified' }>;
+  limits: { foreground: true; awakeOnly: true; supervised: false };
+}
+
+export interface ServiceControlAdapter {
+  list(principal: ControlPrincipal, after?: string): ControlServiceActionPage;
+  review(principal: ControlPrincipal, actionId: string): ControlExecutionReview;
+  approve(principal: ControlPrincipal, actionId: string, input: ControlDecisionInput): ControlServiceActionSummary;
+  cancel(principal: ControlPrincipal, actionId: string, input: ControlDecisionInput): ControlServiceActionSummary;
+  logout(principal: ControlPrincipal): void;
+  status(principal: ControlPrincipal): ControlServiceStatus;
+  jobs(principal: ControlPrincipal, after?: number): ControlJobPage;
+  job(principal: ControlPrincipal, jobId: string): ControlJobDetail;
+  reminders(principal: ControlPrincipal, after?: number): ControlReminderPage;
+  chat(principal: ControlPrincipal, input: unknown): ControlAdmission;
+  reminder(principal: ControlPrincipal, input: unknown): { receipt: ServiceReceipt; duplicate: boolean };
+  execute(principal: ControlPrincipal, actionId: string, input: unknown): ControlAdmission;
+  readback(principal: ControlPrincipal, actionId: string, input: unknown): ControlAdmission;
 }

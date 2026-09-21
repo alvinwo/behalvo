@@ -94,6 +94,329 @@ function actionButton(ui, index = 0) {
   return ui.element('actions').children[index].children[0];
 }
 
+function serviceStatus(overrides = {}) {
+  return {
+    lifecycle: 'running', databaseMode: 'plaintext',
+    model: { configured: true, selection: { provider: 'scripted', model: 'synthetic' } },
+    queue: { queued: 0, running: 0, finished: 1, stopped: 0, interrupted: 0,
+      oldestQueuedAt: null, activeJobId: null },
+    runtime: { accepting: true, faulted: false, activeJobId: null, activeStartedAt: null,
+      lastSchedulerPollAt: null, nextDueAt: null },
+    unresolvedActionIds: [], unresolvedActions: [],
+    limits: { foreground: true, awakeOnly: true, supervised: false },
+    ...overrides
+  };
+}
+
+function jobSummary(overrides = {}) {
+  return {
+    id: 'job-1', position: 1, requestId: 'web-chat-request', kind: 'owner_turn', status: 'finished',
+    admittedAt: new Date(NOW).toISOString(), startedAt: new Date(NOW).toISOString(),
+    finishedAt: new Date(NOW).toISOString(), focus: { threadId: 'thread', workId: null },
+    actionId: null, resultReason: 'completed', ...overrides
+  };
+}
+
+async function enableService(ui, items = []) {
+  ui.queueJson(200, serviceStatus());
+  ui.queueJson(200, { items, nextAfter: null });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  await ui.click('service-refresh');
+}
+
+test('service UI loads exact chat text and renders action outcome separately from verification', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  await enableService(ui, [jobSummary(), jobSummary({
+    id: 'job-2', position: 2, requestId: 'web-execute-request', kind: 'execute',
+    focus: null, actionId: 'action-a', resultReason: 'readback_unresolved'
+  })]);
+
+  ui.queueJson(200, { ...jobSummary(), result: { reason: 'completed', conversation: {
+    threadId: 'thread', ownerText: 'Owner question', assistantText: 'the actual reply'
+  } } });
+  await ui.element('jobs').children[0].children[0].dispatch('click');
+  assert.match(ui.element('job-result').textContent, /Owner question/);
+  assert.match(ui.element('job-result').textContent, /the actual reply/);
+
+  ui.queueJson(200, { ...jobSummary({ id: 'job-2', position: 2, requestId: 'web-execute-request',
+    kind: 'execute', focus: null, actionId: 'action-a', resultReason: 'readback_unresolved' }),
+  result: { reason: 'readback_unresolved', action: { actionId: 'action-a',
+    outcome: { status: 'accepted', evidenceRef: 'outcome-ref', evidence: 'provider accepted' },
+    verification: { status: 'not_satisfied', recordedAt: new Date(NOW).toISOString(),
+      evidenceRef: null, evidence: null } } } });
+  await ui.element('jobs').children[1].children[0].dispatch('click');
+  const resultText = ui.element('job-result').textContent;
+  assert.match(resultText, /Outcome status: accepted/);
+  assert.match(resultText, /Outcome evidence: provider accepted/);
+  assert.match(resultText, /Verification status: not_satisfied/);
+  assert.match(resultText, /Result: readback_unresolved/);
+});
+
+test('readback UI separates historical unknown effect from satisfied verification', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  const job = jobSummary({ kind: 'readback', actionId: 'action', focus: null });
+  await enableService(ui, [job]);
+  ui.queueJson(200, { ...job, result: { reason: 'completed', action: { actionId: 'action',
+    outcome: { status: 'unknown', evidenceRef: 'original-outcome', evidence: 'Provider outcome unavailable' },
+    verification: { status: 'satisfied', recordedAt: new Date(NOW).toISOString(), evidenceRef: null, evidence: null }
+  } } });
+  await ui.element('jobs').children[0].children[0].dispatch('click');
+  assert.match(ui.element('job-result').textContent, /Outcome status: unknown/);
+  assert.match(ui.element('job-result').textContent, /Provider outcome unavailable/);
+  assert.match(ui.element('job-result').textContent, /Verification status: satisfied/);
+  assert.doesNotMatch(ui.element('job-result').textContent, /Outcome status: accepted/);
+});
+
+test('service UI identifies legacy reminders without inventing service request provenance', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  const reminder = { timerId: 'legacy-timer', requestId: null, admittedAt: null,
+    work: { id: 'work', title: 'Legacy follow-up' }, dueAt: new Date(NOW).toISOString(), status: 'fired' };
+  const job = jobSummary({ kind: 'reminder', requestId: 'legacy-timer', focus: null });
+  ui.queueJson(200, serviceStatus());
+  ui.queueJson(200, { items: [job], nextAfter: null });
+  ui.queueJson(200, { items: [reminder], nextAfter: null });
+  await ui.click('service-refresh');
+  assert.match(ui.element('reminders').textContent, /Legacy follow-up/);
+  assert.match(ui.element('reminders').textContent, /no owner-service receipt/i);
+  assert.doesNotMatch(ui.element('reminders').textContent, /null/);
+  ui.queueJson(200, { ...job, result: { reason: 'completed', reminder } });
+  await ui.element('jobs').children[0].children[0].dispatch('click');
+  assert.match(ui.element('job-result').textContent, /no owner-service receipt/i);
+  assert.match(ui.element('job-result').textContent, /Reminder status: fired/);
+});
+
+test('service UI renders durable scheduled, fired, and cancelled reminder meaning', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  ui.queueJson(200, serviceStatus());
+  ui.queueJson(200, { items: [], nextAfter: null });
+  ui.queueJson(200, { items: [
+    { timerId: 'timer-1', requestId: 'owner-first', admittedAt: new Date(NOW).toISOString(),
+      work: { id: 'work-1', title: 'Check refund' }, dueAt: new Date(NOW + 60_000).toISOString(), status: 'scheduled' },
+    { timerId: 'timer-2', requestId: 'owner-second', admittedAt: new Date(NOW).toISOString(),
+      work: { id: 'work-2', title: 'Send notes' }, dueAt: new Date(NOW + 120_000).toISOString(), status: 'fired' },
+    { timerId: 'timer-3', requestId: 'owner-third', admittedAt: new Date(NOW).toISOString(),
+      work: { id: 'work-3', title: 'Stale follow-up' }, dueAt: new Date(NOW + 180_000).toISOString(), status: 'cancelled' }
+  ], nextAfter: null });
+
+  await ui.click('service-refresh');
+
+  const text = ui.element('reminders').textContent;
+  assert.match(text, /owner-first.*Check refund.*scheduled/);
+  assert.match(text, /owner-second.*Send notes.*fired/);
+  assert.match(text, /owner-third.*Stale follow-up.*cancelled/);
+});
+
+test('chat and reminder lost acknowledgements retain immutable request identities for explicit receipt recovery', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  await enableService(ui);
+  ui.element('chat-thread').value = 'thread';
+  ui.element('chat-text').value = 'Owner text';
+  ui.queueFetch(() => Promise.reject(new Error('response lost after commit')));
+
+  await ui.click('send-chat');
+  const firstChat = JSON.parse(ui.fetchCalls.at(-1).init.body);
+  assert.match(ui.element('status').textContent, new RegExp(firstChat.requestId));
+  assert.match(ui.element('status').textContent, /recover/i);
+  ui.queueJson(202, { receipt: { id: 'chat-receipt' }, job: jobSummary({ requestId: firstChat.requestId }),
+    duplicate: true });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  await ui.click('send-chat');
+  const chatPosts = ui.fetchCalls.filter(call => call.path === '/api/chat')
+    .map(call => JSON.parse(call.init.body));
+  assert.equal(chatPosts.length, 2);
+  assert.equal(chatPosts[1].requestId, chatPosts[0].requestId);
+
+  ui.element('reminder-work').value = 'work';
+  ui.element('reminder-due').value = new Date(NOW + 60_000).toISOString();
+  ui.queueFetch(() => Promise.reject(new Error('response lost after commit')));
+  await ui.click('create-reminder');
+  const firstReminder = JSON.parse(ui.fetchCalls.at(-1).init.body);
+  assert.match(ui.element('status').textContent, new RegExp(firstReminder.requestId));
+  ui.queueJson(202, { receipt: { id: 'reminder-receipt' }, duplicate: true });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  await ui.click('create-reminder');
+  const reminderPosts = ui.fetchCalls.filter(call => call.path === '/api/reminders' && call.init.method === 'POST')
+    .map(call => JSON.parse(call.init.body));
+  assert.equal(reminderPosts.length, 2);
+  assert.equal(reminderPosts[1].requestId, reminderPosts[0].requestId);
+});
+
+test('confirmed reminder admission is not presented as unconfirmed when queue refresh fails', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  await enableService(ui);
+  ui.element('reminder-work').value = 'work';
+  ui.element('reminder-due').value = new Date(NOW + 60_000).toISOString();
+  ui.queueJson(202, { receipt: { id: 'reminder-receipt' }, duplicate: false });
+  ui.queueFetch(() => Promise.reject(new Error('queue refresh unavailable')));
+
+  await ui.click('create-reminder');
+
+  assert.match(ui.element('status').textContent, /admission confirmed/i);
+  assert.match(ui.element('status').textContent, /queue refresh failed/i);
+  assert.doesNotMatch(ui.element('status').textContent, /recover receipt/i);
+  assert.equal(ui.element('reminder-work').value, '');
+  assert.equal(ui.element('reminder-due').value, '');
+  assert.doesNotMatch(ui.element('create-reminder').textContent, /recover/i);
+});
+
+test('lost reminder acknowledgement retains its immutable recovery request after the due time', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  await enableService(ui);
+  const dueAt = new Date(NOW + 1_000).toISOString();
+  ui.element('reminder-work').value = 'work';
+  ui.element('reminder-due').value = dueAt;
+  ui.queueFetch(() => Promise.reject(new Error('response lost after commit')));
+  await ui.click('create-reminder');
+  const first = JSON.parse(ui.fetchCalls.at(-1).init.body);
+  await ui.advanceTo(NOW + 1_001);
+  ui.queueJson(202, { receipt: { id: 'original-reminder-receipt' }, duplicate: true });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  ui.queueJson(200, { items: [], nextAfter: null });
+
+  await ui.click('create-reminder');
+
+  const posts = ui.fetchCalls.filter(call => call.path === '/api/reminders' && call.init.method === 'POST')
+    .map(call => JSON.parse(call.init.body));
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].requestId, first.requestId);
+  assert.equal(posts[1].dueAt, dueAt);
+  assert.match(ui.element('status').textContent, /existing receipt/i);
+  assert.equal(ui.element('reminder-work').value, '');
+  assert.equal(ui.element('reminder-due').value, '');
+  assert.doesNotMatch(ui.element('create-reminder').textContent, /recover/i);
+});
+
+test('missing expired reminder recovery is terminal and permits a new future request', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  await enableService(ui);
+  ui.element('reminder-work').value = 'work';
+  ui.element('reminder-due').value = new Date(NOW + 1_000).toISOString();
+  ui.queueFetch(() => Promise.reject(new Error('request was not committed')));
+  await ui.click('create-reminder');
+  await ui.advanceTo(NOW + 1_001);
+  ui.queueJson(400, { error: 'invalid_request' });
+
+  await ui.click('create-reminder');
+
+  assert.match(ui.element('status').textContent, /no durable reminder receipt/i);
+  assert.match(ui.element('status').textContent, /new future time/i);
+  assert.doesNotMatch(ui.element('create-reminder').textContent, /recover/i);
+  const posts = ui.fetchCalls.filter(call => call.path === '/api/reminders' && call.init.method === 'POST');
+  assert.equal(posts.length, 2);
+});
+
+test('readback lost acknowledgement reuses its immutable request identity', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  const accepted = action('action-a', { status: 'accepted',
+    outcome: { status: 'accepted', evidenceRef: 'outcome-ref' },
+    verification: { status: 'not_satisfied', recordedAt: new Date(NOW).toISOString(), evidenceRef: null } });
+  await pair(ui, [{ workspaceId: 'owner-control-demo', items: [accepted], nextAfter: null }]);
+  await enableService(ui);
+  ui.queueJson(200, review(accepted, { canApprove: false, canCancel: false,
+    approvalExpiresAt: null, canExecute: false }));
+  await actionButton(ui).dispatch('click');
+  assert.match(ui.element('review').textContent, /Outcome statusaccepted/);
+  assert.match(ui.element('review').textContent, /Verification statusnot_satisfied/);
+  ui.queueFetch(() => Promise.reject(new Error('response lost after commit')));
+
+  await ui.click('readback');
+  const first = JSON.parse(ui.fetchCalls.at(-1).init.body);
+  assert.match(ui.element('status').textContent, new RegExp(first.requestId));
+  assert.match(ui.element('readback').textContent, /recover/i);
+  ui.queueJson(202, { receipt: { id: 'readback-receipt' }, job: jobSummary({
+    id: 'readback-job', requestId: first.requestId, kind: 'readback', focus: null,
+    actionId: 'action-a', status: 'queued', resultReason: null
+  }), duplicate: true });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  await ui.click('readback');
+
+  const posts = ui.fetchCalls.filter(call => call.path.endsWith('/readback'))
+    .map(call => JSON.parse(call.init.body));
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].requestId, posts[0].requestId);
+});
+
+test('confirmed readback admission is not presented as unconfirmed when queue refresh fails', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  const accepted = action('action-a', { status: 'accepted',
+    outcome: { status: 'accepted', evidenceRef: 'outcome-ref' }, verification: null });
+  await pair(ui, [{ workspaceId: 'owner-control-demo', items: [accepted], nextAfter: null }]);
+  await enableService(ui);
+  ui.queueJson(200, review(accepted, { canApprove: false, canCancel: false,
+    approvalExpiresAt: null, canExecute: false }));
+  await actionButton(ui).dispatch('click');
+  ui.queueJson(202, { receipt: { id: 'readback-receipt' }, job: jobSummary({
+    id: 'readback-job', requestId: 'readback-request', kind: 'readback', focus: null,
+    actionId: 'action-a', status: 'queued', resultReason: null
+  }), duplicate: false });
+  ui.queueFetch(() => Promise.reject(new Error('queue refresh unavailable')));
+
+  await ui.click('readback');
+
+  assert.match(ui.element('status').textContent, /admission confirmed/i);
+  assert.match(ui.element('status').textContent, /queue refresh failed/i);
+  assert.doesNotMatch(ui.element('status').textContent, /may have committed|unconfirmed|recover receipt/i);
+  assert.doesNotMatch(ui.element('readback').textContent, /recover/i);
+});
+
+test('an older exact-result response cannot replace the owners newer job selection', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  const jobA = jobSummary({ id: 'job-a', requestId: 'req-a' });
+  const jobB = jobSummary({ id: 'job-b', position: 2, requestId: 'req-b' });
+  await pair(ui);
+  await enableService(ui, [jobA, jobB]);
+  const delayedA = deferred();
+  ui.queueFetch(() => delayedA.promise);
+  const selectingA = ui.element('jobs').children[0].children[0].dispatch('click');
+  ui.queueJson(200, { ...jobB, result: { reason: 'completed', conversation: {
+    threadId: 'thread', ownerText: 'Question B', assistantText: 'Answer B'
+  } } });
+
+  await ui.element('jobs').children[1].children[0].dispatch('click');
+  assert.match(ui.element('job-result').textContent, /Request: req-b/);
+  assert.match(ui.element('job-result').textContent, /Answer B/);
+  delayedA.resolve(response(200, { ...jobA, result: { reason: 'completed', conversation: {
+    threadId: 'thread', ownerText: 'Question A', assistantText: 'Answer A'
+  } } }));
+  await selectingA;
+
+  assert.match(ui.element('job-result').textContent, /Request: req-b/);
+  assert.match(ui.element('job-result').textContent, /Answer B/);
+  assert.doesNotMatch(ui.element('job-result').textContent, /req-a|Answer A/);
+});
+
+test('logout fences every delayed jobs page before it can restore private service state', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  const jobs = deferred();
+  ui.queueJson(200, serviceStatus());
+  ui.queueFetch(() => jobs.promise);
+  const loading = ui.click('service-refresh');
+  for (let index = 0; index < 10 && !ui.fetchCalls.some(call => call.path === '/api/jobs'); index++) await ui.flush();
+  assert.equal(ui.fetchCalls.at(-1).path, '/api/jobs');
+  ui.queueJson(204, undefined);
+
+  const signingOut = ui.click('sign-out');
+  await ui.flush();
+  assert.equal(ui.element('jobs').textContent, '');
+  jobs.resolve(response(200, { items: [jobSummary({ id: 'private-job' })], nextAfter: null }));
+  await Promise.all([loading, signingOut]);
+
+  assert.equal(ui.element('jobs').textContent, '');
+  assert.equal(ui.element('job-result').textContent, '');
+  assert.equal(ui.element('service-dashboard').hidden, true);
+  assert.equal(ui.element('pairing').hidden, false);
+});
+
 test('pairing strictly checks bootstrap size, keys, token, origin, and expiry before sending a credential', async t => {
   const cases = [
     ['oversized document', ui => `${JSON.stringify(bootstrap(ui))}${' '.repeat(4097)}`],

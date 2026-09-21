@@ -3,11 +3,13 @@ import { assertOwner } from '../kernel/policy.js';
 import { identifier } from '../kernel/types.js';
 import type { AgentTurn, ModelGateway, ModelRequest } from '../model/types.js';
 import { parseAgentTurn } from '../model/validation.js';
-import { assertExecutionActive, withinExecution, OperationStoppedError, type OperationExecutionContext } from '../operations/execution-context.js';
+import { assertExecutionActive, executionDeadlineReached, withinExecution, OperationStoppedError,
+    type OperationExecutionContext } from '../operations/execution-context.js';
 import type { OperationRegistry } from '../operations/registry.js';
 import type { OperationService } from '../operations/service.js';
 import type { OperationAction } from '../operations/types.js';
 import { exactObject, isOperationCommand } from '../operations/validation.js';
+import { isFatalServiceStorageError, type ServiceStopReason } from '../storage/service-jobs.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 
 export interface OperationLoopOptions {
@@ -25,12 +27,15 @@ export interface OperationLoopBinding {
     workId?: string;
     ownerRecordId: string;
     inputBudgetBytes?: number;
+    capability?: 'full' | 'prepare_only';
+    executionContext?: OperationExecutionContext;
 }
 export interface OperationLoopResult {
     turn: AgentTurn;
     applicationAuthored: boolean;
     deadline?: number;
     providerResponseId?: string;
+    stopReason?: ServiceStopReason;
 }
 
 const PROTOCOL = `You may instead return exactly {"tool":{"name":NAME,"arguments":OBJECT}} with no final fields.
@@ -54,8 +59,8 @@ function bounded(text: string, bytes: number, label: string): string {
     if (Buffer.byteLength(text, 'utf8') > bytes) throw new LoopInputError(`${label} size limit exceeded`);
     return text;
 }
-function stop(reply: string): OperationLoopResult {
-    return { turn: { reply, workProposals: [], factProposals: [] }, applicationAuthored: true };
+function stop(reply: string, stopReason: ServiceStopReason): OperationLoopResult {
+    return { turn: { reply, workProposals: [], factProposals: [] }, applicationAuthored: true, stopReason };
 }
 function lowerLimit(value: number | undefined, maximum: number): number {
     if (value === undefined) return maximum;
@@ -91,8 +96,9 @@ export class OperationLoop {
             throw new Error('Operation loop workspace binding mismatch');
         const initial = this.store.state(binding.workspaceId);
         assertOwner(initial, binding.ownerId);
-        const controller = new AbortController();
-        const context: OperationExecutionContext = { signal: controller.signal, deadline: Date.now() + this.#timeoutMs };
+        const controller = binding.executionContext ? undefined : new AbortController();
+        const context: OperationExecutionContext = binding.executionContext ??
+            { signal: controller!.signal, deadline: Date.now() + this.#timeoutMs };
         const initialAttempts = new Set(Object.values(initial.actions).map(action => action.attemptId));
         const transcript: { request: unknown; result: unknown }[] = [];
         try {
@@ -100,7 +106,8 @@ export class OperationLoop {
                 assertExecutionActive(context);
                 const next = this.request(request, binding, transcript);
                 bounded(JSON.stringify(next), Math.min(this.#maxRequestBytes, binding.inputBudgetBytes ?? this.#maxRequestBytes), 'Accumulated model request');
-                const response = await withinExecution(() => gateway.complete(next), context);
+                const dispatch = context.signal ? { ...next, signal: context.signal } : next;
+                const response = await withinExecution(() => gateway.complete(dispatch), context);
                 assertExecutionActive(context);
                 const text = bounded(response.text, 65536, 'Model response');
                 const parsed: unknown = JSON.parse(text);
@@ -119,26 +126,30 @@ export class OperationLoop {
                 bounded(JSON.stringify(args), 16384, 'Tool arguments');
                 const result = await this.invoke(name, args, binding, context);
                 assertExecutionActive(context);
-                if ('stop' in result) return stop(result.stop);
+                if ('stop' in result) return stop(result.stop, result.reason);
                 bounded(JSON.stringify(result.data), 32768, 'Tool result');
                 transcript.push({ request: call, result: result.data });
             }
-            return stop('Operation run stopped at the eight model completion limit. No automatic continuation or retry. Inspect /actions before requesting another turn.');
+            return stop('Operation run stopped at the eight model completion limit. No automatic continuation or retry. Inspect /actions before requesting another turn.', 'invalid_model_result');
         } catch (error) {
+            if (isFatalServiceStorageError(error)) throw error;
             const dispatched = Object.values(this.store.state(binding.workspaceId).actions)
                 .some(action => action.attemptId && !initialAttempts.has(action.attemptId));
             if (error instanceof OperationStoppedError || Date.now() >= context.deadline || context.signal?.aborted)
                 return stop(dispatched
                     ? 'Operation run stopped at its deadline after dispatch started. The action outcome may be unknown; inspect /actions and request readback. No automatic retry.'
-                    : 'Operation run stopped at its deadline before any new dispatch. No late result will resume this run. Inspect /actions before requesting another turn.');
+                    : 'Operation run stopped at its deadline before any new dispatch. No late result will resume this run. Inspect /actions before requesting another turn.',
+                    executionDeadlineReached(context, error) ? 'deadline' : 'cancelled');
             const reason = error instanceof LoopInputError ? error.message : 'Invalid protocol, unavailable provider, or operation rejected';
-            return stop(`Operation run stopped: ${reason}. Inspect /actions; check /login and /model if inference is unavailable. No automatic retry.`);
+            return stop(`Operation run stopped: ${reason}. Inspect /actions; check /login and /model if inference is unavailable. No automatic retry.`,
+                error instanceof LoopInputError ? 'invalid_model_result' : 'model_unavailable');
         } finally {
-            controller.abort();
+            controller?.abort();
         }
     }
 
-    private async invoke(name: unknown, args: unknown, binding: OperationLoopBinding, context: OperationExecutionContext): Promise<{ data: unknown } | { stop: string }> {
+    private async invoke(name: unknown, args: unknown, binding: OperationLoopBinding, context: OperationExecutionContext):
+        Promise<{ data: unknown } | { stop: string; reason: ServiceStopReason }> {
         assertExecutionActive(context);
         const state = this.store.state(binding.workspaceId);
         assertOwner(state, binding.ownerId);
@@ -157,7 +168,8 @@ export class OperationLoop {
                 workspaceId: binding.workspaceId, ownerId: binding.ownerId, workId: binding.workId,
                 key: `turn-${binding.ownerRecordId}-${createHash('sha256').update(JSON.stringify(input)).digest('hex').slice(0, 24)}`
             }, context);
-            return { stop: `Prepared action ${action.id} (${action.status}). Owner approval is required before execution. Run /actions to review the exact command, then /approve ${action.id} ${action.digest}. Request execution in a new owner turn. Preparation did not execute the action.` };
+            return { stop: `Prepared action ${action.id} (${action.status}). Owner approval is required before execution. Run /actions to review the exact command, then /approve ${action.id} ${action.digest}. Request execution in a new owner turn. Preparation did not execute the action.`,
+                reason: 'prepared_for_review' };
         }
         strictObject(args, ['actionId'], 'action arguments');
         const actionId = (args as { actionId: string }).actionId;
@@ -166,16 +178,18 @@ export class OperationLoop {
         if (!action || !isOperationCommand(action.command)) throw new LoopInputError('Operation action not found in this workspace');
         if (action.workId !== binding.workId) throw new LoopInputError('Action does not belong to focused work');
         const input = { workspaceId: binding.workspaceId, ownerId: binding.ownerId, actionId };
+        if (binding.capability === 'prepare_only' && (name === 'execute' || name === 'verify'))
+            throw new LoopInputError('Chat capability cannot execute or verify actions');
         switch (name) {
             case 'inspect': return { data: action };
             case 'execute': {
                 const result = await this.options.service.execute(input, context);
-                if (result.status !== 'accepted') return { stop: this.actionStop(result) };
+                if (result.status !== 'accepted') return { stop: this.actionStop(result), reason: result.status === 'failed' ? 'action_failed' : 'action_unknown' };
                 return { data: { action: result, next: 'Acceptance is not completion. Request verify readback; do not mark work complete.' } };
             }
             case 'verify': {
                 const result = await this.options.service.verify(input, context);
-                if (result.verification?.status !== 'satisfied') return { stop: this.actionStop(result) };
+                if (result.verification?.status !== 'satisfied') return { stop: this.actionStop(result), reason: 'readback_unresolved' };
                 return { data: { action: result, next: 'Readback satisfies the prepared expected result. Work remains open.' } };
             }
             default: throw new LoopInputError('Unknown tool');
