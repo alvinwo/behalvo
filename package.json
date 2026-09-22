@@ -9,8 +9,8 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-control-assets.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.extension.json --noEmit && tsc -p tsconfig.extension-content.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
     "demo": "npm run build && node dist/demo.js",
     "check": "npm run typecheck && npm test",

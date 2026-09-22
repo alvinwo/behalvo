@@ -3,6 +3,8 @@ import type { Connection, OperationCommand, VerificationState } from '../operati
 import type { ServiceJobKind, ServiceJobStatus, ServiceQueueCounts, ServiceReceipt,
   ServiceStopReason } from '../storage/service-jobs.js';
 import type { ServiceRuntimeSnapshot } from '../runtime/service-runtime.js';
+import type { PrivateConnectionDisconnectResult, PrivateConnectionSummary } from '../connections/private-connection.js';
+import type { UsVisaChinaReadiness } from '../adapters/us-visa-china/types.js';
 
 export interface ControlBinding {
   readonly workspaceId: string;
@@ -155,6 +157,8 @@ export interface ControlServiceStatus {
   unresolvedActionIds: string[];
   unresolvedActions: Array<{ actionId: string; status: Action['status'];
     kind: 'active_execution' | 'crash_preserved_execution' | 'unknown_outcome' | 'accepted_unverified' }>;
+  connections: PrivateConnectionSummary[];
+  monitoredAdapters: UsVisaChinaReadiness[];
   limits: { foreground: true; awakeOnly: true; supervised: false };
 }
 
@@ -172,4 +176,6 @@ export interface ServiceControlAdapter {
   reminder(principal: ControlPrincipal, input: unknown): { receipt: ServiceReceipt; duplicate: boolean };
   execute(principal: ControlPrincipal, actionId: string, input: unknown): ControlAdmission;
   readback(principal: ControlPrincipal, actionId: string, input: unknown): ControlAdmission;
+  disconnectConnection(principal: ControlPrincipal, connectionId: string, input: unknown):
+    Promise<PrivateConnectionDisconnectResult>;
 }

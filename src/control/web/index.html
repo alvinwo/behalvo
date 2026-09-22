@@ -59,6 +59,16 @@
             <button id="send-chat" type="button">Queue chat</button>
           </article>
           <article>
+            <h3>Private browser connections</h3>
+            <p class="boundary">Values are never displayed. Disconnect revokes authority and can delete selected stored items. Profile removal is always separate.</p>
+            <ul id="connections" aria-label="Private browser connections"></ul>
+          </article>
+          <article>
+            <h3>Monitored adapter readiness</h3>
+            <p class="boundary">Discovery metadata is sanitized. Disabled means no live portal access or booking authority is registered.</p>
+            <ul id="monitored-adapters" aria-label="Monitored adapter readiness"></ul>
+          </article>
+          <article>
             <h3>One-shot UTC reminder</h3>
             <label for="reminder-work">Work ID</label>
             <input id="reminder-work" autocomplete="off">

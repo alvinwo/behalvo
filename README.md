@@ -116,6 +116,9 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | Bounded structured operation loop and trusted `/actions` / `/approve` commands | Autonomous retries or startup recovery of running effects |
 | Versioned 20-case synthetic evaluation harness with private JSON reports | Genuine live-model evaluation and manual acceptance review |
 | Foreground loopback service with pairing, durable chat/reminders, review, approval, explicit synthetic execution/readback and status | Remote/mobile identity, OS-supervised 24/7 operation, real-provider control or deployment |
+| Fenced local-only browser sessions, one-host MV3 boundary, and synthetic scheduling portal | Live browser/visa adapter, production credentials, or real portal automation |
+| Callback-scoped synthetic secrets, fail-closed native Keychain-helper transport, interprocess private-profile custody, and durable retryable disconnect controls | Installed signed Keychain helper, arbitrary sync/backup-root detection, live credential collection, or live private connection validation |
+| Disabled-by-default China visa policy, owner-bound authenticated discovery fixtures, durable current-authority checks, exact compiled-page evidence, encrypted synthetic intent transport, and bounded strict booking/readback | Live visa registration, owner-laptop discovery, portal credentials, browser installation, polling, or real booking |
 
 ## Mental model
 

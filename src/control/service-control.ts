@@ -8,6 +8,9 @@ import { isFatalServiceStorageError, ServiceStorageError, type ServiceEnvelope, 
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import type { OwnerControlService } from './review-service.js';
 import type { OwnerControlSessions } from './session.js';
+import type { PrivateConnectionControl } from '../connections/private-connection.js';
+import type { UsVisaChinaReadiness } from '../adapters/us-visa-china/types.js';
+import { sanitizeUsVisaChinaReadiness, usVisaChinaDefaultReadiness } from '../adapters/us-visa-china/discovery.js';
 import {
   OwnerControlError,
   type ControlActionSummary,
@@ -47,6 +50,8 @@ export interface ServiceControlServiceOptions {
   model?: ModelRef;
   databaseMode: 'plaintext' | 'encrypted';
   clock?: () => number;
+  privateConnections?: PrivateConnectionControl;
+  visaAdapterReadiness?: UsVisaChinaReadiness;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -93,6 +98,8 @@ export class ServiceControlService implements ServiceControlAdapter {
   readonly #model: Readonly<ModelRef> | undefined;
   readonly #databaseMode: 'plaintext' | 'encrypted';
   readonly #clock: () => number;
+  readonly #privateConnections: PrivateConnectionControl | undefined;
+  readonly #visaAdapterReadiness: UsVisaChinaReadiness;
   readonly #confirmations = new Map<string, Confirmation>();
   #closed = false;
 
@@ -106,6 +113,9 @@ export class ServiceControlService implements ServiceControlAdapter {
     this.#model = options.model ? Object.freeze({ ...options.model }) : undefined;
     this.#databaseMode = options.databaseMode;
     this.#clock = options.clock ?? Date.now;
+    this.#privateConnections = options.privateConnections;
+    this.#visaAdapterReadiness = options.visaAdapterReadiness === undefined
+      ? usVisaChinaDefaultReadiness() : sanitizeUsVisaChinaReadiness(options.visaAdapterReadiness);
   }
 
   list(principal: ControlPrincipal, after?: string) {
@@ -188,8 +198,33 @@ export class ServiceControlService implements ServiceControlAdapter {
       databaseMode: this.#databaseMode,
       model: { configured: this.#model !== undefined, selection: this.#model ? { ...this.#model } : null },
       queue, runtime, unresolvedActionIds, unresolvedActions,
+      connections: this.#connectionSummaries(),
+      monitoredAdapters: [structuredClone(this.#visaAdapterReadiness)],
       limits: { foreground: true, awakeOnly: true, supervised: false }
     };
+  }
+
+  async disconnectConnection(principal: ControlPrincipal, connectionId: string, input: unknown) {
+    this.#state(principal);
+    id(connectionId, 'connectionId');
+    const body = exact(input, ['deletePurposes']);
+    if (!Array.isArray(body.deletePurposes) || body.deletePurposes.some(value => typeof value !== 'string'))
+      throw new OwnerControlError('invalid_request');
+    const purposes = [...new Set(body.deletePurposes.map(value => id(value, 'purpose')))];
+    const connection = this.#connectionSummaries().find(item => item.id === connectionId);
+    if (!connection) throw new OwnerControlError('not_found');
+    if (purposes.some(purpose => !connection.secretPurposes.includes(purpose)))
+      throw new OwnerControlError('invalid_request');
+    try {
+      const result = await this.#privateConnections!.disconnect({ connectionId, deletePurposes: purposes });
+      if (!result || result.connectionId !== connectionId || result.state !== 'disconnected' ||
+          result.profileRemovalOffered !== true || typeof result.profilePath !== 'string' ||
+          !Array.isArray(result.deletedPurposes) || result.deletedPurposes.some(value => typeof value !== 'string'))
+        throw new Error();
+      return { connectionId, state: 'disconnected' as const, profileRemovalOffered: true as const,
+        profilePath: result.profilePath, deletedPurposes: result.deletedPurposes.map(value => id(value, 'purpose')) };
+    }
+    catch { throw new OwnerControlError('unavailable'); }
   }
 
   jobs(principal: ControlPrincipal, after = 0) {
@@ -337,6 +372,24 @@ export class ServiceControlService implements ServiceControlAdapter {
     if (this.#closed) return;
     this.#closed = true;
     for (const key of [...this.#confirmations.keys()]) this.#deleteConfirmation(key);
+  }
+
+  #connectionSummaries() {
+    if (!this.#privateConnections) return [];
+    try {
+      const values = this.#privateConnections.list();
+      if (!Array.isArray(values)) throw new Error();
+      return values.map(value => {
+        if (!value || !Number.isSafeInteger(value.generation) || value.generation < 1 ||
+            (value.mode !== 'synthetic' && value.mode !== 'live') ||
+            !['connected', 'disconnecting', 'disconnect_failed', 'disconnected'].includes(value.state) ||
+            !Array.isArray(value.secretPurposes)) throw new Error();
+        return { id: id(value.id, 'connectionId'), service: id(value.service, 'service'),
+          generation: value.generation, profileId: id(value.profileId, 'profileId'), mode: value.mode,
+          state: value.state, secretPurposes: value.secretPurposes.map(purpose => id(purpose, 'purpose')).sort() };
+      });
+    }
+    catch { throw new OwnerControlError('unavailable'); }
   }
 
   #state(principal: ControlPrincipal): State {

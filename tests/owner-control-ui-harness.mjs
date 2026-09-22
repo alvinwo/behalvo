@@ -80,7 +80,7 @@ export function createOwnerControlUi(options = {}) {
     'review', 'pair', 'refresh', 'service-refresh', 'sign-out', 'approve', 'cancel',
     'service-dashboard', 'service-lifecycle', 'service-limits', 'service-barriers',
     'chat-thread', 'chat-work', 'chat-text', 'send-chat', 'jobs', 'job-result', 'refresh-jobs', 'reminders',
-    'reminder-work', 'reminder-due', 'create-reminder', 'execute', 'readback'
+    'reminder-work', 'reminder-due', 'create-reminder', 'execute', 'readback', 'connections', 'monitored-adapters'
   ];
   const elements = new Map(ids.map(id => [id, new TestElement('div', id)]));
   elements.get('pairing').hidden = false;

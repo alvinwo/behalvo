@@ -55,6 +55,7 @@ type Route =
   | { readonly kind: 'bootstrap' | 'logout' | 'list' }
   | { readonly kind: 'service-status' | 'jobs' | 'chat' | 'reminders' }
   | { readonly kind: 'job'; readonly jobId: string }
+  | { readonly kind: 'disconnect-connection'; readonly connectionId: string }
   | { readonly kind: 'review' | 'approve' | 'cancel' | 'execute' | 'readback'; readonly actionId: string };
 
 class TransportError extends Error {
@@ -177,6 +178,8 @@ function selectRoute(url: URL, serviceEnabled: boolean): Route {
     if (url.pathname === '/api/reminders') return { kind: 'reminders' };
     const job = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
     if (job) return { kind: 'job', jobId: decodedIdentifier(job[1]!) };
+    const connection = /^\/api\/connections\/([^/]+)\/disconnect$/.exec(url.pathname);
+    if (connection) return { kind: 'disconnect-connection', connectionId: decodedIdentifier(connection[1]!) };
   }
   const actions = serviceEnabled ? 'review|approve|cancel|execute|readback' : 'review|approve|cancel';
   const match = new RegExp(`^/api/actions/([^/]+)/(${actions})$`).exec(url.pathname);
@@ -338,6 +341,12 @@ export async function startOwnerControlServer(options: {
         return;
       }
       const adapter = options.app.serviceControl;
+      if (route.kind === 'disconnect-connection') {
+        if (!adapter) throw new OwnerControlError('not_found');
+        exactKeys(body, ['deletePurposes']);
+        sendJson(res, 200, await adapter.disconnectConnection(principal, route.connectionId, body));
+        return;
+      }
       if (route.kind === 'chat' || route.kind === 'reminders' || route.kind === 'execute' || route.kind === 'readback') {
         if (!adapter) throw new OwnerControlError('not_found');
         let result: unknown;

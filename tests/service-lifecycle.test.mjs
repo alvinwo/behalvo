@@ -81,6 +81,16 @@ test('shutdown revokes HTTP authority before waiting for active inference to set
   assert.equal(await stopping, true);
 });
 
+test('service shutdown invalidates configured browser sessions before releasing owned resources', async t => {
+  let browserShutdowns = 0;
+  const setup = options(t, { browserSessions: [{ async shutdown() { browserShutdowns++; } }] });
+  const service = await startLocalService(setup.value);
+  assert.equal(browserShutdowns, 0);
+  assert.equal(await service.shutdown(), true);
+  assert.equal(browserShutdowns, 1);
+  assert.equal(existsSync(`${setup.value.dbPath}.behalvo-lock`), false);
+});
+
 test('missing model configuration blocks chat only and keeps authenticated status and review available', async t => {
   const setup = options(t, { model: undefined });
   const service = await startLocalService(setup.value);

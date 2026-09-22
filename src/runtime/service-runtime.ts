@@ -1,4 +1,6 @@
 import type { ModelRef } from '../model/types.js';
+import type { BrowserSessionLifecycle } from '../browser/types.js';
+import type { MonitoringService } from '../monitoring/service.js';
 import { executionDeadlineReached, OperationDeadlineError, OperationStoppedError,
   type OperationExecutionContext, type TrustedExecutionFence } from '../operations/execution-context.js';
 import type { OperationService } from '../operations/service.js';
@@ -25,6 +27,8 @@ export interface ServiceRuntimeOptions {
   clock?: () => string;
   timeoutMs?: number;
   schedulerIntervalMs?: number;
+  monitoring?: MonitoringService;
+  browserSessions?: readonly BrowserSessionLifecycle[];
 }
 
 export interface AdmitOwnerTurnInput {
@@ -145,8 +149,9 @@ export class ServiceRuntime {
     if (this.#timer) clearInterval(this.#timer);
     this.#timer = undefined;
     this.#activeController?.abort();
+    const browserShutdown = Promise.allSettled((this.options.browserSessions ?? []).map(session => session.shutdown()));
     const active = [this.#ticking, this.#draining].filter((promise): promise is Promise<void> => promise !== undefined);
-    if (active.length === 0) return true;
+    active.push(browserShutdown.then(() => undefined));
     let settled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -213,6 +218,10 @@ export class ServiceRuntime {
         case 'readback':
           await this.#runActionJob(job, fence);
           break;
+        case 'monitor':
+          if (!this.options.monitoring) throw new Error('Monitor runtime is unavailable');
+          await this.options.monitoring.runJob(job, fence);
+          break;
       }
     } catch (error) {
       if (this.#fatalError !== undefined) throw this.#fatalError;
@@ -242,18 +251,23 @@ export class ServiceRuntime {
     const before = this.store.state(this.options.workspaceId);
     const action = before.actions[parameters.actionId];
     if (!action || action.digest !== parameters.digest) throw new Error('Action request is no longer current');
-    if (job.kind === 'execute' && action.status !== 'approved') throw new Error('Action is not eligible for execution');
+    const monitored = action.monitoredGrant !== undefined;
+    if (job.kind === 'execute' && action.status !== (monitored ? 'running' : 'approved'))
+      throw new Error('Action is not eligible for execution');
     if (job.kind === 'readback' && !['accepted', 'unknown'].includes(action.status))
       throw new Error('Action is not eligible for readback');
     const context: OperationExecutionContext = { signal: fence.signal, deadline: fence.deadline,
       assertCurrent: () => fence.assertCurrent(), serviceClaim: job.claim! };
-    const result = job.kind === 'execute'
-      ? await this.operations.execute({ workspaceId: this.options.workspaceId, ownerId: this.options.ownerId,
-          actionId: action.id }, context)
-      : await this.operations.verify({ workspaceId: this.options.workspaceId, ownerId: this.options.ownerId,
-          actionId: action.id }, context);
+    if (monitored && !this.options.monitoring) throw new Error('Monitored action runtime is unavailable');
+    const result = monitored
+      ? await this.options.monitoring!.runReservedActionJob(job, fence)
+      : job.kind === 'execute'
+        ? await this.operations.execute({ workspaceId: this.options.workspaceId, ownerId: this.options.ownerId,
+            actionId: action.id }, context)
+        : await this.operations.verify({ workspaceId: this.options.workspaceId, ownerId: this.options.ownerId,
+            actionId: action.id }, context);
     let final = result;
-    if (job.kind === 'execute' && result.status === 'accepted') {
+    if (!monitored && job.kind === 'execute' && result.status === 'accepted') {
       try {
         final = await this.operations.verify({ workspaceId: this.options.workspaceId, ownerId: this.options.ownerId,
           actionId: action.id }, context);
@@ -301,7 +315,9 @@ export class ServiceRuntime {
 
   async #stopJob(job: ServiceJob, reason: ServiceJobResult['reason']): Promise<void> {
     try {
-      if (job.kind === 'owner_turn' && job.parameters.kind === 'owner_turn') {
+      if (job.kind === 'monitor' && job.parameters.kind === 'monitor') {
+        this.store.interruptMonitorJob(this.options.workspaceId, job.claim!, this.#clock());
+      } else if (job.kind === 'owner_turn' && job.parameters.kind === 'owner_turn') {
         this.store.completeOwnerTurnJob(this.options.workspaceId, job.claim!, {
           ownerRecordId: job.parameters.ownerRecordId, expectedVersion: this.store.state(this.options.workspaceId).version,
           events: [], reply: { text: 'Service job stopped safely. No automatic retry was started.',
@@ -332,6 +348,8 @@ export class ServiceRuntime {
         const result = this.store.admitDueTimerJob(this.options.workspaceId, timer.id, this.options.instanceId, at);
         if (result.kind === 'full') break;
       }
+      if (this.options.monitoring && this.#accepting && !this.#faulted)
+        this.options.monitoring.admitDueMonitors({ instanceId: this.options.instanceId, at, limit: 100 });
       this.#refreshNextDue();
       if (this.#accepting && !this.#faulted) void this.drain().catch(() => {});
     } catch (error) {
@@ -344,6 +362,10 @@ export class ServiceRuntime {
     try {
       const due = Object.values(this.store.state(this.options.workspaceId).timers)
         .filter(timer => timer.status === 'scheduled').map(timer => timer.dueAt).sort();
+      if (this.options.monitoring) due.push(...Object.values(this.store.state(this.options.workspaceId).monitors)
+        .filter(monitor => monitor.status === 'active' && monitor.nextDueAt !== null)
+        .map(monitor => monitor.nextDueAt!).sort());
+      due.sort();
       this.#nextDueAt = due[0] ?? null;
     } catch (error) {
       if (isFatalServiceStorageError(error)) this.#fault(error);

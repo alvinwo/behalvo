@@ -1,12 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { emptyState, reduce } from '../kernel/reducer.js';
+import { validateMonitoredReservationJournal, validateMonitoredReservationState } from '../monitoring/invariants.js';
 import type { DomainEvent, JournalRecord, MessageInput, OutcomeStatus, RecordMetadata, State, Summary } from '../kernel/types.js';
 import { identifier, instant, nonempty } from '../kernel/types.js';
 import type { PayloadCipher } from './payload-cipher.js';
 import { backupEncryptedStore } from './backup.js';
 import { preparePrivateDatabasePath } from './private-files.js';
-import { initializeStorage, validateStorage } from './sqlite-schema.js';
+import { initializeStorage, monitorInstallationState, monitorStorageIdentity, setMonitorInstallationActive, validateStorage } from './sqlite-schema.js';
+import type { MonitorInstallationState } from './sqlite-schema.js';
 import { verifyServiceEnvelope, verifyServiceModel, verifyServiceResult } from './sqlite-validation.js';
 import { artifactContext, canonicalServiceEnvelope, decodeProjection, decodeRecord, decodeServiceEnvelope, decodeServiceJob, decodeServiceReceipt, decodeSummary, journalContext, messageTokens, open, projectionContext, seal, serviceJobContext, serviceRequestContext, serviceRequestTokens, summaryContext, summaryThread, timerTokens } from './sqlite-codec.js';
 import type { Row } from './sqlite-codec.js';
@@ -16,7 +18,8 @@ const SCHEMA = 1;
 const SERVICE_QUEUE_LIMIT = 64;
 const SERVICE_STOP_REASONS = new Set([
     'completed', 'prepared_for_review', 'model_unavailable', 'invalid_model_result', 'deadline', 'cancelled',
-    'action_ineligible', 'action_failed', 'action_unknown', 'readback_unresolved', 'process_interrupted'
+    'action_ineligible', 'action_failed', 'action_unknown', 'readback_unresolved', 'process_interrupted',
+    'monitor_observed', 'monitor_paused', 'monitor_terminal'
 ]);
 
 function serviceFailure(code: ServiceStorageError['code'], message: string): never {
@@ -56,6 +59,8 @@ export class SqliteStore {
     #encryptionKey: Uint8Array | undefined;
     #readOnly: boolean;
     #serviceQueue = false;
+    #monitorQueue = false;
+    readonly #monitorStorageIdentity: string;
     constructor(path: string, options: { encryptionKey?: Uint8Array; readOnly?: boolean;
         serviceQueue?: { upgradeExisting: boolean }; beforeWrite?: () => void } = {}) {
         if (!options || typeof options !== 'object' || Array.isArray(options) ||
@@ -71,14 +76,21 @@ export class SqliteStore {
         this.#encryptionKey = options.encryptionKey === undefined ? undefined : Uint8Array.from(options.encryptionKey);
         if (options.encryptionKey !== undefined && path !== ':memory:') preparePrivateDatabasePath(path, this.#readOnly);
         this.#db = new DatabaseSync(path, { readOnly: this.#readOnly });
+        this.#monitorStorageIdentity = monitorStorageIdentity(path);
         try {
             this.#cipher = this.#readOnly ? validateStorage(this.#db, options.encryptionKey)
                 : initializeStorage(this.#db, options.encryptionKey, {
                     ...(options.serviceQueue ? { serviceQueue: options.serviceQueue } : {}),
-                    ...(options.beforeWrite ? { beforeWrite: options.beforeWrite } : {})
+                    ...(options.beforeWrite ? { beforeWrite: options.beforeWrite } : {}),
+                    monitorStorageIdentity: this.#monitorStorageIdentity
                 });
             const version = Number(this.#db.prepare('PRAGMA user_version').get()!.user_version);
             this.#serviceQueue = version === 3 || version === 4;
+            const serviceJobsSql = this.#serviceQueue
+                ? this.#db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='service_jobs'").get()
+                : undefined;
+            this.#monitorQueue = this.#serviceQueue && typeof serviceJobsSql?.sql === 'string' &&
+                serviceJobsSql.sql.includes("'monitor'") && monitorInstallationState(this.#db, this.#cipher) !== undefined;
             if (options.serviceQueue && !this.#serviceQueue)
                 throw new Error('Storage upgrade is required before enabling the service queue.');
             // Authenticate format and key before any connection pragmas that can change disk state.
@@ -152,12 +164,15 @@ export class SqliteStore {
     #requireServiceQueue(): void {
         if (!this.#serviceQueue) serviceFailure('invalid', 'Service queue is not enabled.');
     }
+    monitorJobsEnabled(): boolean { return this.#monitorQueue; }
     #load(workspaceId: string): State | undefined {
         const row = this.#db.prepare('SELECT * FROM projections WHERE workspace_id=?').get(workspaceId);
         if (!row)
             return undefined;
         const state = decodeProjection(row, this.#cipher);
         state.connections ??= {};
+        state.monitoredActionGrants ??= {};
+        state.monitors ??= {};
         for (const fact of Object.values(state.facts)) {
             const legacy = fact as typeof fact & { observedAt?: string };
             if (legacy.observedAt === undefined) {
@@ -175,6 +190,33 @@ export class SqliteStore {
             throw new Error('Workspace not found');
         return s;
     }
+    monitorInstallation(): MonitorInstallationState | undefined {
+        const marker = monitorInstallationState(this.#db, this.#cipher);
+        return marker ? { ...marker, active: marker.active && marker.storageIdentity === this.#monitorStorageIdentity } : undefined;
+    }
+
+    reconcileMonitoredInstallation(workspaceId: string, expectedVersion: number,
+        input: Omit<Extract<DomainEvent, { type: 'monitored_action.installation_reconciled' }>['data'],
+            'installationGeneration'>,
+        metadata: RecordMetadata = {}): JournalRecord[] {
+        return this.#transaction(() => {
+            const marker = monitorInstallationState(this.#db, this.#cipher);
+            const grant = this.state(workspaceId).monitoredActionGrants[input.id];
+            const currentIdentity = marker?.storageIdentity === this.#monitorStorageIdentity;
+            const currentAuthority = marker?.active && currentIdentity;
+            const grantNeedsBinding = grant?.status === 'active' && grant.installationGeneration !== marker?.generation;
+            if (!marker || (currentAuthority && !grantNeedsBinding))
+                throw new Error('Monitored installation does not require reconciliation');
+            const activated = currentIdentity
+                ? setMonitorInstallationActive(this.#db, this.#cipher, true)
+                : setMonitorInstallationActive(this.#db, this.#cipher, true, true, this.#monitorStorageIdentity);
+            const event: Extract<DomainEvent, { type: 'monitored_action.installation_reconciled' }> = {
+                type: 'monitored_action.installation_reconciled',
+                data: { ...input, installationGeneration: activated.generation }
+            };
+            return this.#append(workspaceId, expectedVersion, [event], metadata);
+        });
+    }
     #save(s: State): void {
         this.#db.prepare(`INSERT INTO projections VALUES (?,?,?,?) ON CONFLICT(workspace_id)
       DO UPDATE SET version=excluded.version,projection_version=excluded.projection_version,state_json=excluded.state_json`)
@@ -187,6 +229,7 @@ export class SqliteStore {
         s ??= emptyState(workspaceId);
         if (!Number.isSafeInteger(expectedVersion) || s.version !== expectedVersion)
             throw new Error('Stream version conflict');
+        validateMonitoredReservationJournal(events, s);
         if (metadata.causationId)
             this.record(workspaceId, metadata.causationId);
         const records: JournalRecord[] = [];
@@ -258,12 +301,16 @@ export class SqliteStore {
             if (!rows.length)
                 throw new Error('Workspace not found');
             let s = emptyState(workspaceId);
+            const events: DomainEvent[] = [];
             for (const row of rows) {
                 const record = this.#decode(row);
+                events.push(record.event);
                 const sourceObservedAt = record.event.type === 'fact.recorded'
                     ? this.record(workspaceId, record.event.data.fact.sourceRecordId).recordedAt : undefined;
                 s = reduce(s, record.event, record.seq, sourceObservedAt);
             }
+            validateMonitoredReservationJournal(events, s);
+            validateMonitoredReservationState(s);
             this.#save(s);
             return s;
         });
@@ -674,6 +721,47 @@ export class SqliteStore {
         });
     }
 
+    admitDueMonitorJob(workspaceId: string, monitorId: string, instanceId: string, at: string):
+        { kind: 'queued'; job: ServiceJob } | { kind: 'budget' | 'full' | 'unchanged' } {
+        this.#requireServiceQueue();
+        if (!this.#monitorQueue) serviceFailure('invalid', 'Storage upgrade is required before enabling monitor jobs.');
+        try { identifier(workspaceId, 'workspaceId'); identifier(monitorId, 'monitorId'); identifier(instanceId, 'instanceId'); instant(at); }
+        catch { serviceFailure('invalid', 'Invalid due monitor request.'); }
+        return this.#serviceTransaction(() => {
+            const state = this.state(workspaceId);
+            const monitor = state.monitors[monitorId];
+            if (!monitor || monitor.status !== 'active' || monitor.inFlightJobId !== null || monitor.nextDueAt === null ||
+                Date.parse(monitor.nextDueAt) > Date.parse(at)) return { kind: 'unchanged' };
+            const windowEnd = Date.parse(monitor.requestWindowStartedAt) + monitor.requestWindowMs;
+            const reset = Date.parse(at) >= windowEnd;
+            const requestWindowStartedAt = reset ? at : monitor.requestWindowStartedAt;
+            const requestsInWindow = reset ? 0 : monitor.requestsInWindow;
+            if (requestsInWindow >= monitor.requestBudget) {
+                const nextDueAt = new Date(windowEnd).toISOString();
+                this.#append(workspaceId, state.version, [{ type: 'monitor.budget_deferred', data: {
+                    id: monitor.id, nextDueAt, deferredAt: at
+                } }], { recordedAt: at });
+                return { kind: 'budget' };
+            }
+            if (this.#waitingServiceJobs(workspaceId) >= SERVICE_QUEUE_LIMIT) return { kind: 'full' };
+            const receiptId = randomUUID(), jobId = randomUUID();
+            const identity = { workspaceId, source: 'kernel:monitor', requestId: jobId };
+            const envelope: Extract<ServiceEnvelope, { kind: 'monitor' }> = {
+                kind: 'monitor', monitorId, grantId: monitor.grantId, dueAt: monitor.nextDueAt
+            };
+            const pollRecord = this.#append(workspaceId, state.version, [{ type: 'monitor.poll_started', data: {
+                id: monitor.id, jobId, dueAt: monitor.nextDueAt, startedAt: at, requestWindowStartedAt,
+                requestsInWindow: requestsInWindow + 1
+            } }], { recordedAt: at })[0]!;
+            const receipt: ServiceReceipt = { ...identity, id: receiptId, kind: 'monitor', admittedAt: at, jobId };
+            this.#insertServiceRequest(identity, envelope, receipt);
+            const job = this.#insertServiceJob({ id: jobId, workspaceId, receiptId, kind: 'monitor', status: 'queued',
+                admittedAt: at, admittedBy: instanceId, parameters: { kind: 'monitor', monitorId,
+                    grantId: monitor.grantId, dueAt: envelope.dueAt, pollRecordId: pollRecord.id } });
+            return { kind: 'queued', job };
+        });
+    }
+
     serviceJob(workspaceId: string, jobId: string): ServiceJob {
         this.#requireServiceQueue();
         try { identifier(workspaceId, 'workspaceId'); identifier(jobId, 'jobId'); } catch { serviceFailure('invalid', 'Invalid service job identity.'); }
@@ -860,6 +948,84 @@ export class SqliteStore {
         }, beforeCommit);
     }
 
+    completeMonitorJob(workspaceId: string, claim: ServiceJobClaim,
+        event: Extract<DomainEvent, { type: 'monitor.observation_recorded' }>, at: string): ServiceJob {
+        this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); instant(at); } catch { serviceFailure('invalid', 'Invalid monitor completion.'); }
+        return this.#serviceTransaction(() => {
+            const found = this.#claimedServiceJob(workspaceId, claim);
+            if (found.job.kind !== 'monitor' || found.job.parameters.kind !== 'monitor' ||
+                event.data.id !== found.job.parameters.monitorId || event.data.jobId !== found.job.id)
+                serviceFailure('invalid', 'Monitor completion binding mismatch.');
+            const state = this.state(workspaceId);
+            const record = this.#append(workspaceId, state.version, [event], { recordedAt: at })[0]!;
+            const status = event.data.status === 'paused' ? 'stopped' : 'finished';
+            const result: ServiceJobResult = { reason: status === 'stopped' ? 'monitor_paused' : 'monitor_observed',
+                recordIds: [found.job.parameters.pollRecordId, record.id] };
+            this.#validateServiceResult(found.job, result, status);
+            return this.#updateServiceJob(found.row, { ...found.job, status, finishedAt: at, result });
+        });
+    }
+
+    interruptMonitorJob(workspaceId: string, claim: ServiceJobClaim, at: string): ServiceJob {
+        this.#requireServiceQueue();
+        try { identifier(workspaceId, 'workspaceId'); instant(at); } catch { serviceFailure('invalid', 'Invalid monitor interruption.'); }
+        return this.#serviceTransaction(() => {
+            const found = this.#claimedServiceJob(workspaceId, claim);
+            if (found.job.kind !== 'monitor' || found.job.parameters.kind !== 'monitor')
+                serviceFailure('invalid', 'Monitor interruption binding mismatch.');
+            const state = this.state(workspaceId);
+            const monitor = state.monitors[found.job.parameters.monitorId];
+            if (!monitor || monitor.inFlightJobId !== found.job.id)
+                serviceFailure('integrity', 'Interrupted monitor job binding is invalid.');
+            const delay = Math.min(monitor.backoffMaxMs,
+                monitor.backoffMs === 0 ? monitor.backoffBaseMs : monitor.backoffMs * 2);
+            const record = this.#append(workspaceId, state.version, [{ type: 'monitor.interrupted', data: {
+                id: monitor.id, jobId: found.job.id, nextDueAt: new Date(Date.parse(at) + delay).toISOString(), interruptedAt: at
+            } }], { recordedAt: at })[0]!;
+            const result: ServiceJobResult = { reason: 'process_interrupted',
+                recordIds: [found.job.parameters.pollRecordId, record.id] };
+            this.#validateServiceResult(found.job, result, 'interrupted');
+            return this.#updateServiceJob(found.row, { ...found.job, status: 'interrupted', finishedAt: at, result });
+        });
+    }
+
+    terminalizeMonitoredGrant(workspaceId: string, expectedVersion: number,
+        event: Extract<DomainEvent, { type: 'monitored_action.grant_revoked' | 'monitored_action.grant_expired' }>,
+        metadata: RecordMetadata = {}): JournalRecord[] {
+        return this.#serviceTransaction(() => {
+            const state = this.state(workspaceId);
+            const active = Object.values(state.monitors)
+                .filter(monitor => monitor.grantId === event.data.id && monitor.inFlightJobId !== null);
+            const jobs = active.map(monitor => {
+                const found = this.#serviceJobRow(workspaceId, monitor.inFlightJobId!);
+                if (!found || found.job.kind !== 'monitor' || found.job.parameters.kind !== 'monitor' ||
+                    found.job.parameters.monitorId !== monitor.id || !['queued', 'running'].includes(found.job.status))
+                    serviceFailure('integrity', 'Grant monitor job binding is invalid.');
+                return { monitor, found };
+            });
+            const at = metadata.recordedAt ?? new Date().toISOString();
+            instant(at);
+            const records = this.#append(workspaceId, expectedVersion, [event, ...active.map(monitor => ({
+                type: 'monitor.stopped' as const,
+                data: { id: monitor.id, reason: 'grant_terminal' as const, stoppedAt: at }
+            }))], { ...metadata, recordedAt: at });
+            for (let index = 0; index < jobs.length; index++) {
+                const { found } = jobs[index]!;
+                const terminalRecord = records[index + 1]!;
+                const claimed = found.job.status === 'queued'
+                    ? { ...found.job, status: 'running' as const, startedAt: at,
+                        claim: { jobId: found.job.id, claimId: randomUUID(), instanceId: 'monitor-terminal' } }
+                    : found.job;
+                const result: ServiceJobResult = { reason: 'monitor_terminal',
+                    recordIds: [claimed.parameters.kind === 'monitor' ? claimed.parameters.pollRecordId : '', terminalRecord.id] };
+                this.#validateServiceResult(claimed, result, 'stopped');
+                this.#updateServiceJob(found.row, { ...claimed, status: 'stopped', finishedAt: at, result });
+            }
+            return records;
+        });
+    }
+
     completeOwnerTurnJob(workspaceId: string, claim: ServiceJobClaim, input: CompleteOwnerTurnInput,
         beforeCommit?: () => void): CompleteOwnerTurnResult {
         this.#requireServiceQueue();
@@ -923,6 +1089,56 @@ export class SqliteStore {
         });
     }
 
+    /** Bind a claimed execution job to an already-started monitored attempt and journal its encrypted intent. */
+    recordMonitoredActionIntent(workspaceId: string, claim: ServiceJobClaim, input: {
+        actionId: string; grantId: string; attemptId: string; intentId: string; evidence: string; at: string
+    }): JournalRecord {
+        this.#requireServiceQueue();
+        identifier(input.actionId, 'actionId'); identifier(input.grantId, 'grantId');
+        identifier(input.attemptId, 'attemptId'); identifier(input.intentId, 'intentId'); instant(input.at);
+        nonempty(input.evidence, 'intent evidence');
+        return this.#transaction(() => {
+            const found = this.#claimedServiceJob(workspaceId, claim);
+            const state = this.state(workspaceId); const action = state.actions[input.actionId];
+            const grant = state.monitoredActionGrants[input.grantId];
+            if (found.job.kind !== 'execute' || found.job.parameters.kind !== 'execute' ||
+                found.job.parameters.actionId !== input.actionId || found.job.parameters.digest !== action?.digest ||
+                found.job.attemptId || action?.status !== 'running' || action.attemptId !== input.attemptId ||
+                action.monitoredGrant?.id !== input.grantId || grant?.reservedActionId !== input.actionId ||
+                grant.reservationAttemptId !== input.attemptId)
+                serviceFailure('conflict', 'Monitored intent does not match the claimed service job.');
+            const evidenceRef = this.#artifact(workspaceId, input.evidence);
+            const record = this.#append(workspaceId, state.version, [{ type: 'monitored_action.intent_recorded', data: {
+                id: input.actionId, grantId: input.grantId, attemptId: input.attemptId,
+                intentId: input.intentId, evidenceRef
+            } }], { recordedAt: input.at })[0]!;
+            this.#updateServiceJob(found.row, { ...found.job, attemptId: input.attemptId });
+            return record;
+        });
+    }
+
+    recordMonitoredActionConfirmation(workspaceId: string, claim: ServiceJobClaim, input: {
+        actionId: string; grantId: string; attemptId: string; referenceDigest: string; evidence: string; at: string
+    }): JournalRecord {
+        this.#requireServiceQueue(); identifier(input.actionId, 'actionId'); identifier(input.grantId, 'grantId');
+        identifier(input.attemptId, 'attemptId'); instant(input.at); nonempty(input.evidence, 'confirmation evidence');
+        if (!/^[a-f0-9]{64}$/.test(input.referenceDigest)) serviceFailure('invalid', 'Invalid confirmation reference.');
+        return this.#transaction(() => {
+            const found = this.#claimedServiceJob(workspaceId, claim);
+            const state = this.state(workspaceId); const action = state.actions[input.actionId];
+            if (found.job.kind !== 'execute' || found.job.parameters.kind !== 'execute' ||
+                found.job.parameters.actionId !== input.actionId || found.job.attemptId !== input.attemptId ||
+                action?.status !== 'running' || action.attemptId !== input.attemptId || !action.monitoredIntent ||
+                action.monitoredConfirmation || action.monitoredGrant?.id !== input.grantId)
+                serviceFailure('conflict', 'Monitored confirmation does not match the claimed service job.');
+            const evidenceRef = this.#artifact(workspaceId, input.evidence);
+            return this.#append(workspaceId, state.version, [{ type: 'monitored_action.confirmation_recorded', data: {
+                id: input.actionId, grantId: input.grantId, attemptId: input.attemptId,
+                referenceDigest: input.referenceDigest, evidenceRef
+            } }], { recordedAt: input.at })[0]!;
+        });
+    }
+
     /** Atomically persist trusted readback evidence and bind its exact record to the active service claim. */
     recordActionVerification(workspaceId: string, expectedVersion: number, actionId: string,
         events: DomainEvent[], metadata: RecordMetadata = {}, beforeAppend?: () => void,
@@ -971,7 +1187,7 @@ export class SqliteStore {
             const rows = this.#db.prepare("SELECT * FROM service_jobs WHERE workspace_id=? AND status='running' ORDER BY position")
                 .all(workspaceId) as Row[];
             for (const row of rows) {
-                const job = this.#serviceJobRow(workspaceId, String(row.id))!.job;
+                let job = this.#serviceJobRow(workspaceId, String(row.id))!.job;
                 let result: ServiceJobResult | undefined;
                 let status: 'finished' | 'stopped' | 'interrupted' = 'interrupted';
                 const verification = job.verificationRecordId === undefined ? undefined
@@ -982,10 +1198,29 @@ export class SqliteStore {
                     verification.event.data.id !== job.parameters.actionId ||
                     verification.event.data.verification.status === 'owner_attested'))
                     serviceFailure('integrity', 'Claimed action verification is invalid.');
-                if (job.kind === 'execute' && job.parameters.kind === 'execute' && job.attemptId) {
+                if (job.kind === 'execute' && job.parameters.kind === 'execute') {
                     const parameters = job.parameters;
-                    const outcome = records.find(record => record.event.type === 'action.finished' &&
+                    const action = this.state(workspaceId).actions[parameters.actionId];
+                    if (!job.attemptId && action?.monitoredGrant && action.status === 'running' && action.attemptId &&
+                        action.digest === parameters.digest) job = { ...job, attemptId: action.attemptId };
+                    let outcome = job.attemptId === undefined ? undefined : records.find(record => record.event.type === 'action.finished' &&
                         record.event.data.id === parameters.actionId && record.event.data.attemptId === job.attemptId);
+                    if (!outcome && job.attemptId && action?.monitoredGrant && action.status === 'running' &&
+                        action.attemptId === job.attemptId) {
+                        const grant = this.state(workspaceId).monitoredActionGrants[action.monitoredGrant.id];
+                        if (!grant || grant.status !== 'blocked' || grant.reservedActionId !== action.id ||
+                            grant.reservationAttemptId !== job.attemptId)
+                            serviceFailure('integrity', 'Interrupted monitored action binding is invalid.');
+                        const evidenceRef = this.#artifact(workspaceId,
+                            'Interrupted monitored visa execution is unknown. Verification-only recovery is required; no automatic retry.');
+                        const appended = this.#append(workspaceId, this.state(workspaceId).version, [
+                            { type: 'action.finished', data: { id: action.id, attemptId: job.attemptId,
+                                status: 'unknown', evidenceRef } },
+                            { type: 'monitored_action.grant_settled', data: { id: grant.id, actionId: action.id,
+                                outcome: 'unknown', settledAt: at } }
+                        ], { recordedAt: at });
+                        outcome = appended[0];
+                    }
                     if (outcome?.event.type === 'action.finished') {
                         const satisfied = verification?.event.type === 'action.verification_recorded' &&
                             verification.event.data.verification.status === 'satisfied';
@@ -994,7 +1229,7 @@ export class SqliteStore {
                             ? satisfied ? 'completed' : 'readback_unresolved'
                             : outcome.event.data.status === 'failed' ? 'action_failed' : 'action_unknown',
                             recordIds: [outcome.id, ...(verification ? [verification.id] : [])],
-                            actionId: parameters.actionId, attemptId: job.attemptId, actionRecordId: outcome.id,
+                            actionId: parameters.actionId, attemptId: outcome.event.data.attemptId, actionRecordId: outcome.id,
                             ...(verification ? { verificationRecordId: verification.id } : {}) };
                     }
                 } else if (job.kind === 'readback' && job.parameters.kind === 'readback' && verification?.event.type === 'action.verification_recorded') {
@@ -1024,6 +1259,18 @@ export class SqliteStore {
                         status = 'finished';
                         result = { reason: 'completed', recordIds: [parameters.timerRecordId, handled.id], timerId: parameters.timerId };
                     }
+                } else if (job.kind === 'monitor' && job.parameters.kind === 'monitor') {
+                    const monitor = this.state(workspaceId).monitors[job.parameters.monitorId];
+                    if (!monitor || monitor.inFlightJobId !== job.id)
+                        serviceFailure('integrity', 'Interrupted monitor job binding is invalid.');
+                    const delay = Math.min(monitor.backoffMaxMs,
+                        monitor.backoffMs === 0 ? monitor.backoffBaseMs : monitor.backoffMs * 2);
+                    const interruptedRecord = this.#append(workspaceId, this.state(workspaceId).version,
+                        [{ type: 'monitor.interrupted', data: { id: monitor.id, jobId: job.id,
+                            nextDueAt: new Date(Date.parse(at) + delay).toISOString(), interruptedAt: at } }],
+                        { recordedAt: at })[0]!;
+                    result = { reason: 'process_interrupted',
+                        recordIds: [job.parameters.pollRecordId, interruptedRecord.id] };
                 }
                 if (result) repaired++;
                 else {

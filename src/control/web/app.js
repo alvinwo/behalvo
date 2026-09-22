@@ -37,6 +37,8 @@
   const reminderWork = byId('reminder-work');
   const reminderDue = byId('reminder-due');
   const createReminderButton = byId('create-reminder');
+  const connectionsNode = byId('connections');
+  const monitoredAdaptersNode = byId('monitored-adapters');
 
   let sessionToken = null;
   let selectedActionId = null;
@@ -166,6 +168,8 @@
     jobsNode.textContent = '';
     remindersNode.textContent = '';
     jobResultNode.textContent = '';
+    connectionsNode.textContent = '';
+    monitoredAdaptersNode.textContent = '';
     updateControls();
   }
 
@@ -264,7 +268,78 @@
       isRecord(value.model) && typeof value.model.configured === 'boolean' &&
       isRecord(value.queue) && isRecord(value.runtime) && Array.isArray(value.unresolvedActionIds) &&
       Array.isArray(value.unresolvedActions) &&
+      Array.isArray(value.connections) && value.connections.every(validConnection) &&
+      Array.isArray(value.monitoredAdapters) && value.monitoredAdapters.every(validMonitoredAdapter) &&
       isRecord(value.limits);
+  }
+
+  function validMonitoredAdapter(value) {
+    return isRecord(value) && value.adapterId === 'us-visa-china' && value.adapterVersion === 1 &&
+      value.liveRegistration === 'disabled' && ['not_started', 'ready_for_owner_review'].includes(value.discovery) &&
+      Array.isArray(value.blockers) && value.blockers.every(item => typeof item === 'string') &&
+      (value.report === null || isRecord(value.report));
+  }
+
+  function renderMonitoredAdapters(adapters) {
+    monitoredAdaptersNode.textContent = '';
+    for (const adapter of adapters) {
+      const item = document.createElement('li');
+      const blockers = adapter.blockers.length > 0 ? adapter.blockers.join(', ') : 'separate local activation required';
+      item.textContent = `${adapter.adapterId}@${adapter.adapterVersion}: live registration ${adapter.liveRegistration}; ` +
+        `supervised discovery ${adapter.discovery}; blockers: ${blockers}.`;
+      monitoredAdaptersNode.append(item);
+    }
+  }
+
+  function validConnection(value) {
+    return hasExactKeys(value, ['id', 'service', 'generation', 'profileId', 'mode', 'state', 'secretPurposes']) &&
+      typeof value.id === 'string' && typeof value.service === 'string' && Number.isSafeInteger(value.generation) &&
+      typeof value.profileId === 'string' && ['synthetic', 'live'].includes(value.mode) &&
+      ['connected', 'disconnecting', 'disconnect_failed', 'disconnected'].includes(value.state) &&
+      Array.isArray(value.secretPurposes) && value.secretPurposes.every(item => typeof item === 'string');
+  }
+
+  function renderConnections(connections, token, marker) {
+    connectionsNode.textContent = '';
+    for (const connection of connections) {
+      const item = document.createElement('li');
+      item.textContent = `${connection.service} — ${connection.id}; profile ${connection.profileId}; generation ${connection.generation}; ${connection.mode}; ${connection.state}. `;
+      const choices = [];
+      for (let index = 0; index < connection.secretPurposes.length; index++) {
+        const purpose = connection.secretPurposes[index];
+        const label = document.createElement('label');
+        const choice = document.createElement('input');
+        choice.type = 'checkbox'; choice.value = purpose; choice.checked = false;
+        choice.id = `connection-delete-${connection.id}-${index}`;
+        label.htmlFor = choice.id; label.textContent = `Delete ${purpose}`;
+        label.append(choice); choices.push(choice); item.append(label);
+      }
+      if (connection.state === 'connected' || connection.state === 'disconnect_failed') {
+        const button = document.createElement('button');
+        button.type = 'button'; button.textContent = connection.state === 'disconnect_failed'
+          ? 'Retry incomplete disconnect and selected deletions'
+          : 'Disconnect and delete selected stored items';
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try {
+            const result = await request(`/api/connections/${encodeURIComponent(connection.id)}/disconnect`, token,
+              'POST', { deletePurposes: choices.filter(choice => choice.checked).map(choice => choice.value) });
+            if (marker !== viewGeneration || token !== sessionToken) return;
+            if (!hasExactKeys(result, ['connectionId', 'state', 'profileRemovalOffered', 'profilePath',
+              'deletedPurposes']) || result.connectionId !== connection.id || result.state !== 'disconnected' ||
+              result.profileRemovalOffered !== true || typeof result.profilePath !== 'string' ||
+              !Array.isArray(result.deletedPurposes)) throw new RequestFailure('invalid_response', 200);
+            item.textContent = `${connection.service} — disconnected. Dedicated profile was not removed; removal is a separate explicit action.`;
+            setStatus('Connection disconnected. The dedicated profile was not removed.');
+          } catch (error) {
+            if (marker !== viewGeneration || token !== sessionToken) return;
+            button.disabled = false; setStatus(requestFailureMessage(error), true);
+          }
+        });
+        item.append(button);
+      }
+      connectionsNode.append(item);
+    }
   }
 
   function validJobSummary(job) {
@@ -443,6 +518,8 @@
       serviceLimits.textContent = value.limits.awakeOnly && value.limits.foreground ?
         'Foreground and awake-only: work stops when this process or laptop stops. This is not a 24/7 daemon.' :
         'Review the reported service lifecycle limits.';
+      renderConnections(value.connections, token, marker);
+      renderMonitoredAdapters(value.monitoredAdapters);
       const maintenance = value.unresolvedActions.filter(action => isRecord(action) &&
         action.kind === 'crash_preserved_execution').map(action => action.actionId);
       serviceBarriers.textContent = maintenance.length > 0 ?

@@ -1,21 +1,24 @@
 import type { DomainEvent, JournalRecord, RecordMetadata } from '../kernel/types.js';
 
-export type ServiceJobKind = 'owner_turn' | 'execute' | 'readback' | 'reminder';
+export type ServiceJobKind = 'owner_turn' | 'execute' | 'readback' | 'reminder' | 'monitor';
 export type ServiceJobStatus = 'queued' | 'running' | 'finished' | 'stopped' | 'interrupted';
 export type ServiceStopReason = 'completed' | 'prepared_for_review' | 'model_unavailable'
   | 'invalid_model_result' | 'deadline' | 'cancelled' | 'action_ineligible'
-  | 'action_failed' | 'action_unknown' | 'readback_unresolved' | 'process_interrupted';
+  | 'action_failed' | 'action_unknown' | 'readback_unresolved' | 'process_interrupted'
+  | 'monitor_observed' | 'monitor_paused' | 'monitor_terminal';
 export type ServiceEnvelope =
   | { kind: 'owner_turn'; threadId: string; workId?: string; text: string }
   | { kind: 'execute' | 'readback'; actionId: string; digest: string }
   | { kind: 'schedule_reminder'; workId: string; dueAt: string }
-  | { kind: 'reminder'; timerId: string; workId: string };
+  | { kind: 'reminder'; timerId: string; workId: string }
+  | { kind: 'monitor'; monitorId: string; grantId: string; dueAt: string };
 export type ServiceJobParameters =
   | { kind: 'owner_turn'; ownerRecordId: string; threadId: string; workId?: string;
       model: { provider: string; model: string }; windowTokens: number;
       outputReserve: number; capability: 'prepare_only' }
   | { kind: 'execute' | 'readback'; actionId: string; digest: string }
-  | { kind: 'reminder'; timerId: string; workId: string; timerRecordId: string };
+  | { kind: 'reminder'; timerId: string; workId: string; timerRecordId: string }
+  | { kind: 'monitor'; monitorId: string; grantId: string; dueAt: string; pollRecordId: string };
 export interface ServiceRequestIdentity {
   workspaceId: string;
   source: string;

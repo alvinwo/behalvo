@@ -44,7 +44,8 @@ function fixture(t, options = {}) {
   });
   const control = new ServiceControlService({
     store, runtime, reviews, sessions, operator, binding: { workspaceId, ownerId },
-    model, databaseMode: 'plaintext', clock: () => now
+    model, databaseMode: 'plaintext', clock: () => now,
+    ...(options.privateConnections ? { privateConnections: options.privateConnections } : {})
   });
   const bootstrap = sessions.issueBootstrap('http://127.0.0.1:4500');
   const session = sessions.exchangeBootstrap(bootstrap.token, bootstrap.origin);
@@ -52,6 +53,36 @@ function fixture(t, options = {}) {
   t.after(() => { control.close(); store.close(); });
   return { store, runtime, operations, registry, operator, reviews, sessions, control, principal };
 }
+
+test('private connection control sanitizes injected metadata and disconnect results', async t => {
+  const marker = randomBytes(24).toString('base64url');
+  const privateConnections = {
+    list() {
+      return [{ id: 'connection-a', service: 'visa-scheduling', generation: 1, profileId: 'profile-a',
+        mode: 'synthetic', state: 'connected', secretPurposes: ['password'],
+        accountId: marker, reference: `secret_${marker}` }];
+    },
+    async disconnect() {
+      return { connectionId: 'connection-a', state: 'disconnected', profileRemovalOffered: true,
+        profilePath: '/private/profile', deletedPurposes: ['password'], rawError: marker };
+    }
+  };
+  const f = fixture(t, { privateConnections });
+  const status = f.control.status(f.principal);
+  assert.deepEqual(status.monitoredAdapters, [{ adapterId: 'us-visa-china', adapterVersion: 1,
+    liveRegistration: 'disabled', discovery: 'not_started', blockers: [
+      'authenticated_contract_fixture', 'current_terms_decision', 'reviewed_origin', 'reviewed_roster',
+      'polling_limits', 'private_connection', 'active_grant'
+    ], report: null }]);
+  assert.deepEqual(status.connections, [{ id: 'connection-a', service: 'visa-scheduling', generation: 1,
+    profileId: 'profile-a', mode: 'synthetic', state: 'connected', secretPurposes: ['password'] }]);
+  assert.equal(JSON.stringify(status).includes(marker), false);
+  const disconnected = await f.control.disconnectConnection(f.principal, 'connection-a',
+    { deletePurposes: ['password'] });
+  assert.deepEqual(disconnected, { connectionId: 'connection-a', state: 'disconnected',
+    profileRemovalOffered: true, profilePath: '/private/profile', deletedPurposes: ['password'] });
+  assert.equal(JSON.stringify(disconnected).includes(marker), false);
+});
 
 async function preparedAction(f, overrides = {}) {
   f.operator.createWork(workspaceId, ownerId, {

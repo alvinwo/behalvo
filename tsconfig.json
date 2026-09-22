@@ -15,5 +15,6 @@
     "rootDir": "src",
     "skipLibCheck": true
   },
+  "exclude": ["extension", "extension/dist"],
   "include": ["src/**/*.ts"]
 }

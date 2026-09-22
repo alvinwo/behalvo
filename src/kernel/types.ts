@@ -1,5 +1,9 @@
 /** Domain data is transport- and model-independent. No provider session owns it. */
 import type { Connection, OperationCommand, VerificationState } from '../operations/types.js';
+import type {
+    MonitoredActionGrant, MonitoredActionReference, MonitorObservationSummary, MonitorPauseReason, MonitorState,
+    MonitoredGrantSettlementOutcome
+} from '../monitoring/types.js';
 
 export type WorkPhase = 'open' | 'waiting_external' | 'done' | 'cancelled';
 export type ActionStatus = 'proposed' | 'approved' | 'running' | 'accepted' | 'failed' | 'unknown' | 'cancelled';
@@ -37,6 +41,9 @@ export interface Action {
     attemptId?: string;
     evidenceRef?: string;
     verification?: VerificationState;
+    monitoredGrant?: MonitoredActionReference;
+    monitoredIntent?: { intentId: string; attemptId: string; evidenceRef: string };
+    monitoredConfirmation?: { referenceDigest: string; attemptId: string; evidenceRef: string };
 }
 export interface Timer {
     id: string;
@@ -66,6 +73,8 @@ export interface State {
     timers: Record<string, Timer>;
     facts: Record<string, Fact>;
     connections: Record<string, Connection>;
+    monitoredActionGrants: Record<string, MonitoredActionGrant>;
+    monitors: Record<string, MonitorState>;
 }
 export interface MessageInput {
     source: string;
@@ -86,6 +95,63 @@ export type DomainEvent = {
 } | {
     type: 'connection.revoked';
     data: { id: string; generation: number };
+} | {
+    type: 'monitored_action.grant_proposed';
+    data: { grant: MonitoredActionGrant };
+} | {
+    type: 'monitored_action.grant_activated';
+    data: { id: string; digest: string; revision: number; ownerId: string;
+        installationGeneration: string; activatedAt: string };
+} | {
+    type: 'monitored_action.grant_revoked';
+    data: { id: string; digest: string; revision: number; reason: 'owner_revoked' | 'material_drift'; revokedAt: string };
+} | {
+    type: 'monitored_action.grant_expired';
+    data: { id: string; digest: string; revision: number; expiredAt: string };
+} | {
+    type: 'monitored_action.installation_reconciled';
+    data: { id: string; digest: string; revision: number; ownerId: string;
+        installationGeneration: string; reconciledAt: string };
+} | {
+    type: 'monitored_action.command_narrowed';
+    data: { grantId: string; action: Action };
+} | {
+    type: 'monitored_action.grant_reserved';
+    data: { id: string; digest: string; revision: number; actionId: string; attemptId: string;
+        observationDigest: string; reservedAt: string };
+} | {
+    type: 'monitored_action.grant_settled';
+    data: { id: string; actionId: string; outcome: MonitoredGrantSettlementOutcome; settledAt: string };
+} | {
+    type: 'monitored_action.intent_recorded';
+    data: { id: string; grantId: string; attemptId: string; intentId: string; evidenceRef: string };
+} | {
+    type: 'monitored_action.confirmation_recorded';
+    data: { id: string; grantId: string; attemptId: string; referenceDigest: string; evidenceRef: string };
+} | {
+    type: 'monitor.configured';
+    data: { monitor: MonitorState };
+} | {
+    type: 'monitor.poll_started';
+    data: { id: string; jobId: string; dueAt: string; startedAt: string;
+        requestWindowStartedAt: string; requestsInWindow: number };
+} | {
+    type: 'monitor.budget_deferred';
+    data: { id: string; nextDueAt: string; deferredAt: string };
+} | {
+    type: 'monitor.observation_recorded';
+    data: { id: string; jobId: string; observation: MonitorObservationSummary; status: 'active' | 'paused';
+        nextDueAt: string | null; consecutiveFailures: number; backoffMs: number;
+        pauseReason: MonitorPauseReason | null; recordedAt: string };
+} | {
+    type: 'monitor.interrupted';
+    data: { id: string; jobId: string; nextDueAt: string; interruptedAt: string };
+} | {
+    type: 'monitor.resumed';
+    data: { id: string; ownerId: string; nextDueAt: string; resumedAt: string };
+} | {
+    type: 'monitor.stopped';
+    data: { id: string; reason: 'grant_reserved' | 'grant_terminal' | 'owner_stopped'; stoppedAt: string };
 } | {
     type: 'message.received';
     data: Omit<MessageInput, 'text'> & {

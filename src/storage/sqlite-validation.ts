@@ -1,11 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
 import { emptyState, reduce } from '../kernel/reducer.js';
+import { validateMonitoredReservationJournal, validateMonitoredReservationState } from '../monitoring/invariants.js';
 import type { JournalRecord, State } from '../kernel/types.js';
 import { identifier, instant, nonempty } from '../kernel/types.js';
 import type { PayloadCipher } from './payload-cipher.js';
 import { artifactContext, canonicalServiceEnvelope, decodeProjection, decodeRecord, decodeServiceEnvelope, decodeServiceJob, decodeServiceReceipt, decodeSummary, messageTokens, open, serviceRequestTokens, summaryThread, timerTokens } from './sqlite-codec.js';
-import { validateEncryptedSchema } from './sqlite-schema.js';
+import { monitorInstallationState, validateEncryptedSchema } from './sqlite-schema.js';
 import type { ServiceEnvelope, ServiceJob, ServiceJobResult, ServiceReceipt } from './service-jobs.js';
 
 function requireValid(condition: unknown): asserts condition {
@@ -36,6 +37,9 @@ export function verifyServiceEnvelope(envelope: ServiceEnvelope): void {
     } else if (envelope.kind === 'reminder') {
         exactObject(envelope, ['kind', 'timerId', 'workId']);
         identifier(envelope.timerId, 'timerId'); identifier(envelope.workId, 'workId');
+    } else if (envelope.kind === 'monitor') {
+        exactObject(envelope, ['kind', 'monitorId', 'grantId', 'dueAt']);
+        identifier(envelope.monitorId, 'monitorId'); identifier(envelope.grantId, 'grantId'); instant(envelope.dueAt);
     } else requireValid(false);
 }
 
@@ -61,7 +65,8 @@ export function verifyServiceResult(result: ServiceJobResult, job: ServiceJob, p
     exactObject(result, ['reason', 'recordIds'], ['assistantRecordId', 'actionId', 'attemptId', 'actionRecordId',
         'verificationRecordId', 'timerId']);
     requireValid(['completed', 'prepared_for_review', 'model_unavailable', 'invalid_model_result', 'deadline', 'cancelled',
-        'action_ineligible', 'action_failed', 'action_unknown', 'readback_unresolved', 'process_interrupted'].includes(result.reason));
+        'action_ineligible', 'action_failed', 'action_unknown', 'readback_unresolved', 'process_interrupted',
+        'monitor_observed', 'monitor_paused', 'monitor_terminal'].includes(result.reason));
     if (job.status === 'interrupted') requireValid(result.reason === 'process_interrupted');
     requireValid(Array.isArray(result.recordIds) && result.recordIds.length <= 1000 &&
         new Set(result.recordIds).size === result.recordIds.length);
@@ -154,6 +159,29 @@ export function verifyServiceResult(result: ServiceJobResult, job: ServiceJob, p
         requireValid(job.parameters.kind === 'reminder' && result.timerId === job.parameters.timerId &&
             records.has(job.parameters.timerRecordId));
         if (job.status === 'interrupted') requireValid(result.recordIds.length === 1);
+    } else if (job.kind === 'monitor') {
+        requireValid(job.parameters.kind === 'monitor' && records.has(job.parameters.pollRecordId));
+        requireValid(result.assistantRecordId === undefined && result.actionId === undefined &&
+            result.attemptId === undefined && result.actionRecordId === undefined &&
+            result.verificationRecordId === undefined && result.timerId === undefined);
+        const poll = records.get(job.parameters.pollRecordId);
+        requireValid(poll?.event.type === 'monitor.poll_started' && poll.event.data.id === job.parameters.monitorId &&
+            poll.event.data.jobId === job.id);
+        if (job.status === 'finished') requireValid(result.reason === 'monitor_observed');
+        if (job.status === 'stopped') requireValid(result.reason === 'monitor_paused' || result.reason === 'monitor_terminal');
+        if (job.status === 'interrupted') requireValid(result.reason === 'process_interrupted');
+        requireValid(result.recordIds.length === 2);
+        const terminal = result.recordIds.map(id => records.get(id)).find(record => record?.id !== poll.id);
+        requireValid(terminal !== undefined);
+        requireValid((terminal.event.type === 'monitor.observation_recorded' || terminal.event.type === 'monitor.interrupted')
+            ? terminal.event.data.id === job.parameters.monitorId && terminal.event.data.jobId === job.id
+            : terminal.event.type === 'monitor.stopped' && terminal.event.data.id === job.parameters.monitorId);
+        if (job.status === 'finished') requireValid(terminal.event.type === 'monitor.observation_recorded' &&
+            terminal.event.data.status === 'active');
+        if (job.status === 'stopped') requireValid(result.reason === 'monitor_paused'
+            ? terminal.event.type === 'monitor.observation_recorded' && terminal.event.data.status === 'paused'
+            : terminal.event.type === 'monitor.stopped' && terminal.event.data.reason === 'grant_terminal');
+        if (job.status === 'interrupted') requireValid(terminal.event.type === 'monitor.interrupted');
     }
 }
 
@@ -173,6 +201,7 @@ function verifyServiceWorkspace(db: DatabaseSync, cipher: PayloadCipher, workspa
     }
 
     const jobs = new Set<string>();
+    const liveMonitorJobs = new Set<string>();
     for (const row of db.prepare('SELECT * FROM service_jobs WHERE workspace_id=? ORDER BY position').all(workspaceId)) {
         const job = decodeServiceJob(row, cipher);
         exactObject(job, ['id', 'workspaceId', 'receiptId', 'position', 'kind', 'status', 'admittedAt', 'admittedBy', 'parameters'],
@@ -182,7 +211,7 @@ function verifyServiceWorkspace(db: DatabaseSync, cipher: PayloadCipher, workspa
         requireValid(job.workspaceId === workspaceId && Number.isSafeInteger(job.position) && job.position > 0 &&
             job.position === Number(row.position) && job.id === row.id && job.receiptId === row.receipt_id &&
             job.kind === row.kind && job.status === row.status && job.admittedAt === row.admitted_at && !jobs.has(job.id));
-        requireValid(['owner_turn', 'execute', 'readback', 'reminder'].includes(job.kind) &&
+        requireValid(['owner_turn', 'execute', 'readback', 'reminder', 'monitor'].includes(job.kind) &&
             ['queued', 'running', 'finished', 'stopped', 'interrupted'].includes(job.status));
         requireValid(job.actionRecordId === undefined || job.kind === 'readback');
         const request = requests.get(job.receiptId);
@@ -222,13 +251,27 @@ function verifyServiceWorkspace(db: DatabaseSync, cipher: PayloadCipher, workspa
                     verification.event.data.verification.status !== 'owner_attested');
                 if (job.kind === 'readback') requireValid(job.actionRecordId !== undefined);
             }
-        } else {
+        } else if (job.kind === 'reminder') {
             exactObject(job.parameters, ['kind', 'timerId', 'workId', 'timerRecordId']);
             requireValid(job.parameters.kind === 'reminder' && request?.envelope.kind === 'reminder' &&
                 request.envelope.timerId === job.parameters.timerId && request.envelope.workId === job.parameters.workId);
             const timerRecord = prior.get(job.parameters.timerRecordId);
             requireValid(timerRecord?.event.type === 'timer.fired' && timerRecord.event.data.id === job.parameters.timerId &&
                 inboxRecords.has(timerRecord.id));
+        } else {
+            exactObject(job.parameters, ['kind', 'monitorId', 'grantId', 'dueAt', 'pollRecordId']);
+            requireValid(job.parameters.kind === 'monitor' && request?.envelope.kind === 'monitor' &&
+                request.envelope.monitorId === job.parameters.monitorId && request.envelope.grantId === job.parameters.grantId &&
+                request.envelope.dueAt === job.parameters.dueAt);
+            const pollRecord = prior.get(job.parameters.pollRecordId);
+            requireValid(pollRecord?.event.type === 'monitor.poll_started' && pollRecord.event.data.id === job.parameters.monitorId &&
+                pollRecord.event.data.jobId === job.id && pollRecord.event.data.dueAt === job.parameters.dueAt);
+            const monitor = state.monitors[job.parameters.monitorId];
+            requireValid(monitor?.grantId === job.parameters.grantId);
+            if (job.status === 'queued' || job.status === 'running') {
+                requireValid(monitor.status === 'active' && monitor.inFlightJobId === job.id);
+                liveMonitorJobs.add(job.id);
+            } else requireValid(monitor.inFlightJobId !== job.id);
         }
 
         if (job.status === 'queued') {
@@ -256,6 +299,8 @@ function verifyServiceWorkspace(db: DatabaseSync, cipher: PayloadCipher, workspa
     for (const { receipt } of requests.values()) {
         if (receipt.jobId !== undefined) requireValid(jobs.has(receipt.jobId));
     }
+    for (const monitor of Object.values(state.monitors))
+        if (monitor.inFlightJobId !== null) requireValid(liveMonitorJobs.has(monitor.inFlightJobId));
     for (const { receipt, envelope } of requests.values()) {
         if (envelope.kind !== 'schedule_reminder') continue;
         const timer = receipt.timerId === undefined ? undefined : state.timers[receipt.timerId];
@@ -269,6 +314,7 @@ export function verifyEncryptedDatabase(db: DatabaseSync, cipher: PayloadCipher)
         const version = Number(db.prepare('PRAGMA user_version').get()!.user_version);
         requireValid(version === 2 || version === 4);
         validateEncryptedSchema(db);
+        monitorInstallationState(db, cipher);
         const protection = db.prepare('SELECT * FROM storage_protection').all();
         requireValid(protection.length === 1 && protection[0]!.id === 1 && protection[0]!.format === 1);
         requireValid(cipher.open(String(protection[0]!.verification), ['metadata', 'verification']) === 'behalvo/storage/v1/verified');
@@ -317,6 +363,8 @@ export function verifyEncryptedDatabase(db: DatabaseSync, cipher: PayloadCipher)
                 if (event.type === 'message.received') requireArtifact(event.data.artifactId);
                 if (event.type === 'work.phase_changed' && event.data.evidenceRef !== undefined) requireArtifact(event.data.evidenceRef);
                 if (event.type === 'action.finished' || event.type === 'action.reconciled') requireArtifact(event.data.evidenceRef);
+                if (event.type === 'monitored_action.intent_recorded') requireArtifact(event.data.evidenceRef);
+                if (event.type === 'monitored_action.confirmation_recorded') requireArtifact(event.data.evidenceRef);
                 if (event.type === 'action.verification_recorded' && event.data.verification.status === 'owner_attested')
                     requireArtifact(event.data.verification.evidenceRef);
                 if (event.type === 'inbox.handled') {
@@ -328,6 +376,8 @@ export function verifyEncryptedDatabase(db: DatabaseSync, cipher: PayloadCipher)
                 state = reduce(state, event, record.seq, observedAt);
                 prior.set(record.id, record);
             }
+            validateMonitoredReservationJournal(records.map(record => record.event), state);
+            validateMonitoredReservationState(state);
             const projection = projections[0]!;
             requireValid(projection.version === state.version && isDeepStrictEqual(decodeProjection(projection, cipher), state));
 
