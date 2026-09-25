@@ -4,15 +4,32 @@
 
 1. Run the genuine live-model evaluation and complete its manual review. The
    harness exists, but live acceptance has not yet been run.
-2. Unify the local components into a supervised laptop service.
+2. Add OS supervision and complete the owner-laptop monitored-action gates. The
+   foreground loopback service and synthetic composition exist; supervised live
+   discovery and acceptance do not.
 3. Add secure phone owner control.
 4. Add one mail integration.
 5. Run a two-week personal alpha.
-6. Later, add multi-account support and constrained browser capability.
+6. Later, add multi-account support and production browser capability. The
+   current browser boundary is synthetic/disabled-by-default only.
 7. Only then consider a small public alpha.
 
 The deterministic `synthetic-v1` scripted suite validates the harness; it cannot
 substitute for step 1 or certify M1.1 acceptance.
+
+## Monitored-action status
+
+| Delivered locally | Still gated |
+| --- | --- |
+| One foreground service/store/queue/scheduler/worker | OS-supervised 24/7 operation |
+| Paired synthetic setup, exact grant review/arm, pause, takeover, resume, stop, revoke | Remote/mobile owner identity and phone takeover |
+| Fixed-origin synthetic portal through compiled extension and framed native transport | Installed Chrome/extension/native host and signed Keychain helper |
+| Empty/restart/challenge/resume/pre-reservation-race/later-booking acceptance | Owner-laptop read-only discovery and current terms/group verification |
+| One verified synthetic effect, stopped recurrence, effect-free rebuild | Live credentials, live portal acceptance, exact owner activation, real booking |
+
+The next visa step is the separate supervised read-only discovery described in
+[VISA_DISCOVERY.md](VISA_DISCOVERY.md). It cannot be replaced by CI or the
+synthetic demo.
 
 The private-storage foundation now provides opt-in authenticated SQLite payload
 encryption for new databases, separate key-file configuration, and verified

@@ -11,6 +11,7 @@ const DEFAULT_STEPS = [
   ["demo", "npm", ["run", "demo"]],
   ["operations-demo", "npm", ["run", "operations:demo"]],
   ["owner-control-demo", "npm", ["run", "owner-control:demo"]],
+  ["service-demo", "npm", ["run", "service:demo"]],
   ["git-diff-check", "git", ["diff", "--check"]],
 ];
 

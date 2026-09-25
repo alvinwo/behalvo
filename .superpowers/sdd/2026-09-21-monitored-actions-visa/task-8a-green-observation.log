@@ -1,0 +1,18 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✔ compiled synthetic page observation is contiguous and every poll restarts from page one (123.827198ms)
+✔ compiled page metadata drift and omission cannot produce a narrowing observation (135.349382ms)
+✔ compiled checkpoint pages preserve distinct paused observation classes (51.637515ms)
+✔ read-only disappearance rejects candidate A and a later fresh poll may return distinct candidate B (69.836603ms)
+✔ reserved execution rereads page evidence and never selects a replacement candidate (39.296248ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 554.246781

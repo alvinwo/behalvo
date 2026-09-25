@@ -1,0 +1,25 @@
+✖ scheduled dispatch duplicate lookup precedes capacity and returns one exact execute job (51.112944ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 177.119103
+
+✖ failing tests:
+
+test at tests/monitoring-service.test.mjs:601:1
+✖ scheduled dispatch duplicate lookup precedes capacity and returns one exact execute job (51.112944ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception: the deterministic request binds exact installation evidence
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/monitoring-service.test.mjs:614:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    actual: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+COMMAND_EXIT_CODE="1"

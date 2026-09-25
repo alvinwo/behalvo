@@ -1,0 +1,41 @@
+COMMAND="npm run build && node --test --test-reporter=spec --test-name-pattern='owner revocation atomically stops|atomic scheduled dispatch rolls|full FIFO leaves|scheduled dispatch duplicate lookup|encrypted backup authenticates|queued scheduled execution survives|exclusive recovery preserves|queued work cancellation|pre-intent connection rejection|pre-intent inactive installation|scheduled admission rechecks|scheduled admission rolls back|due page-derived visa monitor|operation recovery and replay|exclusive recovery interrupts' tests/monitoring-service.test.mjs tests/us-visa-runtime.test.mjs tests/operations.test.mjs tests/service-lifecycle.test.mjs"
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✔ owner revocation atomically stops a running monitor and discards its late observation (21.904106ms)
+✔ atomic scheduled dispatch rolls every reservation and queue write back on a commit fault (14.062704ms)
+✔ a full FIFO leaves no completed observation, reserved allowance, or orphan action (52.568775ms)
+✔ scheduled dispatch duplicate lookup precedes capacity and returns one exact execute job (50.145157ms)
+✔ encrypted backup authenticates the scheduled monitor execution binding (40.528418ms)
+▶ queued scheduled execution survives restart while a claimed interruption becomes unknown without redispatch
+  ✔ queued (19.341574ms)
+  ✔ running (12.958155ms)
+✔ queued scheduled execution survives restart while a claimed interruption becomes unknown without redispatch (33.403866ms)
+▶ exclusive recovery preserves only an exact unclaimed scheduled execution and later drains it once
+  ✔ queued (17.162166ms)
+  ✔ running (10.015888ms)
+✔ exclusive recovery preserves only an exact unclaimed scheduled execution and later drains it once (28.484957ms)
+▶ queued work cancellation or revision drift terminalizes without dispatch or releasing allowance
+  ✔ cancelled (8.015674ms)
+  ✔ waiting_external (7.598368ms)
+✔ queued work cancellation or revision drift terminalizes without dispatch or releasing allowance (15.949757ms)
+✔ pre-intent connection rejection atomically terminalizes the exact action and execute job (14.118642ms)
+✔ pre-intent inactive installation terminalizes instead of orphaning a running action (10.533725ms)
+✔ scheduled admission rechecks fresh observation time after policy selection (4.934408ms)
+✔ scheduled admission rolls back when the original lifecycle is cancelled at the commit boundary (5.627449ms)
+✔ operation recovery and replay never call handlers or redispatch effects (20.626418ms)
+✔ exclusive recovery interrupts the job and records a running action unknown without retry (59.06613ms)
+✔ a due page-derived visa monitor atomically dispatches exactly one execution without owner admission (295.029218ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 441.96289
+
+COMMAND_EXIT_CODE="0"

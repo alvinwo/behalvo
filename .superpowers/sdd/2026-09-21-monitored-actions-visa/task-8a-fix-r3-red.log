@@ -1,0 +1,114 @@
+Script started on 2026-09-23 02:41:50+09:00 [COMMAND="npm run build && node --test --test-reporter=spec --test-name-pattern='compiled (gesture|gesture.commit) contract rejection preserves' tests/us-visa-observation.test.mjs" <not executed on terminal>]
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✖ compiled gesture contract rejection preserves trusted fence revocation precedence (44.168793ms)
+✖ compiled gesture contract rejection preserves abort precedence (14.805325ms)
+✖ compiled gesture.commit contract rejection preserves trusted fence revocation precedence (11.76475ms)
+✖ compiled gesture.commit contract rejection preserves abort precedence (8.324286ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 0
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 223.020981
+
+✖ failing tests:
+
+test at tests/us-visa-observation.test.mjs:207:5
+✖ compiled gesture contract rejection preserves trusted fence revocation precedence (44.168793ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + undefined
+  - Error: trusted fence revoked during typed page rejection
+  -     at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/us-visa-observation.test.mjs:211:23)
+  -     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+  -     at async Test.run (node:internal/test_runner/test:1389:7)
+  -     at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/us-visa-observation.test.mjs:234:65)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: Error: trusted fence revoked during typed page rejection
+        at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/us-visa-observation.test.mjs:211:23)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async Test.run (node:internal/test_runner/test:1389:7)
+        at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3),
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/us-visa-observation.test.mjs:207:5
+✖ compiled gesture contract rejection preserves abort precedence (14.805325ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  false !== true
+
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/us-visa-observation.test.mjs:235:21)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/us-visa-observation.test.mjs:207:5
+✖ compiled gesture.commit contract rejection preserves trusted fence revocation precedence (11.76475ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + undefined
+  - Error: trusted fence revoked during typed page rejection
+  -     at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/us-visa-observation.test.mjs:211:23)
+  -     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+  -     at async Test.run (node:internal/test_runner/test:1389:7)
+  -     at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/us-visa-observation.test.mjs:234:65)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: Error: trusted fence revoked during typed page rejection
+        at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/us-visa-observation.test.mjs:211:23)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async Test.run (node:internal/test_runner/test:1389:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:960:7),
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/us-visa-observation.test.mjs:207:5
+✖ compiled gesture.commit contract rejection preserves abort precedence (8.324286ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  false !== true
+
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/us-visa-observation.test.mjs:235:21)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+Script done on 2026-09-23 02:41:56+09:00 [COMMAND_EXIT_CODE="1"]

@@ -1,11 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
 import { emptyState, reduce } from '../kernel/reducer.js';
+import { validateMonitoredReservationJournal, validateMonitoredReservationState } from '../monitoring/invariants.js';
 import type { JournalRecord, State } from '../kernel/types.js';
 import { identifier, instant, nonempty } from '../kernel/types.js';
 import type { PayloadCipher } from './payload-cipher.js';
 import { artifactContext, canonicalServiceEnvelope, decodeProjection, decodeRecord, decodeServiceEnvelope, decodeServiceJob, decodeServiceReceipt, decodeSummary, messageTokens, open, serviceRequestTokens, summaryThread, timerTokens } from './sqlite-codec.js';
-import { validateEncryptedSchema } from './sqlite-schema.js';
+import { monitorInstallationState, validateEncryptedSchema } from './sqlite-schema.js';
 import type { ServiceEnvelope, ServiceJob, ServiceJobResult, ServiceReceipt } from './service-jobs.js';
 
 function requireValid(condition: unknown): asserts condition {
@@ -27,15 +28,57 @@ export function verifyServiceEnvelope(envelope: ServiceEnvelope): void {
         nonempty(envelope.text, 'owner input');
         requireValid(Buffer.byteLength(envelope.text, 'utf8') <= 262144);
     } else if (envelope.kind === 'execute' || envelope.kind === 'readback') {
-        exactObject(envelope, ['kind', 'actionId', 'digest']);
+        exactObject(envelope, ['kind', 'actionId', 'digest'], envelope.kind === 'execute' ? ['scheduledMonitor'] : []);
         identifier(envelope.actionId, 'actionId'); nonempty(envelope.digest, 'action digest');
         requireValid(Buffer.byteLength(envelope.digest, 'utf8') <= 4096);
+        if (envelope.kind === 'execute' && envelope.scheduledMonitor !== undefined) {
+            const binding = envelope.scheduledMonitor;
+            exactObject(binding, ['monitorId', 'monitorJobId', 'grantId', 'grantDigest', 'grantRevision', 'adapter',
+                'adapterVersion', 'connectionId', 'connectionGeneration', 'browserProfileId', 'subjectDigest',
+                'installationGeneration', 'workId', 'workRevision', 'attemptId', 'observationDigest', 'observedAt']);
+            for (const [value, label] of [[binding.monitorId, 'monitorId'], [binding.monitorJobId, 'monitorJobId'],
+                [binding.grantId, 'grantId'], [binding.adapter, 'adapter'], [binding.connectionId, 'connectionId'],
+                [binding.browserProfileId, 'browserProfileId'], [binding.installationGeneration, 'installationGeneration'],
+                [binding.workId, 'workId'], [binding.attemptId, 'attemptId']] as const) identifier(value, label);
+            requireValid(/^[a-f0-9]{64}$/.test(binding.grantDigest) && /^[a-f0-9]{64}$/.test(binding.subjectDigest) &&
+                /^[a-f0-9]{64}$/.test(binding.observationDigest) && Number.isSafeInteger(binding.grantRevision) &&
+                binding.grantRevision > 0 && Number.isSafeInteger(binding.adapterVersion) && binding.adapterVersion > 0 &&
+                Number.isSafeInteger(binding.connectionGeneration) && binding.connectionGeneration > 0 &&
+                Number.isSafeInteger(binding.workRevision) && binding.workRevision > 0);
+            instant(binding.observedAt);
+        }
     } else if (envelope.kind === 'schedule_reminder') {
         exactObject(envelope, ['kind', 'workId', 'dueAt']);
         identifier(envelope.workId, 'workId'); instant(envelope.dueAt);
     } else if (envelope.kind === 'reminder') {
         exactObject(envelope, ['kind', 'timerId', 'workId']);
         identifier(envelope.timerId, 'timerId'); identifier(envelope.workId, 'workId');
+    } else if (envelope.kind === 'monitor') {
+        if (envelope.purpose === 'resume') {
+            exactObject(envelope, ['kind', 'purpose', 'monitorId', 'grantId', 'digest', 'revision',
+                'controlRevision', 'recoverHandoff']);
+            identifier(envelope.monitorId, 'monitorId'); identifier(envelope.grantId, 'grantId');
+            requireValid(/^[a-f0-9]{64}$/.test(envelope.digest) && Number.isSafeInteger(envelope.revision) &&
+                envelope.revision > 0 && Number.isSafeInteger(envelope.controlRevision) &&
+                envelope.controlRevision >= 0 && typeof envelope.recoverHandoff === 'boolean');
+        } else {
+            exactObject(envelope, ['kind', 'monitorId', 'grantId', 'dueAt'], ['purpose']);
+            requireValid(envelope.purpose === undefined || envelope.purpose === 'observe');
+            identifier(envelope.monitorId, 'monitorId'); identifier(envelope.grantId, 'grantId'); instant(envelope.dueAt);
+        }
+    } else if (envelope.kind === 'monitoring_setup' || envelope.kind === 'monitoring_propose') {
+        exactObject(envelope, ['kind', 'fixtureId']);
+        requireValid(envelope.fixtureId === 'visa-beijing-group-v1');
+    } else if (envelope.kind === 'monitoring_arm' || envelope.kind === 'monitoring_revoke') {
+        exactObject(envelope, ['kind', 'grantId', 'digest', 'revision']);
+        identifier(envelope.grantId, 'grantId'); requireValid(/^[a-f0-9]{64}$/.test(envelope.digest));
+        requireValid(Number.isSafeInteger(envelope.revision) && envelope.revision > 0);
+    } else if (envelope.kind === 'monitoring_pause' || envelope.kind === 'monitoring_takeover' ||
+        envelope.kind === 'monitoring_stop') {
+        exactObject(envelope, ['kind', 'grantId', 'monitorId', 'digest', 'revision', 'controlRevision']);
+        identifier(envelope.grantId, 'grantId'); identifier(envelope.monitorId, 'monitorId');
+        requireValid(/^[a-f0-9]{64}$/.test(envelope.digest) && Number.isSafeInteger(envelope.revision) &&
+            envelope.revision > 0 && Number.isSafeInteger(envelope.controlRevision) && envelope.controlRevision >= 0);
     } else requireValid(false);
 }
 
@@ -46,22 +89,48 @@ export function verifyServiceModel(model: { provider: string; model: string }): 
 }
 
 function verifyServiceReceipt(receipt: ServiceReceipt, envelope: ServiceEnvelope, workspaceId: string): void {
-    exactObject(receipt, ['id', 'workspaceId', 'source', 'requestId', 'kind', 'admittedAt'], ['jobId', 'timerId']);
+    exactObject(receipt, ['id', 'workspaceId', 'source', 'requestId', 'kind', 'admittedAt'], ['jobId', 'timerId', 'monitoring']);
     identifier(receipt.id, 'receiptId'); identifier(receipt.workspaceId, 'workspaceId');
     identifier(receipt.source, 'source'); identifier(receipt.requestId, 'requestId'); instant(receipt.admittedAt);
     requireValid(receipt.workspaceId === workspaceId && receipt.kind === envelope.kind);
     if (receipt.jobId !== undefined) identifier(receipt.jobId, 'jobId');
     if (receipt.timerId !== undefined) identifier(receipt.timerId, 'timerId');
-    requireValid(envelope.kind === 'schedule_reminder'
-        ? receipt.timerId !== undefined && receipt.jobId === undefined
-        : receipt.jobId !== undefined && receipt.timerId === undefined);
+    if (envelope.kind.startsWith('monitoring_')) {
+        requireValid(receipt.jobId === undefined && receipt.timerId === undefined && receipt.monitoring !== undefined);
+        const monitoring = receipt.monitoring!;
+        exactObject(monitoring, ['recordIds'], ['fixtureId', 'connectionId', 'workId', 'grantId', 'monitorId']);
+        requireValid(Array.isArray(monitoring.recordIds) && monitoring.recordIds.length <= 10);
+        for (const recordId of monitoring.recordIds) identifier(recordId, 'recordId');
+        for (const field of ['connectionId', 'workId', 'grantId', 'monitorId'] as const)
+            if (monitoring[field] !== undefined) identifier(monitoring[field], field);
+        if (monitoring.fixtureId !== undefined) requireValid(monitoring.fixtureId === 'visa-beijing-group-v1');
+        if (envelope.kind === 'monitoring_setup')
+            requireValid(monitoring.fixtureId === envelope.fixtureId && monitoring.connectionId !== undefined &&
+                monitoring.workId !== undefined && monitoring.grantId === undefined && monitoring.monitorId === undefined);
+        if (envelope.kind === 'monitoring_propose')
+            requireValid(monitoring.fixtureId === envelope.fixtureId && monitoring.grantId !== undefined &&
+                monitoring.monitorId !== undefined && monitoring.workId !== undefined && monitoring.connectionId === undefined);
+        if (envelope.kind === 'monitoring_arm')
+            requireValid(monitoring.grantId === envelope.grantId && monitoring.monitorId !== undefined &&
+                monitoring.fixtureId === undefined && monitoring.connectionId === undefined && monitoring.workId === undefined);
+        if (envelope.kind === 'monitoring_revoke')
+            requireValid(monitoring.grantId === envelope.grantId && monitoring.monitorId === undefined &&
+                monitoring.fixtureId === undefined && monitoring.connectionId === undefined && monitoring.workId === undefined);
+        if (envelope.kind === 'monitoring_pause' || envelope.kind === 'monitoring_takeover' || envelope.kind === 'monitoring_stop')
+            requireValid(monitoring.grantId === envelope.grantId && monitoring.monitorId === envelope.monitorId &&
+                monitoring.fixtureId === undefined && monitoring.connectionId === undefined && monitoring.workId === undefined);
+    } else requireValid(envelope.kind === 'schedule_reminder'
+        ? receipt.timerId !== undefined && receipt.jobId === undefined && receipt.monitoring === undefined
+        : receipt.jobId !== undefined && receipt.timerId === undefined && receipt.monitoring === undefined);
 }
 
 export function verifyServiceResult(result: ServiceJobResult, job: ServiceJob, prior: Map<string, JournalRecord>): void {
     exactObject(result, ['reason', 'recordIds'], ['assistantRecordId', 'actionId', 'attemptId', 'actionRecordId',
         'verificationRecordId', 'timerId']);
     requireValid(['completed', 'prepared_for_review', 'model_unavailable', 'invalid_model_result', 'deadline', 'cancelled',
-        'action_ineligible', 'action_failed', 'action_unknown', 'readback_unresolved', 'process_interrupted'].includes(result.reason));
+        'action_ineligible', 'action_failed', 'action_unknown', 'readback_unresolved', 'process_interrupted',
+        'monitor_observed', 'monitor_paused', 'monitor_terminal', 'monitor_resumed',
+        'monitor_resume_rejected'].includes(result.reason));
     if (job.status === 'interrupted') requireValid(result.reason === 'process_interrupted');
     requireValid(Array.isArray(result.recordIds) && result.recordIds.length <= 1000 &&
         new Set(result.recordIds).size === result.recordIds.length);
@@ -154,6 +223,62 @@ export function verifyServiceResult(result: ServiceJobResult, job: ServiceJob, p
         requireValid(job.parameters.kind === 'reminder' && result.timerId === job.parameters.timerId &&
             records.has(job.parameters.timerRecordId));
         if (job.status === 'interrupted') requireValid(result.recordIds.length === 1);
+    } else if (job.kind === 'monitor') {
+        requireValid(job.parameters.kind === 'monitor');
+        requireValid(result.assistantRecordId === undefined && result.actionId === undefined &&
+            result.attemptId === undefined && result.actionRecordId === undefined &&
+            result.verificationRecordId === undefined && result.timerId === undefined);
+        if (job.parameters.purpose === 'resume') {
+            requireValid(records.has(job.parameters.resumeRecordId));
+            const request = records.get(job.parameters.resumeRecordId);
+            requireValid(request?.event.type === 'monitor.resume_requested' && request.event.data.id === job.parameters.monitorId &&
+                request.event.data.jobId === job.id);
+            const terminal = result.recordIds.map(id => records.get(id)).find(record =>
+                record?.event.type === 'monitor.resume_finished' || record?.event.type === 'monitor.stopped' ||
+                record?.event.type === 'monitor.paused');
+            requireValid(terminal !== undefined);
+            if (terminal.event.type === 'monitor.resume_finished')
+                requireValid(terminal.event.data.id === job.parameters.monitorId && terminal.event.data.jobId === job.id);
+            else if (terminal.event.type === 'monitor.stopped') {
+                requireValid(terminal.event.type === 'monitor.stopped' &&
+                    terminal.event.data.id === job.parameters.monitorId);
+                requireValid(['monitor_paused', 'monitor_terminal'].includes(result.reason));
+            } else {
+                requireValid(terminal.event.type === 'monitor.paused');
+                requireValid(terminal.event.data.id === job.parameters.monitorId &&
+                    terminal.event.data.jobId === job.id && result.reason === 'monitor_paused');
+            }
+            requireValid(job.status === 'finished' ? result.reason === 'monitor_resumed' :
+                ['monitor_resume_rejected', 'process_interrupted', 'monitor_paused', 'monitor_terminal'].includes(result.reason));
+            return;
+        }
+        requireValid(records.has(job.parameters.pollRecordId));
+        const poll = records.get(job.parameters.pollRecordId);
+        requireValid(poll?.event.type === 'monitor.poll_started' && poll.event.data.id === job.parameters.monitorId &&
+            poll.event.data.jobId === job.id);
+        if (job.status === 'finished') requireValid(result.reason === 'monitor_observed');
+        if (job.status === 'stopped') requireValid(result.reason === 'monitor_paused' || result.reason === 'monitor_terminal');
+        if (job.status === 'interrupted') requireValid(result.reason === 'process_interrupted');
+        requireValid(result.recordIds.length === 2 || result.recordIds.length === 3);
+        const terminal = result.recordIds.map(id => records.get(id)).find(record => record?.id !== poll.id);
+        requireValid(terminal !== undefined);
+        requireValid((terminal.event.type === 'monitor.observation_recorded' || terminal.event.type === 'monitor.interrupted')
+            ? terminal.event.data.id === job.parameters.monitorId && terminal.event.data.jobId === job.id
+            : (terminal.event.type === 'monitor.stopped' || terminal.event.type === 'monitor.paused') &&
+                terminal.event.data.id === job.parameters.monitorId);
+        if (result.recordIds.length === 3) {
+            const handoff = result.recordIds.map(id => records.get(id)).find(record => record?.event.type === 'monitor.paused');
+            requireValid(handoff?.event.type === 'monitor.paused' && handoff.event.data.id === job.parameters.monitorId &&
+                handoff.event.data.jobId === job.id && handoff.event.data.ownerId === null);
+        }
+        if (job.status === 'finished') requireValid(terminal.event.type === 'monitor.observation_recorded' &&
+            terminal.event.data.status === 'active');
+        if (job.status === 'stopped') requireValid(result.reason === 'monitor_paused'
+            ? (terminal.event.type === 'monitor.observation_recorded' && terminal.event.data.status === 'paused') ||
+                (terminal.event.type === 'monitor.paused' && terminal.event.data.ownerId !== null &&
+                    terminal.event.data.jobId === job.id)
+            : terminal.event.type === 'monitor.stopped' && terminal.event.data.reason === 'grant_terminal');
+        if (job.status === 'interrupted') requireValid(terminal.event.type === 'monitor.interrupted');
     }
 }
 
@@ -173,6 +298,8 @@ function verifyServiceWorkspace(db: DatabaseSync, cipher: PayloadCipher, workspa
     }
 
     const jobs = new Set<string>();
+    const verifiedJobs = new Map<string, ServiceJob>();
+    const liveMonitorJobs = new Set<string>();
     for (const row of db.prepare('SELECT * FROM service_jobs WHERE workspace_id=? ORDER BY position').all(workspaceId)) {
         const job = decodeServiceJob(row, cipher);
         exactObject(job, ['id', 'workspaceId', 'receiptId', 'position', 'kind', 'status', 'admittedAt', 'admittedBy', 'parameters'],
@@ -182,7 +309,7 @@ function verifyServiceWorkspace(db: DatabaseSync, cipher: PayloadCipher, workspa
         requireValid(job.workspaceId === workspaceId && Number.isSafeInteger(job.position) && job.position > 0 &&
             job.position === Number(row.position) && job.id === row.id && job.receiptId === row.receipt_id &&
             job.kind === row.kind && job.status === row.status && job.admittedAt === row.admitted_at && !jobs.has(job.id));
-        requireValid(['owner_turn', 'execute', 'readback', 'reminder'].includes(job.kind) &&
+        requireValid(['owner_turn', 'execute', 'readback', 'reminder', 'monitor'].includes(job.kind) &&
             ['queued', 'running', 'finished', 'stopped', 'interrupted'].includes(job.status));
         requireValid(job.actionRecordId === undefined || job.kind === 'readback');
         const request = requests.get(job.receiptId);
@@ -209,6 +336,43 @@ function verifyServiceWorkspace(db: DatabaseSync, cipher: PayloadCipher, workspa
                 request.envelope.actionId === job.parameters.actionId && request.envelope.digest === job.parameters.digest);
             const action = state.actions[job.parameters.actionId];
             requireValid(action?.digest === job.parameters.digest);
+            if (request?.envelope.kind === 'execute' && request.envelope.scheduledMonitor !== undefined) {
+                const binding = request.envelope.scheduledMonitor;
+                const monitorJob = verifiedJobs.get(binding.monitorJobId);
+                const monitor = state.monitors[binding.monitorId];
+                const grant = state.monitoredActionGrants[binding.grantId];
+                const observation = monitorJob?.result?.recordIds.map(id => prior.get(id)).find(record =>
+                    record?.event.type === 'monitor.observation_recorded');
+                requireValid(monitorJob?.kind === 'monitor' && monitorJob.parameters.kind === 'monitor' &&
+                    monitorJob.parameters.monitorId === binding.monitorId &&
+                    monitorJob.parameters.grantId === binding.grantId && monitorJob.status === 'finished' &&
+                    monitorJob.result?.reason === 'monitor_observed' &&
+                    observation?.event.type === 'monitor.observation_recorded' &&
+                    observation.event.data.jobId === binding.monitorJobId &&
+                    observation.event.data.observation.observedAt === binding.observedAt &&
+                    action?.attemptId === binding.attemptId && action.workId === binding.workId &&
+                    action.workRevision === binding.workRevision && action.key === `monitor:${binding.grantId}:${binding.observationDigest}` &&
+                    action.command.kind === 'operation.execute' && action.command.operationId === binding.adapter &&
+                    action.command.operationVersion === String(binding.adapterVersion) &&
+                    action.command.connectionId === binding.connectionId &&
+                    action.command.connectionGeneration === binding.connectionGeneration &&
+                    action.monitoredGrant?.id === binding.grantId &&
+                    action.monitoredGrant.digest === binding.grantDigest &&
+                    action.monitoredGrant.revision === binding.grantRevision && monitor?.status === 'stopped' &&
+                    monitor.grantId === binding.grantId && monitor.workId === binding.workId &&
+                    monitor.adapter === binding.adapter && monitor.adapterVersion === binding.adapterVersion &&
+                    monitor.connectionId === binding.connectionId &&
+                    monitor.connectionGeneration === binding.connectionGeneration &&
+                    monitor.browserProfileId === binding.browserProfileId && monitor.subjectDigest === binding.subjectDigest &&
+                    grant?.digest === binding.grantDigest && grant.revision === binding.grantRevision &&
+                    grant.adapter === binding.adapter && grant.adapterVersion === binding.adapterVersion &&
+                    grant.connectionId === binding.connectionId &&
+                    grant.connectionGeneration === binding.connectionGeneration &&
+                    grant.browserProfileId === binding.browserProfileId && grant.subjectDigest === binding.subjectDigest &&
+                    grant.installationGeneration === binding.installationGeneration && grant.reservedActionId === action.id &&
+                    grant.reservationAttemptId === binding.attemptId &&
+                    grant.reservationObservationDigest === binding.observationDigest);
+            }
             if (job.actionRecordId !== undefined) {
                 identifier(job.actionRecordId, 'actionRecordId');
                 const outcome = prior.get(job.actionRecordId);
@@ -222,13 +386,53 @@ function verifyServiceWorkspace(db: DatabaseSync, cipher: PayloadCipher, workspa
                     verification.event.data.verification.status !== 'owner_attested');
                 if (job.kind === 'readback') requireValid(job.actionRecordId !== undefined);
             }
-        } else {
+        } else if (job.kind === 'reminder') {
             exactObject(job.parameters, ['kind', 'timerId', 'workId', 'timerRecordId']);
             requireValid(job.parameters.kind === 'reminder' && request?.envelope.kind === 'reminder' &&
                 request.envelope.timerId === job.parameters.timerId && request.envelope.workId === job.parameters.workId);
             const timerRecord = prior.get(job.parameters.timerRecordId);
             requireValid(timerRecord?.event.type === 'timer.fired' && timerRecord.event.data.id === job.parameters.timerId &&
                 inboxRecords.has(timerRecord.id));
+        } else if (job.parameters.kind === 'monitor' && job.parameters.purpose === 'resume') {
+            exactObject(job.parameters, ['kind', 'purpose', 'monitorId', 'grantId', 'digest', 'revision',
+                'controlRevision', 'recoverHandoff', 'resumeRecordId', 'serviceGeneration',
+                'installationGeneration', 'workRevision']);
+            requireValid(request?.envelope.kind === 'monitor' && request.envelope.purpose === 'resume' &&
+                request.envelope.monitorId === job.parameters.monitorId && request.envelope.grantId === job.parameters.grantId &&
+                request.envelope.digest === job.parameters.digest && request.envelope.revision === job.parameters.revision &&
+                request.envelope.controlRevision === job.parameters.controlRevision &&
+                request.envelope.recoverHandoff === job.parameters.recoverHandoff);
+            const resumeRecord = prior.get(job.parameters.resumeRecordId);
+            requireValid(resumeRecord?.event.type === 'monitor.resume_requested' &&
+                resumeRecord.event.data.id === job.parameters.monitorId && resumeRecord.event.data.jobId === job.id &&
+                resumeRecord.event.data.serviceGeneration === job.parameters.serviceGeneration &&
+                resumeRecord.event.data.installationGeneration === job.parameters.installationGeneration);
+            const grant = state.monitoredActionGrants[job.parameters.grantId];
+            const monitor = state.monitors[job.parameters.monitorId];
+            requireValid(grant?.digest === job.parameters.digest && grant.revision === job.parameters.revision);
+            if (job.status === 'queued' || job.status === 'running') {
+                requireValid(monitor?.grantId === job.parameters.grantId && monitor.status === 'paused' &&
+                    monitor.inFlightJobId === job.id && monitor.control?.resume?.jobId === job.id);
+                liveMonitorJobs.add(job.id);
+            } else requireValid(monitor?.inFlightJobId !== job.id);
+        } else {
+            exactObject(job.parameters, ['kind', 'monitorId', 'grantId', 'dueAt', 'pollRecordId'], ['purpose']);
+            requireValid(job.parameters.kind === 'monitor' &&
+                (job.parameters.purpose === undefined || job.parameters.purpose === 'observe') &&
+                request?.envelope.kind === 'monitor' && request.envelope.purpose !== 'resume' &&
+                request.envelope.monitorId === job.parameters.monitorId && request.envelope.grantId === job.parameters.grantId &&
+                request.envelope.dueAt === job.parameters.dueAt);
+            const pollRecord = prior.get(job.parameters.pollRecordId);
+            requireValid(pollRecord?.event.type === 'monitor.poll_started' && pollRecord.event.data.id === job.parameters.monitorId &&
+                pollRecord.event.data.jobId === job.id && pollRecord.event.data.dueAt === job.parameters.dueAt);
+            const grant = state.monitoredActionGrants[job.parameters.grantId];
+            const monitor = state.monitors[job.parameters.monitorId];
+            requireValid(grant !== undefined);
+            if (job.status === 'queued' || job.status === 'running') {
+                requireValid(monitor?.grantId === job.parameters.grantId && monitor.status === 'active' &&
+                    monitor.inFlightJobId === job.id);
+                liveMonitorJobs.add(job.id);
+            } else requireValid(monitor?.inFlightJobId !== job.id);
         }
 
         if (job.status === 'queued') {
@@ -252,11 +456,27 @@ function verifyServiceWorkspace(db: DatabaseSync, cipher: PayloadCipher, workspa
             }
         }
         jobs.add(job.id);
+        verifiedJobs.set(job.id, job);
     }
     for (const { receipt } of requests.values()) {
         if (receipt.jobId !== undefined) requireValid(jobs.has(receipt.jobId));
     }
+    for (const monitor of Object.values(state.monitors))
+        if (monitor.inFlightJobId !== null) requireValid(liveMonitorJobs.has(monitor.inFlightJobId));
     for (const { receipt, envelope } of requests.values()) {
+        if (envelope.kind.startsWith('monitoring_')) {
+            requireValid(receipt.monitoring !== undefined);
+            for (const recordId of receipt.monitoring.recordIds) requireValid(prior.has(recordId));
+            if (envelope.kind === 'monitoring_setup')
+                requireValid(receipt.monitoring.fixtureId === envelope.fixtureId &&
+                    receipt.monitoring.connectionId !== undefined && receipt.monitoring.workId !== undefined);
+            if (envelope.kind === 'monitoring_propose')
+                requireValid(receipt.monitoring.fixtureId === envelope.fixtureId && receipt.monitoring.grantId !== undefined &&
+                    receipt.monitoring.monitorId !== undefined && receipt.monitoring.workId !== undefined);
+            if (envelope.kind === 'monitoring_arm')
+                requireValid(receipt.monitoring.grantId === envelope.grantId && receipt.monitoring.monitorId !== undefined);
+            continue;
+        }
         if (envelope.kind !== 'schedule_reminder') continue;
         const timer = receipt.timerId === undefined ? undefined : state.timers[receipt.timerId];
         requireValid(timer !== undefined && timer.workId === envelope.workId && timer.dueAt === envelope.dueAt);
@@ -269,6 +489,7 @@ export function verifyEncryptedDatabase(db: DatabaseSync, cipher: PayloadCipher)
         const version = Number(db.prepare('PRAGMA user_version').get()!.user_version);
         requireValid(version === 2 || version === 4);
         validateEncryptedSchema(db);
+        monitorInstallationState(db, cipher);
         const protection = db.prepare('SELECT * FROM storage_protection').all();
         requireValid(protection.length === 1 && protection[0]!.id === 1 && protection[0]!.format === 1);
         requireValid(cipher.open(String(protection[0]!.verification), ['metadata', 'verification']) === 'behalvo/storage/v1/verified');
@@ -317,6 +538,8 @@ export function verifyEncryptedDatabase(db: DatabaseSync, cipher: PayloadCipher)
                 if (event.type === 'message.received') requireArtifact(event.data.artifactId);
                 if (event.type === 'work.phase_changed' && event.data.evidenceRef !== undefined) requireArtifact(event.data.evidenceRef);
                 if (event.type === 'action.finished' || event.type === 'action.reconciled') requireArtifact(event.data.evidenceRef);
+                if (event.type === 'monitored_action.intent_recorded') requireArtifact(event.data.evidenceRef);
+                if (event.type === 'monitored_action.confirmation_recorded') requireArtifact(event.data.evidenceRef);
                 if (event.type === 'action.verification_recorded' && event.data.verification.status === 'owner_attested')
                     requireArtifact(event.data.verification.evidenceRef);
                 if (event.type === 'inbox.handled') {
@@ -328,6 +551,8 @@ export function verifyEncryptedDatabase(db: DatabaseSync, cipher: PayloadCipher)
                 state = reduce(state, event, record.seq, observedAt);
                 prior.set(record.id, record);
             }
+            validateMonitoredReservationJournal(records.map(record => record.event), state);
+            validateMonitoredReservationState(state);
             const projection = projections[0]!;
             requireValid(projection.version === state.version && isDeepStrictEqual(decodeProjection(projection, cipher), state));
 

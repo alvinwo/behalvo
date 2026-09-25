@@ -103,10 +103,109 @@ function serviceStatus(overrides = {}) {
     runtime: { accepting: true, faulted: false, activeJobId: null, activeStartedAt: null,
       lastSchedulerPollAt: null, nextDueAt: null },
     unresolvedActionIds: [], unresolvedActions: [],
+    connections: [],
+    monitoredAdapters: [{ adapterId: 'us-visa-china', adapterVersion: 1, liveRegistration: 'disabled',
+      discovery: 'not_started', blockers: ['authenticated_contract_fixture', 'current_terms_decision',
+        'reviewed_origin', 'reviewed_roster', 'polling_limits', 'private_connection', 'active_grant'], report: null }],
     limits: { foreground: true, awakeOnly: true, supervised: false },
     ...overrides
   };
 }
+
+test('service UI exposes disabled visa discovery readiness without claiming live acceptance', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  ui.queueJson(200, serviceStatus());
+  ui.queueJson(200, { items: [], nextAfter: null });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  await ui.click('service-refresh');
+  const text = ui.element('monitored-adapters').textContent;
+  assert.match(text, /us-visa-china/);
+  assert.match(text, /disabled/);
+  assert.match(text, /supervised discovery/i);
+  assert.equal(/live.*ready/i.test(text), false);
+});
+
+test('synthetic monitoring UI renders exact authority and explicit handoff recovery controls', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  ui.queueJson(200, serviceStatus({ databaseMode: 'encrypted', monitoring: { mode: 'synthetic', configured: true,
+    fixtureId: 'visa-beijing-group-v1', installation: 'active', limitsProfile: 'synthetic-visa-one-effect-v1' } }));
+  ui.queueJson(200, { items: [], nextAfter: null });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  ui.queueJson(200, { items: [{ id: 'grant-a', digest: DIGEST, revision: 1, status: 'active',
+    adapter: 'us-visa-china', expiresAt: '2027-01-31T16:00:00.000Z', allowance: { reservedActionId: null } }], nextAfter: null });
+  ui.queueJson(200, { items: [{ id: 'monitor-a', grantId: 'grant-a', status: 'paused', pauseReason: 'owner_paused',
+    controlRevision: 4, handoff: { id: 'handoff-a', state: 'failed' }, resume: null,
+    nextDueAt: null, requestsInWindow: 2, polling: { requestBudget: 30 }, action: null }], nextAfter: null });
+  await ui.click('service-refresh');
+  assert.equal(ui.element('synthetic-monitoring').hidden, false);
+  assert.match(ui.element('grants').textContent, /grant-a.*active/);
+  assert.match(ui.element('monitors').textContent, /monitor-a.*paused.*handoff failed/i);
+  const monitorItem = ui.element('monitors').children[0];
+  const reconcile = monitorItem.children.find(child => child.tagName === 'LABEL').children[0];
+  assert.equal(reconcile.checked, false);
+  const resume = monitorItem.children.find(child => child.tagName === 'BUTTON' && /resume/i.test(child.textContent));
+  reconcile.checked = true;
+  ui.queueJson(202, { receipt: { id: 'resume-receipt' }, job: { id: 'resume-job' }, duplicate: false });
+  await resume.dispatch('click');
+  const call = ui.fetchCalls.find(entry => entry.path === '/api/monitors/monitor-a/resume');
+  assert.deepEqual(JSON.parse(call.init.body), { requestId: JSON.parse(call.init.body).requestId,
+    digest: DIGEST, revision: 1, controlRevision: 4, recoverHandoff: true });
+  assert.equal(ui.storageCalls.length, 0);
+});
+
+test('service UI shows connection metadata without references and submits selected disconnect deletions', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  const connection = { id: 'connection-a', service: 'visa-scheduling', generation: 3,
+    profileId: 'profile-a', mode: 'synthetic', state: 'connected',
+    secretPurposes: ['password', 'security-answer'] };
+  ui.queueJson(200, serviceStatus({ connections: [connection] }));
+  ui.queueJson(200, { items: [], nextAfter: null });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  await ui.click('service-refresh');
+
+  const text = ui.element('connections').textContent;
+  assert.match(text, /visa-scheduling/);
+  assert.match(text, /profile-a/);
+  assert.equal(text.includes('secret_'), false);
+  assert.equal(text.includes('account-a'), false);
+  const item = ui.element('connections').children[0];
+  const labels = item.children.filter(child => child.tagName === 'LABEL');
+  assert.deepEqual(labels.map(label => label.textContent), ['Delete password', 'Delete security-answer']);
+  const passwordChoice = labels[0].children[0];
+  const answerChoice = labels[1].children[0];
+  assert.equal(labels[0].htmlFor, passwordChoice.id);
+  assert.equal(labels[1].htmlFor, answerChoice.id);
+  assert.ok(passwordChoice.id && answerChoice.id && passwordChoice.id !== answerChoice.id);
+  assert.equal(passwordChoice.checked, false);
+  assert.equal(answerChoice.checked, false);
+  const button = item.children.find(child => child.tagName === 'BUTTON');
+  passwordChoice.checked = true;
+  answerChoice.checked = false;
+  ui.queueJson(200, { connectionId: 'connection-a', state: 'disconnected', profileRemovalOffered: true,
+    profilePath: '/private/profile-a', deletedPurposes: ['password'] });
+  await button.dispatch('click');
+
+  const call = ui.fetchCalls.find(entry => entry.path === '/api/connections/connection-a/disconnect');
+  assert.equal(call.init.method, 'POST');
+  assert.deepEqual(JSON.parse(call.init.body), { deletePurposes: ['password'] });
+  assert.match(ui.element('status').textContent, /profile.*not removed/i);
+});
+
+test('service UI offers explicit retry for an incomplete disconnect', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  ui.queueJson(200, serviceStatus({ connections: [{ id: 'connection-a', service: 'visa-scheduling', generation: 1,
+    profileId: 'profile-a', mode: 'synthetic', state: 'disconnect_failed', secretPurposes: ['password'] }] }));
+  ui.queueJson(200, { items: [], nextAfter: null });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  await ui.click('service-refresh');
+  const button = ui.element('connections').children[0].children.find(child => child.tagName === 'BUTTON');
+  assert.ok(button);
+  assert.match(button.textContent, /retry/i);
+});
 
 function jobSummary(overrides = {}) {
   return {

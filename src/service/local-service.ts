@@ -14,6 +14,8 @@ import { OwnerControlService } from '../control/review-service.js';
 import { ServiceControlService } from '../control/service-control.js';
 import { startOwnerControlServer } from '../control/http-server.js';
 import { validateLocalServiceOptions, type LocalServiceOptions } from './config.js';
+import type { PrivateConnectionRegistration } from '../connections/private-connection.js';
+import { createSyntheticMonitoringComposition, type SyntheticMonitoringComposition } from './synthetic-monitoring.js';
 
 export interface LocalService {
   readonly origin: string;
@@ -58,6 +60,7 @@ export async function startLocalService(input: LocalServiceOptions): Promise<Loc
   let control: ServiceControlService | undefined;
   let server: Awaited<ReturnType<typeof startOwnerControlServer>> | undefined;
   let runtime: ServiceRuntime | undefined;
+  let monitoring: SyntheticMonitoringComposition | undefined;
   let released = false;
   const releaseResources = (): void => {
     if (released) return;
@@ -78,7 +81,8 @@ export async function startLocalService(input: LocalServiceOptions): Promise<Loc
       serviceQueue: { upgradeExisting: options.upgradeStorage },
       ...(options.encryptionKey ? { encryptionKey: options.encryptionKey } : {})
     });
-    store.bindLocalMode(options.syntheticOperations ? 'synthetic' : 'ordinary');
+    store.bindLocalMode(options.syntheticMonitoring ? 'synthetic-monitoring' :
+      options.syntheticOperations ? 'synthetic' : 'ordinary');
     let state;
     try { state = store.state(options.workspaceId); }
     catch (error) {
@@ -103,18 +107,60 @@ export async function startLocalService(input: LocalServiceOptions): Promise<Loc
     const sessions = new OwnerControlSessions({ workspaceId: options.workspaceId, ownerId: options.ownerId },
       options.clock ?? Date.now);
     const operator = new Operator(store, isoClock);
+    const serviceGeneration = randomUUID();
     reviews = new OwnerControlService({ store, operator, operations, sessions,
       binding: { workspaceId: options.workspaceId, ownerId: options.ownerId },
       onFatalStorageError: error => runtime?.reportStorageError(error),
       ...(options.clock ? { clock: options.clock } : {}) });
+    if (options.syntheticMonitoring) monitoring = await createSyntheticMonitoringComposition({ store,
+      workspaceId: options.workspaceId, ownerId: options.ownerId, serviceGeneration,
+      options: options.syntheticMonitoring, clock: isoClock });
     runtime = new ServiceRuntime(store, agent, operations, {
       workspaceId: options.workspaceId, ownerId: options.ownerId, instanceId: sessions.instanceId,
-      serviceGeneration: randomUUID(), clock: isoClock
+      serviceGeneration, clock: isoClock,
+      ...(monitoring ? { monitoring: monitoring.service, browserSessions: [monitoring.session] } :
+        options.browserSessions ? { browserSessions: options.browserSessions } : {})
     });
+    if (options.privateConnections) {
+      options.privateConnections.bindAuthority({
+        assertConnection(connection) {
+          const durable = store!.state(options.workspaceId).connections[connection.id];
+          if (!durable || durable.status !== 'active' || durable.generation !== connection.generation ||
+              durable.provider !== connection.service) throw new Error('Private connection operation failed.');
+        },
+        async revokeConnection(connection) {
+          const durable = store!.state(options.workspaceId).connections[connection.id];
+          if (durable?.status === 'active' && durable.generation === connection.generation) {
+            operations.revokeConnection({ workspaceId: options.workspaceId, ownerId: options.ownerId,
+              connectionId: connection.id });
+            return;
+          }
+          if (!durable || durable.status !== 'revoked' || durable.generation !== connection.generation + 1)
+            throw new Error('Private connection operation failed.');
+        },
+        async revokeBrowserEpochs(connection) {
+          const matches = (options.browserSessions ?? []).filter(session =>
+            session.profileId === connection.profileId && session.connectionGeneration === connection.generation);
+          await Promise.all(matches.map(session => session.shutdown()));
+        },
+        async revokeSecretBrokers(connection) {
+          for (const broker of options.privateSecretBrokers ?? []) {
+            if (broker.connectionId === connection.id && broker.connectionGeneration === connection.generation)
+              broker.revoke(connection.id, connection.generation);
+          }
+        },
+        async stopAndReleaseMonitors(connection) {
+          stopConnectionMonitors(store!, options.workspaceId, options.ownerId, connection, isoClock());
+        }
+      });
+    }
     control = new ServiceControlService({ store, runtime, reviews, sessions, operator,
       binding: { workspaceId: options.workspaceId, ownerId: options.ownerId },
       ...(options.model ? { model: options.model } : {}),
       databaseMode: options.encryptionKey ? 'encrypted' : 'plaintext',
+      ...(options.privateConnections ? { privateConnections: options.privateConnections } : {}),
+      ...(monitoring ? { syntheticMonitoring: monitoring } : {}),
+      ...(options.visaAdapterReadiness ? { visaAdapterReadiness: options.visaAdapterReadiness } : {}),
       ...(options.clock ? { clock: options.clock } : {}) });
     const app = { sessions, service: reviews, serviceControl: control, close: releaseResources };
     server = await startOwnerControlServer({ app, bootstrapDirectory: options.bootstrapDirectory,
@@ -139,8 +185,23 @@ export async function startLocalService(input: LocalServiceOptions): Promise<Loc
     };
   } catch (error) {
     try { await server?.close(); } catch { /* Preserve the fixed startup error. */ }
+    try { await monitoring?.session.shutdown(); } catch { /* Preserve the fixed startup error. */ }
     releaseResources();
     throw error;
+  }
+}
+
+function stopConnectionMonitors(store: SqliteStore, workspaceId: string, ownerId: string,
+  connection: Readonly<PrivateConnectionRegistration>, at: string): void {
+  for (;;) {
+    const state = store.state(workspaceId);
+    const grant = Object.values(state.monitoredActionGrants).find(item =>
+      item.connectionId === connection.id && item.connectionGeneration === connection.generation &&
+      item.revokedAt === undefined && ['pending', 'active', 'blocked', 'consumed'].includes(item.status));
+    if (!grant) return;
+    store.terminalizeMonitoredGrant(workspaceId, state.version, { type: 'monitored_action.grant_revoked', data: {
+      id: grant.id, digest: grant.digest, revision: grant.revision, reason: 'owner_revoked', revokedAt: at
+    } }, { actorId: ownerId, recordedAt: at });
   }
 }
 

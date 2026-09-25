@@ -1,0 +1,66 @@
+COMMAND="npm run build && node --test --test-reporter=spec --test-name-pattern='exclusive recovery preserves|queued work cancellation|pre-intent connection rejection|pre-intent inactive installation|scheduled admission rechecks' tests/monitoring-service.test.mjs"
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+▶ exclusive recovery preserves only an exact unclaimed scheduled execution and later drains it once
+  ✖ queued (31.729848ms)
+  ✔ running (12.373705ms)
+✖ exclusive recovery preserves only an exact unclaimed scheduled execution and later drains it once (45.985776ms)
+▶ queued work cancellation or revision drift terminalizes without dispatch or releasing allowance
+  ✖ cancelled (13.460049ms)
+  ✖ waiting_external (10.773135ms)
+✖ queued work cancellation or revision drift terminalizes without dispatch or releasing allowance (24.68245ms)
+✖ pre-intent connection rejection atomically terminalizes the exact action and execute job (9.344425ms)
+✖ pre-intent inactive installation terminalizes instead of orphaning a running action (11.142531ms)
+✖ scheduled admission rechecks fresh observation time after policy selection (8.767047ms)
+✖ scheduled admission rechecks the original lifecycle after held policy selection (5.350644ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 1
+ℹ fail 9
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 247.827119
+
+✖ failing tests:
+
+✖ queued
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+✖ cancelled
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+✖ waiting_external
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+✖ pre-intent connection rejection atomically terminalizes the exact action and execute job
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + 'running'
+  - 'failed'
+
+✖ pre-intent inactive installation terminalizes instead of orphaning a running action
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + 'running'
+  - 'failed'
+
+✖ scheduled admission rechecks fresh observation time after policy selection
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+
+✖ scheduled admission rechecks the original lifecycle after held policy selection
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+
+COMMAND_EXIT_CODE="1"

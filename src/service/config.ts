@@ -6,6 +6,39 @@ import type { ControlAssets } from '../control/http-server.js';
 import type { ModelStateProtectionOptions } from '../storage/model-state-codec.js';
 import { assertModelStatePathSeparation } from '../cli/model-state-config.js';
 import { resolveModelStatePath } from '../storage/private-model-state-file.js';
+import type { BrowserSessionLifecycle } from '../browser/types.js';
+import type { PrivateConnectionControl } from '../connections/private-connection.js';
+import type { NativeHostSecretAccess } from '../browser/native-host.js';
+import type { UsVisaChinaReadiness } from '../adapters/us-visa-china/types.js';
+import { sanitizeUsVisaChinaReadiness } from '../adapters/us-visa-china/discovery.js';
+import type { BrowserSessionTransport } from '../browser/session.js';
+
+export const SYNTHETIC_MONITORING_FIXTURE_ID = 'visa-beijing-group-v1' as const;
+
+export interface SyntheticMonitoringBrowserContext {
+  serviceGeneration: string;
+  installationGeneration: string;
+  binding: Readonly<{
+    allowedOrigin: 'http://127.0.0.1:43117';
+    connectionId: 'synthetic-visa-connection';
+    connectionGeneration: 1;
+    profileId: string;
+    identityDigest: string;
+    subjectDigest: string;
+    rosterDigest: string;
+    termsDigest: string;
+    termsVersion: 'terms-1';
+  }>;
+}
+
+export type SyntheticMonitoringBrowserFactory = (
+  context: Readonly<SyntheticMonitoringBrowserContext>
+) => Promise<{ transport: BrowserSessionTransport; tabId: number }>;
+
+export interface SyntheticMonitoringOptions {
+  fixtureId: typeof SYNTHETIC_MONITORING_FIXTURE_ID;
+  createBrowserTransport: SyntheticMonitoringBrowserFactory;
+}
 
 export interface LocalServiceOptions {
   dbPath: string;
@@ -25,6 +58,11 @@ export interface LocalServiceOptions {
   settingsPath?: string;
   storageKeyPath?: string;
   clock?: () => number;
+  browserSessions?: readonly BrowserSessionLifecycle[];
+  privateConnections?: PrivateConnectionControl;
+  privateSecretBrokers?: readonly NativeHostSecretAccess[];
+  visaAdapterReadiness?: UsVisaChinaReadiness;
+  syntheticMonitoring?: SyntheticMonitoringOptions;
 }
 
 function invalid(): never {
@@ -81,7 +119,30 @@ export function validateLocalServiceOptions(options: LocalServiceOptions): Local
     typeof options.upgradeStorage !== 'boolean' || !options.assets || typeof options.assets.html !== 'string' ||
     typeof options.assets.javascript !== 'string' || typeof options.assets.css !== 'string' ||
     (options.port !== undefined && (!Number.isSafeInteger(options.port) || options.port < 0 || options.port > 65_535)) ||
-    (options.gateways !== undefined && !Array.isArray(options.gateways))) invalid();
+    (options.gateways !== undefined && !Array.isArray(options.gateways)) ||
+    (options.browserSessions !== undefined && !Array.isArray(options.browserSessions)) ||
+    (options.privateConnections !== undefined && (!options.privateConnections ||
+      typeof options.privateConnections.list !== 'function' ||
+      typeof options.privateConnections.disconnect !== 'function' ||
+      typeof options.privateConnections.bindAuthority !== 'function')) ||
+    (options.privateSecretBrokers !== undefined && !Array.isArray(options.privateSecretBrokers))) invalid();
+  if (options.syntheticMonitoring !== undefined) {
+    const monitoring = options.syntheticMonitoring;
+    if (!(options.encryptionKey instanceof Uint8Array) || options.encryptionKey.byteLength !== 32)
+      throw new Error('Synthetic monitoring requires encrypted storage.');
+    if (!monitoring || typeof monitoring !== 'object' || Array.isArray(monitoring) ||
+        Object.getPrototypeOf(monitoring) !== Object.prototype ||
+        Object.keys(monitoring).sort().join('\0') !== ['createBrowserTransport', 'fixtureId'].sort().join('\0') ||
+        monitoring.fixtureId !== SYNTHETIC_MONITORING_FIXTURE_ID ||
+        typeof monitoring.createBrowserTransport !== 'function' || options.syntheticOperations === true ||
+        options.browserSessions !== undefined || options.privateConnections !== undefined ||
+        options.privateSecretBrokers !== undefined) invalid();
+  }
+  if (options.browserSessions?.some(session => !session || typeof session.shutdown !== 'function')) invalid();
+  if (options.privateSecretBrokers?.some(broker => !broker || typeof broker.revoke !== 'function')) invalid();
+  if (options.visaAdapterReadiness !== undefined) {
+    try { sanitizeUsVisaChinaReadiness(options.visaAdapterReadiness); } catch { invalid(); }
+  }
   try { identifier(options.workspaceId, 'workspaceId'); identifier(options.ownerId, 'ownerId'); }
   catch { invalid(); }
   if (options.syntheticOperations === true && options.encryptionKey !== undefined)

@@ -1,0 +1,15 @@
+Task 8A review fix round 1 RED
+
+Command:
+npm run build && node --test --test-reporter=spec --test-name-pattern='final compiled reread rejects duplicate|final compiled reread rejects terminal|compiled page metadata drift|rendered 403' tests/us-visa-observation.test.mjs
+
+Build: passed.
+
+Focused tests: 0 passed, 4 failed.
+
+- malformed required calendar metadata: Native messaging response timed out instead of returning a typed contract_changed observation.
+- contradictory duplicate candidate ID/evidence on final reread: returned complete: true with the original candidate instead of candidate_set_changed.
+- terminal pagination false-to-true drift on final reread: returned complete: true with paginationComplete: true instead of pagination_changed.
+- rendered forbidden navigation destination: retained the prior complete calendar document instead of installing and recognizing the 403 checkpoint.
+
+No booking or selection mutation was performed by these RED probes.

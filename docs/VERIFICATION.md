@@ -1,4 +1,31 @@
-> **Current local verification:** [Private model-state verification](verification/2026-09-14-private-model-state.md).
+> **Current verification command:** `npm run verify`. Treat only its terminal
+> `data/verification/*/summary.json` and named raw logs as evidence for a run.
+
+## Current sequential gate
+
+On POSIX, `npm run verify` records and runs these steps in order:
+
+1. `npm run check` (strict typecheck, build, and all automated tests);
+2. `npm run demo`;
+3. `npm run operations:demo`;
+4. `npm run owner-control:demo`;
+5. `npm run service:demo`; and
+6. `git diff --check`.
+
+The service demo is synthetic acceptance evidence: it uses paired loopback HTTP,
+the actual fixed-origin portal HTML, compiled manifest-selected content/background
+scripts, framed native transport, one service-owned browser session, encrypted
+storage, restart, human handoff/resume, a pre-reservation disappearance, one
+later verified booking, stopped recurrence, and effect-free rebuild. It is not
+evidence of installed Chrome, Keychain, current live terms, credentials, owner
+activation, a real booking, hosted CI, or OS-supervised uptime.
+
+The verification runner snapshots the Git head and tracked/untracked source
+fingerprint before and after the sequence and fails if either changes. A dirty
+tree can be verified, but the summary records that fact. Final release review
+must inspect the summary and raw logs and bind them to the exact reviewed commit.
+
+> **Previous current local verification:** [Private model-state verification](verification/2026-09-14-private-model-state.md).
 
 > **Historical verification:** [Owner-control verification](verification/2026-09-14-owner-control.md).
 

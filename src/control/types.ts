@@ -1,8 +1,11 @@
-import type { Action, WorkPhase } from '../kernel/types.js';
+import type { Action, DomainEvent, WorkPhase } from '../kernel/types.js';
 import type { Connection, OperationCommand, VerificationState } from '../operations/types.js';
 import type { ServiceJobKind, ServiceJobStatus, ServiceQueueCounts, ServiceReceipt,
   ServiceStopReason } from '../storage/service-jobs.js';
 import type { ServiceRuntimeSnapshot } from '../runtime/service-runtime.js';
+import type { PrivateConnectionDisconnectResult, PrivateConnectionSummary } from '../connections/private-connection.js';
+import type { UsVisaChinaReadiness } from '../adapters/us-visa-china/types.js';
+import type { MonitorResumeEvidence } from '../monitoring/types.js';
 
 export interface ControlBinding {
   readonly workspaceId: string;
@@ -113,6 +116,9 @@ export interface ControlJobSummary {
   focus: { threadId: string; workId: string | null } | null;
   actionId: string | null;
   resultReason: ServiceStopReason | null;
+  monitoring?: { monitorId: string; purpose: 'observe' | 'resume';
+    resumeReason: Extract<DomainEvent, { type: 'monitor.resume_finished' }>['data']['reason'] | null;
+    resumeEvidence: MonitorResumeEvidence | null };
 }
 
 export interface ControlJobResult {
@@ -155,7 +161,11 @@ export interface ControlServiceStatus {
   unresolvedActionIds: string[];
   unresolvedActions: Array<{ actionId: string; status: Action['status'];
     kind: 'active_execution' | 'crash_preserved_execution' | 'unknown_outcome' | 'accepted_unverified' }>;
+  connections: PrivateConnectionSummary[];
+  monitoredAdapters: UsVisaChinaReadiness[];
   limits: { foreground: true; awakeOnly: true; supervised: false };
+  monitoring?: { mode: 'synthetic'; configured: true; fixtureId: 'visa-beijing-group-v1';
+    installation: 'active' | 'blocked'; limitsProfile: 'synthetic-visa-one-effect-v1' };
 }
 
 export interface ServiceControlAdapter {
@@ -172,4 +182,19 @@ export interface ServiceControlAdapter {
   reminder(principal: ControlPrincipal, input: unknown): { receipt: ServiceReceipt; duplicate: boolean };
   execute(principal: ControlPrincipal, actionId: string, input: unknown): ControlAdmission;
   readback(principal: ControlPrincipal, actionId: string, input: unknown): ControlAdmission;
+  disconnectConnection(principal: ControlPrincipal, connectionId: string, input: unknown):
+    Promise<PrivateConnectionDisconnectResult>;
+  setupSyntheticMonitoring(principal: ControlPrincipal, input: unknown): unknown;
+  grants(principal: ControlPrincipal, after?: string): unknown;
+  grant(principal: ControlPrincipal, grantId: string): unknown;
+  reviewGrant(principal: ControlPrincipal, grantId: string, input: unknown): unknown;
+  proposeGrant(principal: ControlPrincipal, input: unknown): unknown;
+  armGrant(principal: ControlPrincipal, grantId: string, input: unknown): unknown;
+  revokeGrant(principal: ControlPrincipal, grantId: string, input: unknown): unknown;
+  monitors(principal: ControlPrincipal, after?: string): unknown;
+  monitor(principal: ControlPrincipal, monitorId: string): unknown;
+  pauseMonitor(principal: ControlPrincipal, monitorId: string, input: unknown): unknown;
+  takeoverMonitor(principal: ControlPrincipal, monitorId: string, input: unknown): unknown;
+  resumeMonitor(principal: ControlPrincipal, monitorId: string, input: unknown): unknown;
+  stopMonitor(principal: ControlPrincipal, monitorId: string, input: unknown): unknown;
 }
