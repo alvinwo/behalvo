@@ -41,7 +41,8 @@ const coverage = (overrides = {}) => ({
   startDate: '2026-12-15', endDate: '2027-01-31',
   firstPage: 1, lastPage: 3, inspectedPages: [1, 2, 3],
   paginationComplete: true, appointmentAbsent: true,
-  identityDigest: digest('1'), rosterDigest: digest('2'), termsDigest: digest('3'),
+  identityDigest: digest('1'), subjectDigest: digest('4'), rosterDigest: digest('2'),
+  termsDigest: digest('3'), termsVersion: 'terms-1',
   ...overrides
 });
 
@@ -76,7 +77,8 @@ test('visa coverage must be complete, contiguous, fresh-bound, and match identit
     coverage({ appointmentAbsent: false }), coverage({ location: 'Shanghai' }),
     coverage({ timeZone: 'UTC' }), coverage({ startDate: '2026-12-16' }),
     coverage({ rosterDigest: digest('9') }), coverage({ identityDigest: digest('8') }),
-    coverage({ termsDigest: digest('7') }), coverage({ contractVersion: 2 })
+    coverage({ subjectDigest: 'invalid' }), coverage({ termsDigest: digest('7') }),
+    coverage({ termsVersion: '' }), coverage({ contractVersion: 2 })
   ]) assert.equal(adapter.coverageSufficient(normalized, changed), false);
 });
 

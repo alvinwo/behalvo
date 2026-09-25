@@ -66,7 +66,8 @@ function exactSchemaMatches(db: DatabaseSync, serviceSchema: readonly string[], 
     for (const row of rows) {
         if (row.name === 'local_mode' && typeof row.sql === 'string' && normalized(row.sql) === LOCAL_MODE_SCHEMA) {
             const modes = db.prepare('SELECT id, mode FROM local_mode').all();
-            if (modes.length > 1 || modes.some(mode => mode.id !== 1 || !['ordinary', 'synthetic'].includes(String(mode.mode)))) return false;
+            if (modes.length > 1 || modes.some(mode => mode.id !== 1 ||
+                !['ordinary', 'synthetic', 'synthetic-monitoring'].includes(String(mode.mode)))) return false;
         } else if (typeof row.sql !== 'string' || !expected.delete(normalized(row.sql))) return false;
     }
     return expected.size === 0;

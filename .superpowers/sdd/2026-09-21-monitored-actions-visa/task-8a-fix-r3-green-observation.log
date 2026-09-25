@@ -1,0 +1,30 @@
+Script started on 2026-09-23 02:42:34+09:00 [COMMAND="npm run build && node --test --test-reporter=spec tests/us-visa-observation.test.mjs" <not executed on terminal>]
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✔ compiled synthetic page observation is contiguous and every poll restarts from page one (125.885517ms)
+✔ compiled page metadata drift and omission cannot produce a narrowing observation (19.197098ms)
+✔ final compiled reread rejects duplicate candidate identity and evidence before observation or execution (49.371128ms)
+✔ final compiled reread rejects terminal and intermediate pagination contradictions (47.321836ms)
+✔ calendar contract changes during gesture stay typed and never click (35.404132ms)
+✔ calendar contract changes during gesture.commit stay typed and never click (34.776465ms)
+✔ compiled gesture contract rejection preserves trusted fence revocation precedence (5.983382ms)
+✔ compiled gesture contract rejection preserves abort precedence (5.080878ms)
+✔ compiled gesture.commit contract rejection preserves trusted fence revocation precedence (4.353185ms)
+✔ compiled gesture.commit contract rejection preserves abort precedence (4.213084ms)
+✔ rendered 403 and 429 navigation destinations remain typed checkpoint observations (26.121952ms)
+✔ compiled checkpoint pages preserve distinct paused observation classes (21.453675ms)
+✔ read-only disappearance rejects candidate A and a later fresh poll may return distinct candidate B (53.747362ms)
+✔ reserved execution rereads page evidence and never selects a replacement candidate (38.621146ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 593.576075
+
+Script done on 2026-09-23 02:42:40+09:00 [COMMAND_EXIT_CODE="0"]

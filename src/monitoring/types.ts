@@ -1,9 +1,29 @@
 import type { Action } from '../kernel/types.js';
 import type { TrustedExecutionFence } from '../operations/execution-context.js';
 import type { Connection, JsonValue, OperationCommand } from '../operations/types.js';
+import type { BrowserEpoch } from '../browser/types.js';
 
 export type MonitoredActionGrantStatus =
   | 'pending' | 'active' | 'revoked' | 'expired' | 'consumed' | 'blocked';
+
+export interface MonitoredArmPlanV1 {
+  version: 1;
+  fixtureId: 'visa-beijing-group-v1';
+  monitorId: string;
+  workId: string;
+  workRevision: number;
+  termsVersion: 'terms-1';
+  polling: {
+    maxObservationAgeMs: 60_000;
+    intervalMs: 2_000;
+    jitterMs: 250;
+    requestBudget: 30;
+    requestWindowMs: 60_000;
+    backoffBaseMs: 2_000;
+    backoffMaxMs: 60_000;
+  };
+  stopPolicy: 'synthetic-visa-one-effect-v1';
+}
 
 export interface MonitoredActionGrant {
   id: string;
@@ -22,6 +42,7 @@ export interface MonitoredActionGrant {
   revision: number;
   digest: string;
   status: MonitoredActionGrantStatus;
+  armPlan?: MonitoredArmPlanV1;
   activatedAt?: string;
   installationGeneration?: string;
   revokedAt?: string;
@@ -48,6 +69,18 @@ export interface MonitoredActionBinding {
   connectionGeneration: number;
   browserProfileId: string;
   subjectDigest: string;
+}
+
+export interface MonitorResumeEvidence {
+  observedAt: string;
+  identityDigest: string;
+  subjectDigest: string;
+  rosterDigest: string;
+  termsDigest: string;
+  termsVersion: string;
+  appointmentAbsent: true;
+  pageState: 'calendar';
+  evidenceDigest: string;
 }
 
 export type ObservationResult = 'complete' | 'session_expired' | 'needs_human' |
@@ -114,7 +147,14 @@ export interface MonitorSpec {
 }
 
 export type MonitorPauseReason = 'session_expired' | 'needs_human' | 'rate_limited' |
-  'contract_changed' | 'installation_changed' | 'grant_unavailable';
+  'contract_changed' | 'installation_changed' | 'grant_unavailable' | 'owner_paused' | 'owner_takeover';
+
+export interface MonitorControlV1 {
+  version: 1;
+  revision: number;
+  handoff: null | { id: string; state: 'pending' | 'confirmed' | 'failed'; binding: BrowserEpoch & { tabId: number } };
+  resume: null | { jobId: string; candidate: null | (BrowserEpoch & { tabId: number }) };
+}
 
 export interface MonitorObservationSummary {
   observedAt: string;
@@ -135,6 +175,7 @@ export interface MonitorState extends MonitorSpec {
   backoffMs: number;
   pauseReason: MonitorPauseReason | null;
   inFlightJobId: string | null;
+  control?: MonitorControlV1;
 }
 
 export interface MonitoredActionReference {

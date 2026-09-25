@@ -18,6 +18,23 @@ const binding = {
   epoch: 'a'.repeat(64), serviceGeneration: 'service-a',
   origin: 'http://127.0.0.1:43117', tabId: 7, sequence: 1
 };
+const calendarDigests = { identityDigest: '1'.repeat(64), subjectDigest: '2'.repeat(64),
+  rosterDigest: '3'.repeat(64), termsDigest: '4'.repeat(64) };
+
+function calendarSnapshot(overrides = {}) {
+  return { state: 'calendar', contractVersion: 1, location: 'Beijing', timeZone: 'Asia/Shanghai',
+    startDate: '2026-12-15', endDate: '2027-01-31', ...calendarDigests,
+    termsVersion: 'terms-1', appointmentAbsent: true, page: 1, hasNext: false, candidates: [], ...overrides };
+}
+
+function calendarDataset(overrides = {}) {
+  return { behalvoPageState: 'calendar', behalvoContractVersion: '1', behalvoLocation: 'Beijing',
+    behalvoTimeZone: 'Asia/Shanghai', behalvoStartDate: '2026-12-15', behalvoEndDate: '2027-01-31',
+    behalvoIdentityDigest: calendarDigests.identityDigest, behalvoSubjectDigest: calendarDigests.subjectDigest,
+    behalvoRosterDigest: calendarDigests.rosterDigest, behalvoTermsDigest: calendarDigests.termsDigest,
+    behalvoTermsVersion: 'terms-1', behalvoAppointmentAbsent: 'true', behalvoPage: '1',
+    behalvoHasNext: 'false', ...overrides };
+}
 
 function operationExpiry(milliseconds = 10_000) {
   return performance.timeOrigin + performance.now() + milliseconds;
@@ -67,13 +84,15 @@ test('browser protocol accepts only exact typed inspect and allowlisted gesture 
 });
 
 test('browser responses are exact, bounded, bound to page state, and exclude sensitive readback', () => {
-  const valid = { ...binding, kind: 'result', pageState: 'calendar', snapshot: {
-    state: 'calendar', page: 1, hasNext: false,
-    candidates: [{ id: 'slot-a', date: '2027-01-04', time: '09:00', location: 'Beijing' }]
-  } };
+  const valid = { ...binding, kind: 'result', documentId: 'document-a', pageState: 'calendar',
+    snapshot: calendarSnapshot({ candidates: [{ id: 'slot-a', date: '2027-01-04', time: '09:00',
+      location: 'Beijing', evidenceDigest: '5'.repeat(64) }] }) };
   assert.deepEqual(parseBrowserResponse(valid), valid);
+  const { documentId: _documentId, ...withoutDocument } = valid;
 
   for (const invalid of [
+    withoutDocument,
+    { ...valid, documentId: '' },
     { ...valid, pageState: 'login' },
     { ...valid, snapshot: { ...valid.snapshot, password: 'secret' } },
     { ...valid, snapshot: { ...valid.snapshot, html: '<main>raw</main>' } },
@@ -93,8 +112,8 @@ test('browser responses are exact, bounded, bound to page state, and exclude sen
 
 test('extension background independently validates sender and exact native response', async () => {
   const request = { ...binding, kind: 'inspect', expectedPageState: 'calendar' };
-  const snapshot = { state: 'calendar', page: 1, hasNext: false, candidates: [] };
-  const validResponse = { ...binding, kind: 'result', pageState: 'calendar', snapshot };
+  const snapshot = calendarSnapshot();
+  const validResponse = { ...binding, kind: 'result', documentId: 'document-a', pageState: 'calendar', snapshot };
   const sender = { origin: binding.origin, tab: { id: binding.tabId, url: `${binding.origin}/calendar` } };
   const boundary = createBackgroundBoundary(async () => validResponse);
   assert.deepEqual(await boundary(request, sender), validResponse);
@@ -110,7 +129,7 @@ test('extension background independently validates sender and exact native respo
 
 test('extension background forwards an exact native request to its bound content tab and wraps the typed result', async () => {
   const request = { ...binding, kind: 'inspect', expectedPageState: 'calendar' };
-  const snapshot = { state: 'calendar', page: 1, hasNext: false, candidates: [] };
+  const snapshot = calendarSnapshot();
   let target;
   const boundary = createNativeRequestBoundary(async (tabId, value) => {
     target = [tabId, value];
@@ -122,8 +141,35 @@ test('extension background forwards an exact native request to its bound content
     profileId: binding.profileId, connectionGeneration: binding.connectionGeneration, epoch: binding.epoch,
     serviceGeneration: binding.serviceGeneration, origin: binding.origin, tabId: binding.tabId };
   await boundary(control);
-  assert.deepEqual(await boundary(request), { ...binding, kind: 'result', pageState: 'calendar', snapshot });
+  assert.deepEqual(await boundary(request), { ...binding, kind: 'result', documentId: 'document-a',
+    pageState: 'calendar', snapshot });
   assert.deepEqual(target, [binding.tabId, { ...request, documentId: 'document-a' }]);
+});
+
+test('extension background sanitizes only the exact compiled page-contract marker', async () => {
+  const control = { protocolVersion: 1, kind: 'session.activate', controlId: 'activate-page-contract',
+    profileId: binding.profileId, connectionGeneration: binding.connectionGeneration, epoch: binding.epoch,
+    serviceGeneration: binding.serviceGeneration, origin: binding.origin, tabId: binding.tabId };
+  const request = { ...binding, kind: 'inspect', expectedPageState: 'calendar' };
+  const createBoundary = raw => createNativeRequestBoundary(async (_tabId, value) => {
+    if (value.kind === 'session.activate')
+      return { ...value, kind: 'session.activated', documentId: 'document-page-contract' };
+    if (value.kind === 'document.bind')
+      return { ...value, kind: 'document.bound', documentId: 'document-page-contract' };
+    return raw;
+  });
+
+  const marked = createBoundary({ error: 'page_contract_changed' });
+  await marked(control);
+  assert.deepEqual(await marked(request), { ...binding, kind: 'result', documentId: 'document-page-contract',
+    pageState: 'unknown', snapshot: { state: 'unknown' } });
+
+  for (const raw of [{ error: 'Browser request was rejected.' },
+    { error: 'page_contract_changed', detail: 'forged' }, 'page_contract_changed']) {
+    const rejected = createBoundary(raw);
+    await rejected(control);
+    await assert.rejects(rejected(request), /browser protocol/i);
+  }
 });
 
 test('extension background rejects a wrong-version document binding acknowledgement', async () => {
@@ -132,7 +178,7 @@ test('extension background rejects a wrong-version document binding acknowledgem
       return { ...value, kind: 'session.activated', documentId: 'document-version' };
     if (value.kind === 'document.bind')
       return { ...value, protocolVersion: 2, kind: 'document.bound', documentId: 'document-version' };
-    return { state: 'calendar', page: 1, hasNext: false, candidates: [] };
+    return calendarSnapshot();
   });
   const control = { protocolVersion: 1, kind: 'session.activate', controlId: 'activate-version',
     profileId: binding.profileId, connectionGeneration: binding.connectionGeneration, epoch: binding.epoch,
@@ -149,16 +195,16 @@ test('extension protocol rejects empty, nonpositive, and unbounded binding value
     { ...request, serviceGeneration: '' }, { ...request, connectionGeneration: 0 },
     { ...request, tabId: 0 }, { ...request, sequence: 0 }
   ]) assert.throws(() => validateExtensionRequest(invalid), /browser protocol/i);
-  const response = { ...binding, kind: 'result', pageState: 'calendar',
-    snapshot: { state: 'calendar', page: 1, hasNext: false, candidates: [] } };
+  const response = { ...binding, kind: 'result', documentId: 'document-a', pageState: 'calendar',
+    snapshot: calendarSnapshot() };
   assert.throws(() => validateExtensionResponse({ ...response, profileId: '' }), /browser protocol/i);
 });
 
 test('compiled content boundary recognizes adapter fields and clicks one fixed allowlisted target', async () => {
   let clicks = 0;
-  const root = { dataset: { behalvoPageState: 'calendar', behalvoPage: '2', behalvoHasNext: 'false' }, click() {} };
+  const root = { dataset: calendarDataset({ behalvoPage: '2' }), click() {} };
   const slot = { dataset: { behalvoSlotId: 'slot-a', behalvoDate: '2027-01-04', behalvoTime: '09:00',
-    behalvoLocation: 'Beijing' }, click() { clicks++; } };
+    behalvoLocation: 'Beijing', behalvoEvidenceDigest: '5'.repeat(64) }, click() { clicks++; } };
   const document = {
     querySelector(selector) {
       if (selector === '[data-behalvo-page-state]') return root;
@@ -177,8 +223,9 @@ test('compiled content boundary recognizes adapter fields and clicks one fixed a
     command: { kind: 'slot.select', slotId: 'slot-a' }, documentId: activated.documentId,
     operationId: 'operation-slot-a', operationExpiresAt: operationExpiry() };
   const snapshot = await send(request);
-  assert.deepEqual(structuredClone(snapshot), { state: 'calendar', page: 2, hasNext: false,
-    candidates: [{ id: 'slot-a', date: '2027-01-04', time: '09:00', location: 'Beijing' }] });
+  assert.deepEqual(structuredClone(snapshot), calendarSnapshot({ page: 2,
+    candidates: [{ id: 'slot-a', date: '2027-01-04', time: '09:00', location: 'Beijing',
+      evidenceDigest: '5'.repeat(64) }] }));
   assert.equal(clicks, 0);
   await send({ ...control, controlId: 'control-commit', kind: 'gesture.commit',
     requestId: request.requestId, sequence: request.sequence, operationId: request.operationId,
@@ -232,7 +279,7 @@ test('manifest content artifact parses and installs as a classic script', () => 
 
 test('actual background and compiled content bind one epoch and revoke a prepared gesture before click', async () => {
   let clicks = 0;
-  const root = { dataset: { behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'true' }, click() {} };
+  const root = { dataset: calendarDataset({ behalvoHasNext: 'true' }), click() {} };
   const next = { dataset: {}, click() { clicks++; } };
   const document = {
     querySelector(selector) {
@@ -253,7 +300,8 @@ test('actual background and compiled content bind one epoch and revoke a prepare
     serviceGeneration: binding.serviceGeneration, origin: binding.origin, tabId: binding.tabId };
   assert.equal((await boundary({ ...control, kind: 'session.activate' })).kind, 'session.activated');
   const inspect = { ...binding, kind: 'inspect', expectedPageState: 'calendar' };
-  assert.equal((await boundary(inspect)).kind, 'result');
+  const inspected = await boundary(inspect);
+  assert.equal(inspected.kind, 'result');
   await assert.rejects(boundary(inspect), /binding or replay/i);
   await assert.rejects(boundary({ ...inspect, requestId: 'request-foreign', profileId: 'profile-b', sequence: 2 }),
     /binding or replay/i);
@@ -266,8 +314,12 @@ test('actual background and compiled content bind one epoch and revoke a prepare
   assert.equal((await boundary(revocation)).kind, 'session.revoked');
   const duplicateRevocation = { ...revocation, controlId: 'control-duplicate-revoke' };
   assert.deepEqual(structuredClone(await sendContent(binding.tabId, duplicateRevocation)),
+    { ...duplicateRevocation, kind: 'session.revoked', documentId: inspected.documentId });
+  assert.deepEqual(structuredClone(await sendContent(binding.tabId, duplicateRevocation)),
     { error: 'Browser request was rejected.' });
-  await assert.rejects(boundary(duplicateRevocation), /binding or replay/i);
+  const repeatedThroughBackground = { ...revocation, controlId: 'control-repeat-through-background' };
+  assert.deepEqual(await boundary(repeatedThroughBackground), { ...repeatedThroughBackground, kind: 'session.revoked' });
+  await assert.rejects(boundary(repeatedThroughBackground), /binding or replay/i);
   await assert.rejects(boundary({ ...control, controlId: 'control-3', kind: 'gesture.commit',
     requestId: gesture.requestId, sequence: gesture.sequence, operationId: gesture.operationId }),
   /binding or replay/i);
@@ -323,8 +375,7 @@ test('compiled content recognizes every advertised typed page snapshot', async (
 
 test('background rebinds an exact sequence baseline when navigation installs a fresh content document', async () => {
   const page = number => {
-    const root = { dataset: { behalvoPageState: 'calendar', behalvoPage: String(number),
-      behalvoHasNext: 'false' }, click() {} };
+    const root = { dataset: calendarDataset({ behalvoPage: String(number) }), click() {} };
     return { querySelector(selector) { return selector === '[data-behalvo-page-state]' ? root : null; },
       querySelectorAll() { return []; } };
   };
@@ -347,7 +398,7 @@ test('background rebinds an exact sequence baseline when navigation installs a f
 
 test('background revocation invalidates an operation suspended while binding its document', async () => {
   let releaseBind; let gestureDispatches = 0;
-  const snapshot = { state: 'calendar', page: 1, hasNext: true, candidates: [] };
+  const snapshot = calendarSnapshot({ hasNext: true });
   const boundary = createNativeRequestBoundary(async (_tabId, value) => {
     if (value.kind === 'session.activate') return { ...value, kind: 'session.activated', documentId: 'document-held' };
     if (value.kind === 'session.revoke') return { ...value, kind: 'session.revoked', documentId: 'document-held' };
@@ -381,7 +432,7 @@ test('background acknowledges cancellation while a gesture is suspended binding 
     if (value.kind === 'document.bind') return new Promise(resolve => {
       releaseBind = () => resolve({ ...value, kind: 'document.bound', documentId: 'document-cancel-bind' });
     });
-    gestureDispatches++; return { state: 'calendar', page: 1, hasNext: true, candidates: [] };
+    gestureDispatches++; return calendarSnapshot({ hasNext: true });
   });
   const control = { protocolVersion: 1, profileId: binding.profileId,
     connectionGeneration: binding.connectionGeneration, epoch: binding.epoch,
@@ -406,8 +457,7 @@ test('background reports settled when cancellation follows forwarded mutation an
   let clicks = 0; let releaseAcknowledgement; let forwardedResolve;
   const forwarded = new Promise(resolve => { forwardedResolve = resolve; });
   const listener = loadContentArtifact({ querySelector(selector) {
-    if (selector === '[data-behalvo-page-state]') return { dataset: {
-      behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'true' } };
+    if (selector === '[data-behalvo-page-state]') return { dataset: calendarDataset({ behalvoHasNext: 'true' }) };
     if (selector === '[data-behalvo-gesture="calendar.next_page"]')
       return { dataset: {}, click() { clicks++; } };
     return null;
@@ -441,7 +491,7 @@ test('background reports settled when cancellation follows forwarded mutation an
 test('compiled fresh document acknowledges current epoch revocation before any rebind', async () => {
   const page = () => ({ querySelector(selector) {
     return selector === '[data-behalvo-page-state]'
-      ? { dataset: { behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'false' } }
+      ? { dataset: calendarDataset() }
       : null;
   }, querySelectorAll() { return []; } });
   let listener = loadContentArtifact(page());
@@ -458,7 +508,7 @@ test('compiled fresh document acknowledges current epoch revocation before any r
 });
 
 test('compiled content never revives a revoked epoch from a delayed document bind', async () => {
-  const root = { dataset: { behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'true' } };
+  const root = { dataset: calendarDataset({ behalvoHasNext: 'true' }) };
   const listener = loadContentArtifact({ querySelector(selector) {
     if (selector === '[data-behalvo-page-state]') return root;
     if (selector === '[data-behalvo-gesture="calendar.next_page"]') return { dataset: {}, click() {} };
@@ -492,7 +542,7 @@ test('compiled content never revives a revoked epoch from a delayed document bin
 test('background retires a delayed bind delivered to a replacement document after revoke', async () => {
   const page = () => ({ querySelector(selector) {
     return selector === '[data-behalvo-page-state]'
-      ? { dataset: { behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'false' } }
+      ? { dataset: calendarDataset() }
       : null;
   }, querySelectorAll() { return []; } });
   let listener = loadContentArtifact(page()); let releaseBind;

@@ -1,0 +1,96 @@
+BASE="34df4b6d45f86e5d9bbc0d340f866b4eeeb47bba"
+COMMAND="npm run build && node --test --test-reporter=spec --test-name-pattern='a later unbound job|atomic commit guard' tests/monitoring-service.test.mjs"
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✖ a later unbound job cannot downgrade an action with prior durable intent (29.217804ms)
+✖ scheduled admission rechecks observation freshness at the atomic commit guard (6.072168ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 166.816602
+
+✖ failing tests:
+
+test at tests/monitoring-service.test.mjs:823:1
+✖ a later unbound job cannot downgrade an action with prior durable intent (29.217804ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + 'action_failed'
+  - 'action_ineligible'
+            ^
+
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/task8b-r2-red-base/tests/monitoring-service.test.mjs:849:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'action_failed',
+    expected: 'action_ineligible',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/monitoring-service.test.mjs:882:1
+✖ scheduled admission rechecks observation freshness at the atomic commit guard (6.072168ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/task8b-r2-red-base/tests/monitoring-service.test.mjs:892:3)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /fresh|stale/i,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+COMMAND_EXIT_CODE="1"
+
+RECOVERED_PARTIAL_COMMAND="npm run build && node --test --test-reporter=spec --test-name-pattern='a later unbound job' tests/monitoring-service.test.mjs"
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✖ a later unbound job cannot downgrade an action with prior durable intent (33.500065ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 161.71186
+
+✖ failing tests:
+
+test at tests/monitoring-service.test.mjs:823:1
+✖ a later unbound job cannot downgrade an action with prior durable intent (33.500065ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + 'running'
+  - 'unknown'
+
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/monitoring-service.test.mjs:850:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'running',
+    expected: 'unknown',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+RECOVERED_PARTIAL_COMMAND_EXIT_CODE="1"

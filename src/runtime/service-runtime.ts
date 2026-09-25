@@ -117,6 +117,18 @@ export class ServiceRuntime {
     }));
   }
 
+  admitMonitorResume(input: { requestId: string; monitorId: string; grantId: string; digest: string;
+      revision: number; controlRevision: number; recoverHandoff: boolean; installationGeneration: string }) {
+    return this.#admit(() => this.store.admitMonitorResumeJob({ workspaceId: this.options.workspaceId,
+      source: 'owner:service', requestId: input.requestId, ownerId: this.options.ownerId,
+      instanceId: this.options.instanceId, serviceGeneration: this.options.serviceGeneration,
+      installationGeneration: input.installationGeneration, at: this.#clock(), envelope: {
+        kind: 'monitor', purpose: 'resume', monitorId: input.monitorId, grantId: input.grantId,
+        digest: input.digest, revision: input.revision, controlRevision: input.controlRevision,
+        recoverHandoff: input.recoverHandoff
+      } }));
+  }
+
   scheduleReminder(input: { requestId: string; timerId: string; workId: string; dueAt: string }) {
     const result = this.#admit(() => this.store.scheduleServiceReminder({
       workspaceId: this.options.workspaceId, source: 'owner:service', requestId: input.requestId,
@@ -275,8 +287,13 @@ export class ServiceRuntime {
         if (isFatalServiceStorageError(error)) throw error;
       }
     }
+    let currentJob = this.store.serviceJob(this.options.workspaceId, job.id);
+    // Trusted monitored stop paths commit the exact action and job together before returning or aborting.
+    if (monitored && job.kind === 'execute' && ['finished', 'stopped'].includes(currentJob.status) &&
+        currentJob.claim?.claimId === job.claim?.claimId)
+      return;
     fence.assertSettlementCurrent?.();
-    const currentJob = this.store.serviceJob(this.options.workspaceId, job.id);
+    currentJob = this.store.serviceJob(this.options.workspaceId, job.id);
     if (job.kind === 'execute' && !currentJob.attemptId)
       throw new Error('Execution request became ineligible before action start');
     const records = this.store.journal(this.options.workspaceId);

@@ -179,3 +179,33 @@ test('revocation and expiry fail closed and material drift revokes before narrow
     assert.equal(f.store.state(workspaceId).monitoredActionGrants[third.id].status, 'revoked');
   } finally { f.store.close(); }
 });
+
+test('revocation provenance stays orthogonal only for a retained reservation', async () => {
+  const { validateGrant } = await import('../dist/monitoring/policy.js');
+  const { validateMonitoredReservationState } = await import('../dist/monitoring/invariants.js');
+  const f = fixture();
+  try {
+    const pending = f.service.proposeGrant(proposal());
+    const active = f.service.activateGrant({ ownerId, grantId: pending.id, digest: pending.digest, revision: 1 });
+    const revocation = { revokedAt: now, revocationReason: 'owner_revoked' };
+    for (const poisoned of [{ ...active, ...revocation }, { ...active, status: 'blocked', ...revocation },
+      { ...active, revokedAt: now }, { ...active, revocationReason: 'owner_revoked' },
+      { ...active, status: 'revoked', revokedAt: '', revocationReason: 'owner_revoked' },
+      { ...active, status: 'revoked', revokedAt: now, revocationReason: '' }])
+      assert.throws(() => validateGrant(poisoned));
+    const action = f.service.reserve({ grantId: pending.id, workId: 'work', observation: observation(),
+      maxObservationAgeMs: 60_000, binding: { adapter: active.adapter, adapterVersion: 1, connectionId: 'connection-a',
+        connectionGeneration: 1, browserProfileId: 'profile-a', subjectDigest: 'b'.repeat(64) } });
+    const revoked = f.service.revokeGrant({ ownerId, grantId: pending.id, digest: pending.digest, revision: 1, reason: 'owner_revoked' });
+    assert.doesNotThrow(() => validateGrant(revoked));
+    for (const change of [{ revokedAt: undefined }, { revocationReason: undefined }, { revocationReason: '' },
+      { reservedActionId: undefined }, { status: 'revoked' }]) assert.throws(() => validateGrant({ ...revoked, ...change }));
+    const detached = f.store.state(workspaceId);
+    detached.monitoredActionGrants[pending.id].reservationAttemptId = 'foreign-attempt';
+    assert.throws(() => validateMonitoredReservationState(detached));
+    assert.throws(() => f.store.append(workspaceId, f.store.state(workspaceId).version,
+      [{ type: 'monitored_action.grant_revoked', data: { id: pending.id, digest: pending.digest,
+        revision: 1, reason: 'owner_revoked', revokedAt: now } }]));
+    assert.equal(f.store.state(workspaceId).actions[action.id].status, 'unknown');
+  } finally { f.store.close(); }
+});

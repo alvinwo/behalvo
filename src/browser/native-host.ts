@@ -1,6 +1,6 @@
 import type { Readable, Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
-import { MAX_BROWSER_MESSAGE_BYTES, parseBrowserRequest, parseBrowserResponse,
+import { BrowserGestureRejectedError, MAX_BROWSER_MESSAGE_BYTES, parseBrowserRequest, parseBrowserResponse,
   type BrowserEpoch, type BrowserRequest, type BrowserResponse } from './types.js';
 import type { SecretMetadata, SecretProvider, SecretReference } from '../secrets/types.js';
 import { exactSecretAccess } from '../connections/private-connection.js';
@@ -104,7 +104,7 @@ export class NativeMessagingTransport {
   #operationPending = false;
   #closed = false;
   #failed = false;
-  #binding: { value: NativeControlBinding; state: 'activating' | 'active' | 'revoking' } | undefined;
+  #binding: { value: NativeControlBinding; state: 'activating' | 'active' | 'revoking' | 'uncertain' } | undefined;
   #activation: Promise<void> | undefined;
 
   constructor(input: Readable, private readonly output: Writable,
@@ -147,7 +147,16 @@ export class NativeMessagingTransport {
         const operation: NativeGestureRequest = { ...checked, operationId,
           operationExpiresAt: expiresAt };
         operationSent = true;
-        const prepared = parsePreparedResponse(await this.#exchange(operation, checked.requestId));
+        const raw = await this.#exchange(operation, checked.requestId);
+        if (raw && typeof raw === 'object' && !Array.isArray(raw) &&
+            (raw as Record<string, unknown>).kind === 'result') {
+          const rejected = parseBrowserResponse(raw);
+          if (rejected.snapshot.state !== 'unknown') throw framingError();
+          assertResponseBinding(checked, rejected);
+          if (cancelRequested && (!cancellation || await cancellation)) throw operationCancelled();
+          throw new BrowserGestureRejectedError(rejected.snapshot);
+        }
+        const prepared = parsePreparedResponse(raw);
         assertResponseBinding(checked, { ...prepared, kind: 'result' });
         if (cancelRequested && (!cancellation || await cancellation)) throw operationCancelled();
         const finalCheck = await authorize();
@@ -161,6 +170,7 @@ export class NativeMessagingTransport {
         const response = parseBrowserResponse(await this.#exchange(commit, commit.requestId));
         if (cancelRequested && (!cancellation || await cancellation)) throw operationCancelled();
         assertResponseBinding(checked, response);
+        if (response.snapshot.state === 'unknown') throw new BrowserGestureRejectedError(response.snapshot);
         return response;
       } finally {
         clearTimeout(timer);
@@ -204,6 +214,19 @@ export class NativeMessagingTransport {
     if (this.#binding && sameNativeBinding(this.#binding.value, binding)) this.#binding = undefined;
   }
 
+  async reconcileRevocation(epoch: BrowserEpoch, tabId: number): Promise<void> {
+    return this.#operation(async () => {
+      const binding = bindingFromEpoch(epoch, tabId);
+      if (this.#binding && !sameNativeBinding(this.#binding.value, binding)) throw bindingError();
+      const request: NativeSessionControl = { ...binding, protocolVersion: 1, kind: 'session.revoke',
+        controlId: randomUUID() };
+      const response = parseControlResponse(await this.#exchange(request, request.controlId), 'session.revoked');
+      assertControlBinding(request, response);
+      this.#cancelOutstandingExchanges();
+      if (this.#binding && sameNativeBinding(this.#binding.value, binding)) this.#binding = undefined;
+    });
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true; this.#binding = undefined;
@@ -214,6 +237,7 @@ export class NativeMessagingTransport {
 
   async #operation<T>(run: () => Promise<T>): Promise<T> {
     if (this.#closed) throw new Error('Native messaging transport is closed.');
+    if (this.#failed) throw new Error('Native messaging transport is unavailable.');
     if (this.#operationPending) throw new Error('Native messaging transport already has an active request.');
     this.#operationPending = true;
     try { return await run(); } finally { this.#operationPending = false; }
@@ -239,7 +263,8 @@ export class NativeMessagingTransport {
     try {
       await activation;
     } catch (error) {
-      if (this.#binding?.state === 'activating') this.#binding = undefined;
+      // A dispatched activation may have reached the browser even when its acknowledgment did not.
+      if (this.#binding?.state === 'activating') this.#binding.state = 'uncertain';
       throw error;
     } finally {
       if (this.#activation === activation) this.#activation = undefined;

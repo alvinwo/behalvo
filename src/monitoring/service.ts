@@ -2,20 +2,23 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Action, DomainEvent, State } from '../kernel/types.js';
 import { identifier, required } from '../kernel/types.js';
 import { assertOwner } from '../kernel/policy.js';
-import { OperationStoppedError, withinExecution, type TrustedExecutionFence } from '../operations/execution-context.js';
+import { assertExecutionActive, OperationStoppedError, withinExecution, type TrustedExecutionFence } from '../operations/execution-context.js';
 import type { Connection, OperationCommand } from '../operations/types.js';
 import { canonicalJson, exactObject, jsonValue } from '../operations/validation.js';
 import { isFatalServiceStorageError } from '../storage/service-jobs.js';
-import type { ServiceJob } from '../storage/service-jobs.js';
+import type { ServiceEnvelope, ServiceJob, ServiceReceipt } from '../storage/service-jobs.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
+import { monitoredReservationEvents } from './invariants.js';
 import {
-  bindingMatches, boundedMonitorJitter, canonicalInstant, evaluateMonitoredAction, exactMonitoringObject, monitoredActionCommandDigest,
+  assertArmPlanCurrent, assertArmPlanReservationLifecycle, assertArmPlanReservationReady,
+  bindingMatches, boundedMonitorJitter, canonicalInstant,
+  evaluateMonitoredAction, exactMonitoringObject, monitoredActionCommandDigest,
   monitoredActionGrantDigest, observationDigest, validateBinding, validateDigest, validateGrant,
   validateObservation
 } from './policy.js';
 import { MonitoringRegistry } from './registry.js';
 import type {
-  MonitorPauseReason, MonitorState, MonitoredActionBinding, MonitoredActionGrant,
+  MonitorPauseReason, MonitorState, MonitoredActionBinding, MonitoredActionGrant, MonitoredArmPlanV1,
   MonitoredGrantSettlementOutcome, Observation
 } from './types.js';
 
@@ -25,6 +28,17 @@ export interface MonitoringServiceOptions {
   installationGeneration: string;
   clock?: () => string;
   random?: () => number;
+  resumeHandler?: (job: ServiceJob, fence: TrustedExecutionFence,
+    trustedLifecycleCommit: (evidence: import('./types.js').MonitorResumeEvidence) => void) => Promise<void>;
+  checkpointBinding?: () => import('../browser/types.js').BrowserEpoch & { tabId: number };
+  checkpointHandler?: (monitorId: string, reason: string, handoffId: string) => Promise<void>;
+}
+
+export class MonitorResumeRejectedError extends Error {
+  constructor(readonly reason: 'binding_changed' | 'existing_appointment') {
+    super(`Monitor resume rejected: ${reason}`);
+    this.name = 'MonitorResumeRejectedError';
+  }
 }
 
 export interface ProposeGrantInput {
@@ -40,6 +54,7 @@ export interface ProposeGrantInput {
   scope: unknown;
   maximumEffects: number;
   expiresAt: string;
+  armPlan?: MonitoredArmPlanV1;
 }
 
 class MonitoredAuthorityChangedError extends Error {
@@ -59,6 +74,7 @@ export interface ConfigureMonitorInput {
   requestWindowMs: number;
   backoffBaseMs: number;
   backoffMaxMs: number;
+  control?: MonitorState['control'];
 }
 
 export interface ReserveMonitoredActionInput {
@@ -84,26 +100,34 @@ export class MonitoringService {
   readonly #clock: () => string;
   readonly #random: () => number;
   readonly #grantJobControllers = new Map<string, Set<AbortController>>();
+  readonly #monitorJobControllers = new Map<string, Set<AbortController>>();
 
   constructor(
     private readonly store: SqliteStore,
     readonly registry: MonitoringRegistry,
     private readonly options: MonitoringServiceOptions
   ) {
-    exactMonitoringObject(options, ['workspaceId', 'ownerId', 'installationGeneration'], ['clock', 'random'],
+    exactMonitoringObject(options, ['workspaceId', 'ownerId', 'installationGeneration'],
+      ['clock', 'random', 'resumeHandler', 'checkpointBinding', 'checkpointHandler'],
       'monitoring service options');
     identifier(options.workspaceId, 'workspaceId'); identifier(options.ownerId, 'ownerId');
     identifier(options.installationGeneration, 'installationGeneration');
     if (options.clock !== undefined && typeof options.clock !== 'function') throw new Error('Invalid monitoring clock');
     if (options.random !== undefined && typeof options.random !== 'function') throw new Error('Invalid monitoring random source');
+    if (options.resumeHandler !== undefined && typeof options.resumeHandler !== 'function')
+      throw new Error('Invalid monitoring resume handler');
+    if ((options.checkpointBinding === undefined) !== (options.checkpointHandler === undefined) ||
+        (options.checkpointBinding !== undefined && typeof options.checkpointBinding !== 'function') ||
+        (options.checkpointHandler !== undefined && typeof options.checkpointHandler !== 'function'))
+      throw new Error('Invalid monitoring checkpoint handler');
     this.#clock = options.clock ?? (() => new Date().toISOString());
     this.#random = options.random ?? Math.random;
   }
 
   proposeGrant(input: ProposeGrantInput): MonitoredActionGrant {
-    exactObject(input, ['id', 'workspaceId', 'ownerId', 'adapter', 'adapterVersion', 'connectionId',
+    exactMonitoringObject(input, ['id', 'workspaceId', 'ownerId', 'adapter', 'adapterVersion', 'connectionId',
       'connectionGeneration', 'browserProfileId', 'subjectDigest', 'scope', 'maximumEffects', 'expiresAt'],
-    'monitored action proposal');
+      ['armPlan'], 'monitored action proposal');
     if (input.workspaceId !== this.options.workspaceId || input.ownerId !== this.options.ownerId)
       throw new Error('Monitored action workspace or owner binding mismatch');
     const state = this.#state(); assertOwner(state, input.ownerId);
@@ -121,7 +145,7 @@ export class MonitoringService {
       adapterVersion: input.adapterVersion, connectionId: input.connectionId,
       connectionGeneration: input.connectionGeneration, browserProfileId: input.browserProfileId,
       subjectDigest: input.subjectDigest, scope, maximumEffects: 1 as const, expiresAt: input.expiresAt,
-      createdAt: now, revision: 1 };
+      createdAt: now, revision: 1, ...(input.armPlan ? { armPlan: structuredClone(input.armPlan) } : {}) };
     const grant: MonitoredActionGrant = { ...base, digest: monitoredActionGrantDigest(base), status: 'pending' };
     validateGrant(grant);
     this.store.append(input.workspaceId, state.version,
@@ -147,12 +171,52 @@ export class MonitoringService {
     exactObject(input, ['ownerId', 'grantId', 'digest', 'revision', 'reason'], 'grant revocation');
     const state = this.#state(); assertOwner(state, input.ownerId); const grant = this.#storedGrant(state, input.grantId);
     this.#exactReference(grant, input.digest, input.revision);
+    if (!['owner_revoked', 'material_drift'].includes(input.reason)) throw new Error('Invalid grant revocation reason');
+    if (grant.revokedAt !== undefined || grant.status === 'expired') return this.grant(grant.id);
     const at = this.#now();
     this.store.terminalizeMonitoredGrant(this.options.workspaceId, state.version, { type: 'monitored_action.grant_revoked', data: {
       id: grant.id, digest: grant.digest, revision: grant.revision, reason: input.reason, revokedAt: at
     } }, { actorId: input.ownerId, recordedAt: at });
     this.#abortGrantJobs(grant.id);
     return this.grant(grant.id);
+  }
+
+  revokeGrantForOwner(input: { ownerId: string; source: string; requestId: string; grantId: string;
+      digest: string; revision: number; kind: 'monitoring_revoke' } | { ownerId: string; source: string;
+      requestId: string; grantId: string; monitorId: string; digest: string; revision: number;
+      controlRevision: number; kind: 'monitoring_stop' }):
+      { grant: MonitoredActionGrant; receipt: ServiceReceipt; duplicate: boolean } {
+    const requiredKeys = input.kind === 'monitoring_stop'
+      ? ['ownerId', 'source', 'requestId', 'grantId', 'monitorId', 'digest', 'revision', 'controlRevision', 'kind']
+      : ['ownerId', 'source', 'requestId', 'grantId', 'digest', 'revision', 'kind'];
+    exactMonitoringObject(input, requiredKeys, [], 'owner grant revocation');
+    const envelope: Extract<ServiceEnvelope, { kind: 'monitoring_revoke' | 'monitoring_stop' }> = input.kind === 'monitoring_stop'
+      ? { kind: input.kind, grantId: input.grantId, monitorId: input.monitorId, digest: input.digest,
+          revision: input.revision, controlRevision: input.controlRevision }
+      : { kind: input.kind, grantId: input.grantId, digest: input.digest, revision: input.revision };
+    const identity = { workspaceId: this.options.workspaceId, source: input.source, requestId: input.requestId };
+    const prior = this.store.findServiceReceipt(identity, envelope);
+    if (prior) return { grant: this.grant(input.grantId), receipt: prior, duplicate: true };
+    const state = this.#state(); assertOwner(state, input.ownerId); const grant = this.#storedGrant(state, input.grantId);
+    this.#exactReference(grant, input.digest, input.revision);
+    let monitorId: string | undefined;
+    if (input.kind === 'monitoring_stop') {
+      const monitor = required(state.monitors, input.monitorId, 'Monitor');
+      if (monitor.grantId !== grant.id || !monitor.control || monitor.control.revision !== input.controlRevision)
+        throw new Error('Monitor stop reference changed');
+      monitorId = monitor.id;
+    }
+    if (grant.revokedAt !== undefined || grant.status === 'expired') throw new Error('Grant is already terminal');
+    const at = this.#now();
+    this.store.terminalizeMonitoredGrant(this.options.workspaceId, state.version,
+      { type: 'monitored_action.grant_revoked', data: { id: grant.id, digest: grant.digest,
+        revision: grant.revision, reason: 'owner_revoked', revokedAt: at } },
+      { actorId: input.ownerId, recordedAt: at }, { ...identity, ownerId: input.ownerId, envelope,
+        monitoring: { grantId: grant.id, ...(monitorId ? { monitorId } : {}), recordIds: [] } });
+    this.#abortGrantJobs(grant.id);
+    const receipt = this.store.findServiceReceipt(identity, envelope);
+    if (!receipt) throw new Error('Monitoring terminal receipt was not committed');
+    return { grant: this.grant(grant.id), receipt, duplicate: false };
   }
 
   reconcileInstallation(input: { ownerId: string; grantId: string; digest: string; revision: number }): MonitoredActionGrant {
@@ -179,8 +243,8 @@ export class MonitoringService {
   }
 
   configureMonitor(input: ConfigureMonitorInput): MonitorState {
-    exactObject(input, ['ownerId', 'id', 'grantId', 'workId', 'nextDueAt', 'maxObservationAgeMs', 'intervalMs',
-      'jitterMs', 'requestBudget', 'requestWindowMs', 'backoffBaseMs', 'backoffMaxMs'], 'monitor configuration');
+    exactMonitoringObject(input, ['ownerId', 'id', 'grantId', 'workId', 'nextDueAt', 'maxObservationAgeMs', 'intervalMs',
+      'jitterMs', 'requestBudget', 'requestWindowMs', 'backoffBaseMs', 'backoffMaxMs'], ['control'], 'monitor configuration');
     const state = this.#state(); assertOwner(state, input.ownerId);
     if (!this.store.monitorJobsEnabled()) throw new Error('Storage upgrade is required before enabling monitor jobs');
     const grant = this.#usableGrant(input.grantId, state); required(state.works, input.workId, 'Work');
@@ -195,9 +259,79 @@ export class MonitoringService {
       status: 'active', nextDueAt: input.nextDueAt, requestWindowStartedAt: this.#now(), requestsInWindow: 0,
       lastObservation: null, lastCompleteObservationAt: null, lastCompleteCoverage: null,
       consecutiveFailures: 0, backoffMs: 0, pauseReason: null, inFlightJobId: null
+      , ...(input.control ? { control: structuredClone(input.control) } : {})
     };
+    assertArmPlanCurrent(state, grant, monitor);
     this.store.append(this.options.workspaceId, state.version,
       [{ type: 'monitor.configured', data: { monitor } }], { actorId: input.ownerId, recordedAt: this.#now() });
+    return structuredClone(this.#state().monitors[monitor.id]!);
+  }
+
+  pauseMonitor(input: { ownerId: string; monitorId: string; digest: string; revision: number;
+      controlRevision: number; reason: 'owner_paused' | 'owner_takeover'; binding: import('../browser/types.js').BrowserEpoch &
+        { tabId: number }; handoffId?: string }): MonitorState {
+    exactMonitoringObject(input, ['ownerId', 'monitorId', 'digest', 'revision', 'controlRevision', 'reason', 'binding'],
+      ['handoffId'], 'monitor pause');
+    const state = this.#state(); assertOwner(state, input.ownerId);
+    const item = required(state.monitors, input.monitorId, 'Monitor');
+    const grant = this.#storedGrant(state, item.grantId); this.#exactReference(grant, input.digest, input.revision);
+    if (!item.control || item.control.revision !== input.controlRevision || item.inFlightJobId !== null ||
+        item.status !== 'active' || grant.reservedActionId !== undefined) throw new Error('Monitor cannot be paused');
+    const at = this.#now();
+    this.store.append(this.options.workspaceId, state.version, [{ type: 'monitor.paused', data: {
+      id: item.id, expectedControlRevision: input.controlRevision, ownerId: input.ownerId, reason: input.reason,
+      jobId: null, handoffId: input.handoffId ?? randomUUID(), binding: structuredClone(input.binding), pausedAt: at
+    } }], { actorId: input.ownerId, recordedAt: at });
+    this.releaseMonitorWorker(item.id);
+    return structuredClone(this.#state().monitors[item.id]!);
+  }
+
+  pauseMonitorForOwner(input: { ownerId: string; source: string; requestId: string; monitorId: string;
+      digest: string; revision: number; controlRevision: number; reason: 'owner_paused' | 'owner_takeover';
+      binding: import('../browser/types.js').BrowserEpoch & { tabId: number } }):
+      { monitor: MonitorState; receipt: ServiceReceipt; duplicate: boolean } {
+    exactMonitoringObject(input, ['ownerId', 'source', 'requestId', 'monitorId', 'digest', 'revision',
+      'controlRevision', 'reason', 'binding'], [], 'owner monitor pause');
+    const kind = input.reason === 'owner_paused' ? 'monitoring_pause' as const : 'monitoring_takeover' as const;
+    const initial = this.#state(); assertOwner(initial, input.ownerId);
+    const initialMonitor = required(initial.monitors, input.monitorId, 'Monitor');
+    const envelope: Extract<ServiceEnvelope, { kind: 'monitoring_pause' | 'monitoring_takeover' }> = {
+      kind, grantId: initialMonitor.grantId, monitorId: input.monitorId, digest: input.digest,
+      revision: input.revision, controlRevision: input.controlRevision
+    };
+    const identity = { workspaceId: this.options.workspaceId, source: input.source, requestId: input.requestId };
+    const duplicate = this.store.findServiceReceipt(identity, envelope);
+    if (duplicate) return { monitor: structuredClone(initialMonitor), receipt: duplicate, duplicate: true };
+    const at = this.#now(), handoffId = randomUUID();
+    const committed = this.store.pauseMonitorForOwner({ ...identity, ownerId: input.ownerId, envelope,
+      reason: input.reason, handoffId, binding: structuredClone(input.binding), at });
+    this.releaseMonitorWorker(initialMonitor.id);
+    return { monitor: committed.monitor,
+      receipt: committed.receipt, duplicate: committed.duplicate };
+  }
+
+  settleMonitorHandoff(input: { monitorId: string; handoffId: string; state: 'confirmed' | 'failed' }): MonitorState {
+    exactObject(input, ['monitorId', 'handoffId', 'state'], 'monitor handoff settlement');
+    const current = this.#state(); const monitor = required(current.monitors, input.monitorId, 'Monitor');
+    if (monitor.control?.handoff?.id === input.handoffId && monitor.control.handoff.state === input.state)
+      return structuredClone(monitor);
+    const at = this.#now(); this.store.append(this.options.workspaceId, current.version,
+      [{ type: 'monitor.handoff_settled', data: { id: monitor.id, handoffId: input.handoffId,
+        state: input.state, settledAt: at } }], { recordedAt: at });
+    return structuredClone(this.#state().monitors[monitor.id]!);
+  }
+
+  recordResumeRetirementFailure(job: ServiceJob,
+      candidate: import('../browser/types.js').BrowserEpoch & { tabId: number }): MonitorState {
+    if (job.kind !== 'monitor' || job.parameters.kind !== 'monitor' || job.parameters.purpose !== 'resume' || !job.claim)
+      throw new Error('Invalid resume retirement failure job');
+    const state = this.#state(), monitor = required(state.monitors, job.parameters.monitorId, 'Monitor');
+    if (monitor.inFlightJobId !== job.id || monitor.control?.resume?.jobId !== job.id)
+      throw new Error('Resume retirement failure is no longer current');
+    const at = this.#now();
+    this.store.append(this.options.workspaceId, state.version, [{ type: 'monitor.resume_retirement_failed', data: {
+      id: monitor.id, jobId: job.id, handoffId: randomUUID(), candidate: structuredClone(candidate), failedAt: at
+    } }], { recordedAt: at });
     return structuredClone(this.#state().monitors[monitor.id]!);
   }
 
@@ -229,28 +363,26 @@ export class MonitoringService {
       ['actionId', 'attemptId', 'monitorId', 'beforeCommit'], 'monitored action reservation');
     if (input.beforeCommit !== undefined && typeof input.beforeCommit !== 'function') throw new Error('Invalid reservation guard');
     validateBinding(input.binding); validateObservation(input.observation);
+    const initial = this.#state();
+    assertArmPlanReservationLifecycle(initial, this.#storedGrant(initial, input.grantId));
     const command = this.evaluate(input.grantId, input.observation,
       { maxObservationAgeMs: input.maxObservationAgeMs, binding: input.binding });
     if (!command) throw new Error('Observation contains no eligible monitored action candidate');
     const state = this.#state(); const grant = this.#usableGrant(input.grantId, state);
-    const work = required(state.works, input.workId, 'Work');
-    if (['done', 'cancelled'].includes(work.phase)) throw new Error('Monitored action work is closed');
+    if (grant.armPlan) {
+      const plan = grant.armPlan;
+      if (input.workId !== plan.workId || input.monitorId !== plan.monitorId ||
+          input.maxObservationAgeMs !== plan.polling.maxObservationAgeMs)
+        throw new Error('Reservation no longer matches reviewed arm plan');
+      assertArmPlanReservationReady(state, grant);
+    }
     const actionId = input.actionId ?? randomUUID(), attemptId = input.attemptId ?? randomUUID();
     identifier(actionId, 'actionId'); identifier(attemptId, 'attemptId');
-    const digest = monitoredActionCommandDigest(this.options.workspaceId, work.id, work.revision, grant, command);
-    const action: Action = { id: actionId, workId: work.id, key: `monitor:${grant.id}:${observationDigest(input.observation)}`,
-      command, digest, workRevision: work.revision, status: 'approved',
-      monitoredGrant: { id: grant.id, digest: grant.digest, revision: grant.revision } };
+    const action = this.#narrowedAction(state, grant, input.workId, input.observation, command, actionId);
+    const evidenceDigest = observationDigest(input.observation);
     const at = this.#now();
-    const events: DomainEvent[] = [
-      { type: 'monitored_action.command_narrowed', data: { grantId: grant.id, action } },
-      { type: 'monitored_action.grant_reserved', data: { id: grant.id, digest: grant.digest, revision: grant.revision,
-        actionId, attemptId, observationDigest: observationDigest(input.observation), reservedAt: at } },
-      { type: 'action.started', data: { id: actionId, attemptId } }
-    ];
-    if (input.monitorId) events.push({ type: 'monitor.stopped', data: {
-      id: input.monitorId, reason: 'grant_reserved', stoppedAt: at
-    } });
+    const events = monitoredReservationEvents({ grant, action, attemptId, observationDigest: evidenceDigest,
+      reservedAt: at, ...(input.monitorId ? { monitorId: input.monitorId } : {}) });
     this.store.append(this.options.workspaceId, state.version, events, { recordedAt: at }, input.beforeCommit);
     return structuredClone(this.#state().actions[actionId]!);
   }
@@ -302,6 +434,8 @@ export class MonitoringService {
         result.unchanged++;
         continue;
       }
+      try { assertArmPlanCurrent(state, grant, item); }
+      catch { result.unchanged++; continue; }
       const admitted = this.store.admitDueMonitorJob(this.options.workspaceId, item.id, input.instanceId, input.at);
       if (admitted.kind === 'queued') result.queued++;
       else if (admitted.kind === 'budget') result.budgetDeferred++;
@@ -316,6 +450,8 @@ export class MonitoringService {
     const controller = new AbortController();
     const controllers = this.#grantJobControllers.get(job.parameters.grantId) ?? new Set<AbortController>();
     controllers.add(controller); this.#grantJobControllers.set(job.parameters.grantId, controllers);
+    const monitorControllers = this.#monitorJobControllers.get(job.parameters.monitorId) ?? new Set<AbortController>();
+    monitorControllers.add(controller); this.#monitorJobControllers.set(job.parameters.monitorId, monitorControllers);
     const currentFence: TrustedExecutionFence = {
       serviceGeneration: fence.serviceGeneration,
       deadline: fence.deadline,
@@ -330,14 +466,68 @@ export class MonitoringService {
         fence.assertSettlementCurrent?.();
       }
     };
-    try { await this.#runMonitoredJob(job, currentFence); }
+    try {
+      if (job.parameters.purpose === 'resume') await this.#runResumeJob(job, currentFence);
+      else await this.#runMonitoredJob(job, currentFence);
+    }
     finally {
       controllers.delete(controller);
       if (controllers.size === 0) this.#grantJobControllers.delete(job.parameters.grantId);
+      monitorControllers.delete(controller);
+      if (monitorControllers.size === 0) this.#monitorJobControllers.delete(job.parameters.monitorId);
     }
   }
 
+  /** Cancels only continuations belonging to the captured monitor; never waits on the runtime drain. */
+  releaseMonitorWorker(monitorId: string): void {
+    identifier(monitorId, 'monitorId');
+    for (const controller of this.#monitorJobControllers.get(monitorId) ?? [])
+      controller.abort(new OperationStoppedError());
+  }
+
   async runReservedActionJob(job: ServiceJob, fence: TrustedExecutionFence): Promise<Action> {
+    if (job.kind !== 'execute' || job.parameters.kind !== 'execute') return this.#runReservedActionJob(job, fence);
+    const action = required(this.#state().actions, job.parameters.actionId, 'Action');
+    if (!action.monitoredGrant) throw new Error('Monitored action binding is missing');
+    const grantId = action.monitoredGrant.id;
+    const controller = new AbortController();
+    const controllers = this.#grantJobControllers.get(grantId) ?? new Set<AbortController>();
+    controllers.add(controller); this.#grantJobControllers.set(grantId, controllers);
+    const currentFence: TrustedExecutionFence = {
+      serviceGeneration: fence.serviceGeneration, deadline: fence.deadline,
+      signal: AbortSignal.any([fence.signal, controller.signal]),
+      assertCurrent: async () => {
+        if (controller.signal.aborted) throw new OperationStoppedError();
+        await fence.assertCurrent();
+        if (controller.signal.aborted) throw new OperationStoppedError();
+      },
+      ...(fence.assertSettlementCurrent ? { assertSettlementCurrent: () => fence.assertSettlementCurrent!() } : {})
+    };
+    try { return await this.#runReservedActionJob(job, currentFence); }
+    catch (error) {
+      if (isFatalServiceStorageError(error)) throw error;
+      const state = this.#state();
+      const current = state.actions[action.id];
+      if (controller.signal.aborted && state.monitoredActionGrants[grantId]?.revokedAt !== undefined &&
+          current && current.attemptId === action.attemptId && current.status !== 'running') return structuredClone(current);
+      const currentJob = this.store.serviceJob(this.options.workspaceId, job.id);
+      if (job.claim && current?.status === 'running' && current.attemptId === action.attemptId &&
+          currentJob.status === 'running' && currentJob.claim?.claimId === job.claim.claimId &&
+          currentJob.attemptId === undefined) {
+        return this.store.stopMonitoredActionJobBeforeIntent(this.options.workspaceId, job.claim, {
+          actionId: action.id, attemptId: action.attemptId!,
+          evidence: 'Monitored execution became ineligible before intent; no booking submission was authorized.',
+          at: this.#now()
+        }).action;
+      }
+      throw error;
+    } finally {
+      controllers.delete(controller);
+      if (controllers.size === 0) this.#grantJobControllers.delete(grantId);
+    }
+  }
+
+  async #runReservedActionJob(job: ServiceJob, fence: TrustedExecutionFence): Promise<Action> {
     if ((job.kind !== 'execute' && job.kind !== 'readback') || job.parameters.kind !== job.kind ||
         job.status !== 'running' || !job.claim) throw new Error('Invalid monitored action service job');
     const initial = this.#state();
@@ -374,15 +564,7 @@ export class MonitoringService {
     }
     if (action.status !== 'running' || grant.status !== 'blocked' || !adapter.executeReserved)
       throw new Error('Monitored action is not eligible for execution');
-    try { await executionFence.assertCurrent(); }
-    catch (error) {
-      if (!(error instanceof MonitoredAuthorityChangedError)) throw error;
-      this.store.finishActionAttempt(this.options.workspaceId, action.id, action.attemptId, 'failed',
-        'Visa execution authority changed before dispatch; no booking submission was authorized.',
-        { recordedAt: this.#now() });
-      this.settleGrant({ grantId: grant.id, actionId: action.id, outcome: 'failed' });
-      return structuredClone(this.#state().actions[action.id]!);
-    }
+    await executionFence.assertCurrent();
     const intentId = createIntentId(action.id, action.attemptId);
     const intent = canonicalJson(jsonValue({ version: 1, actionId: action.id, attemptId: action.attemptId,
       actionDigest: action.digest, grant: action.monitoredGrant, connectionId: connection.id,
@@ -416,8 +598,8 @@ export class MonitoringService {
     const evidence = status === 'accepted' ? 'Visa submission confirmed; authoritative appointment readback matched.' :
       status === 'failed' ? 'Visa pre-submit contract changed; no booking submission was authorized.' :
       'Visa submission outcome is uncertain. Verification-only recovery is required; no automatic retry.';
-    this.store.finishActionAttempt(this.options.workspaceId, action.id, action.attemptId, status, evidence,
-      { recordedAt: this.#now() });
+    if (!this.store.finishActionAttempt(this.options.workspaceId, action.id, action.attemptId, status, evidence,
+      { recordedAt: this.#now() })) return structuredClone(this.#state().actions[action.id]!);
     if (result.status === 'accepted') {
       const state = this.#state(); const at = this.#now();
       this.store.recordActionVerification(this.options.workspaceId, state.version, action.id,
@@ -446,6 +628,7 @@ export class MonitoringService {
       const currentAction = state.actions[action.id];
       const currentGrant = state.monitoredActionGrants[grant.id];
       const currentConnection = state.connections[connection.id];
+      const currentWork = state.works[action.workId];
       const currentInstallation = this.store.monitorInstallation();
       const actionStatus = mutation ? currentAction?.status === 'running' :
         currentAction !== undefined && ['accepted', 'unknown'].includes(currentAction.status);
@@ -460,7 +643,9 @@ export class MonitoringService {
           currentConnection.status !== 'active' || currentConnection.generation !== connection.generation ||
           currentConnection.provider !== connection.provider || currentConnection.subject !== connection.subject ||
           !currentInstallation?.active || currentInstallation.generation !== grant.installationGeneration ||
-          (mutation && Date.parse(this.#now()) >= Date.parse(currentGrant.expiresAt)))
+          (mutation && (!currentWork || currentWork.revision !== action.workRevision ||
+            ['done', 'cancelled'].includes(currentWork.phase))) ||
+          (mutation && (currentGrant.revokedAt !== undefined || Date.parse(this.#now()) >= Date.parse(currentGrant.expiresAt))))
         throw new MonitoredAuthorityChangedError();
       await lifecycle.assertCurrent();
     };
@@ -471,7 +656,8 @@ export class MonitoringService {
   }
 
   async #runMonitoredJob(job: ServiceJob, fence: TrustedExecutionFence): Promise<void> {
-    if (job.kind !== 'monitor' || job.parameters.kind !== 'monitor' || job.status !== 'running' || !job.claim)
+    if (job.kind !== 'monitor' || job.parameters.kind !== 'monitor' || job.parameters.purpose === 'resume' ||
+        job.status !== 'running' || !job.claim)
       throw new Error('Invalid monitor service job');
     await fence.assertCurrent();
     const state = this.#state();
@@ -479,6 +665,7 @@ export class MonitoringService {
     if (item.inFlightJobId !== job.id || item.grantId !== job.parameters.grantId)
       throw new Error('Monitor job is no longer current');
     const grant = this.#usableGrant(item.grantId, state);
+    assertArmPlanCurrent(state, grant, item);
     const adapter = this.registry.resolve(grant.adapter, grant.adapterVersion);
     if (!adapter.inspect) throw new Error('Monitoring adapter has no inspection implementation');
     let connection: Connection;
@@ -503,16 +690,124 @@ export class MonitoringService {
     }
     await fence.assertCurrent();
     validateObservation(observation);
-    this.#usableGrant(item.grantId);
-    const now = this.#now();
-    const event = this.#observationEvent(item, job.id, observation, now);
-    this.store.completeMonitorJob(this.options.workspaceId, job.claim, event, now);
+    const postInspection = this.#state();
+    const postInspectionMonitor = required(postInspection.monitors, item.id, 'Monitor');
+    const postInspectionGrant = this.#usableGrant(item.grantId, postInspection);
+    assertArmPlanCurrent(postInspection, postInspectionGrant, postInspectionMonitor);
     if (observation.result === 'complete' && observation.complete && observation.candidates.length > 0) {
       const command = this.evaluate(grant.id, observation, { maxObservationAgeMs: item.maxObservationAgeMs,
         binding: this.#binding(grant) });
-      if (command) this.reserve({ grantId: grant.id, workId: item.workId, observation,
-        maxObservationAgeMs: item.maxObservationAgeMs, binding: this.#binding(grant), monitorId: item.id });
+      await fence.assertCurrent();
+      if (command) {
+        const now = this.#now();
+        const age = Date.parse(now) - Date.parse(observation.observedAt);
+        if (age < 0 || age > item.maxObservationAgeMs) throw new Error('Stale or non-fresh monitor observation');
+        const event = this.#observationEvent(item, job.id, observation, now);
+        const current = this.#state();
+        const currentGrant = this.#usableGrant(grant.id, current);
+        const currentMonitor = required(current.monitors, item.id, 'Monitor');
+        assertArmPlanCurrent(current, currentGrant, currentMonitor);
+        const evidenceDigest = observationDigest(observation);
+        const actionId = this.#scheduledIdentifier('action', job.id, evidenceDigest);
+        const attemptId = this.#scheduledIdentifier('attempt', job.id, evidenceDigest);
+        const action = this.#narrowedAction(current, currentGrant, item.workId, observation, command, actionId);
+        this.store.completeMonitorJobAndAdmitAction(this.options.workspaceId, job.claim, {
+          expectedVersion: current.version, event, observation, action, attemptId, observationDigest: evidenceDigest,
+          binding: { monitorId: item.id, grantId: currentGrant.id, grantDigest: currentGrant.digest,
+            grantRevision: currentGrant.revision, adapter: currentGrant.adapter,
+            adapterVersion: currentGrant.adapterVersion, connectionId: currentGrant.connectionId,
+            connectionGeneration: currentGrant.connectionGeneration, browserProfileId: currentGrant.browserProfileId,
+            subjectDigest: currentGrant.subjectDigest,
+            installationGeneration: currentGrant.installationGeneration!, workId: item.workId,
+            workRevision: action.workRevision },
+          maxObservationAgeMs: item.maxObservationAgeMs,
+          at: now
+        }, () => {
+          assertExecutionActive({ signal: fence.signal, deadline: fence.deadline });
+          fence.assertSettlementCurrent?.();
+          assertExecutionActive({ signal: fence.signal, deadline: fence.deadline });
+          const commitAge = Date.parse(this.#now()) - Date.parse(observation.observedAt);
+          if (commitAge < 0 || commitAge > item.maxObservationAgeMs)
+            throw new Error('Stale or non-fresh monitor observation at commit');
+        });
+        return;
+      }
     }
+    const now = this.#now();
+    const event = this.#observationEvent(item, job.id, observation, now);
+    if (event.data.status === 'paused' && item.control && this.options.checkpointBinding && this.options.checkpointHandler) {
+      const handoffId = randomUUID();
+      this.store.completeMonitorJob(this.options.workspaceId, job.claim, event, now, { type: 'monitor.paused', data: {
+        id: item.id, expectedControlRevision: item.control.revision, ownerId: null,
+        reason: event.data.pauseReason as 'session_expired' | 'needs_human' | 'rate_limited' | 'contract_changed',
+        jobId: job.id, handoffId, binding: this.options.checkpointBinding(), pausedAt: now
+      } });
+      try {
+        await this.options.checkpointHandler(item.id, event.data.pauseReason!, handoffId);
+        this.settleMonitorHandoff({ monitorId: item.id, handoffId, state: 'confirmed' });
+      } catch {
+        this.settleMonitorHandoff({ monitorId: item.id, handoffId, state: 'failed' });
+      }
+      return;
+    }
+    this.store.completeMonitorJob(this.options.workspaceId, job.claim, event, now);
+  }
+
+  async #runResumeJob(job: ServiceJob, fence: TrustedExecutionFence): Promise<void> {
+    if (job.kind !== 'monitor' || job.parameters.kind !== 'monitor' || job.parameters.purpose !== 'resume' ||
+        job.status !== 'running' || !job.claim || !this.options.resumeHandler)
+      throw new Error('Invalid monitor resume job');
+    let committed = false;
+    let admissionCurrent = false;
+    try {
+      await fence.assertCurrent();
+      const state = this.#state(); const item = required(state.monitors, job.parameters.monitorId, 'Monitor');
+      const grant = this.#usableGrant(item.grantId, state); const installation = this.store.monitorInstallation();
+      const work = required(state.works, item.workId, 'Work');
+      assertArmPlanCurrent(state, grant, item);
+      if (item.inFlightJobId !== job.id || item.control?.resume?.jobId !== job.id ||
+          grant.id !== job.parameters.grantId || grant.digest !== job.parameters.digest ||
+          grant.revision !== job.parameters.revision || item.control.revision !== job.parameters.controlRevision + 1 ||
+          job.parameters.serviceGeneration !== fence.serviceGeneration ||
+          installation?.generation !== job.parameters.installationGeneration || work.revision !== job.parameters.workRevision)
+        throw new Error('Monitor resume job is no longer current');
+      admissionCurrent = true;
+      await withinExecution(() => this.options.resumeHandler!(job, fence, evidence => {
+        if (committed) throw new Error('Monitor resume lifecycle was already committed');
+        const at = this.#now();
+        this.store.completeMonitorResumeJob(this.options.workspaceId, job.claim!, { outcome: 'resumed',
+          reason: 'preflight_passed', evidence, nextDueAt: iso(Date.parse(at) + item.intervalMs), at }, () => {
+          assertExecutionActive({ signal: fence.signal, deadline: fence.deadline });
+          fence.assertSettlementCurrent?.();
+        });
+        committed = true;
+      }), fence);
+      if (!committed) throw new Error('Monitor resume lifecycle was not committed');
+    } catch (error) {
+      if (isFatalServiceStorageError(error)) throw error;
+      const currentJob = this.store.serviceJob(this.options.workspaceId, job.id);
+      if (currentJob.status !== 'running' || currentJob.claim?.claimId !== job.claim.claimId) return;
+      this.store.completeMonitorResumeJob(this.options.workspaceId, job.claim, { outcome: 'rejected',
+        reason: !admissionCurrent ? 'binding_changed' :
+          error instanceof OperationStoppedError || fence.signal.aborted ? 'cancelled' :
+          error instanceof MonitorResumeRejectedError ? error.reason : 'provider_unavailable',
+        evidence: null, nextDueAt: null, at: this.#now() });
+    }
+  }
+
+  #narrowedAction(state: State, grant: MonitoredActionGrant, workId: string, observation: Observation,
+      command: OperationCommand, actionId: string): Action {
+    const work = required(state.works, workId, 'Work');
+    if (['done', 'cancelled'].includes(work.phase)) throw new Error('Monitored action work is closed');
+    return { id: actionId, workId: work.id, key: `monitor:${grant.id}:${observationDigest(observation)}`,
+      command, digest: monitoredActionCommandDigest(this.options.workspaceId, work.id, work.revision, grant, command),
+      workRevision: work.revision, status: 'approved',
+      monitoredGrant: { id: grant.id, digest: grant.digest, revision: grant.revision } };
+  }
+
+  #scheduledIdentifier(kind: 'action' | 'attempt', jobId: string, evidenceDigest: string): string {
+    return `monitor-${kind}-${createHash('sha256').update(canonicalJson({ workspaceId: this.options.workspaceId,
+      jobId, evidenceDigest, kind })).digest('hex')}`;
   }
 
   #observationEvent(item: MonitorState, jobId: string, observation: Observation, now: string): Extract<DomainEvent,

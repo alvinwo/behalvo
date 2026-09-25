@@ -1,6 +1,6 @@
 # Security status
 
-**Offline prototype. Not ready for sensitive accounts, customer data or public hosting.**
+**Local prototype. Not ready for sensitive accounts, customer data or public hosting.**
 
 The offline M0 kernel uses fake providers and has no remote server. The local MVP
 adds a pinned, replaceable Pi adapter that can contact model providers and stores credentials
@@ -122,6 +122,21 @@ sanitized supervised-discovery fixture still does not register live authority:
 current terms, reviewed origin and roster,
 bounded polling, a private connection, a separate active grant, owner-laptop
 acceptance, and independent review remain external gates.
+
+The composed monitored-action acceptance remains synthetic. It uses paired
+loopback control HTTP plus the fixed allowlisted portal origin, executes the
+manifest-selected compiled content/background code inside a fake DOM/Chrome host,
+and crosses the length-prefixed native transport into a service-owned browser
+session. Setup, exact review/arm, pause/handoff, and explicit resume use the
+authenticated control surface; the acceptance driver does not manufacture
+observations, reserve actions, or admit execute jobs. It demonstrates one
+read-only pre-reservation candidate disappearance with no action or gesture,
+followed by one later verified synthetic booking, stopped recurrence across
+restart, and effect-free projection rebuild. Runtime-random rejected-input
+canaries are checked against persisted and returned artifacts. Defaults still
+create no monitoring adapter, browser transport, Keychain access, native-host
+registration, or live origin authority. The foreground process must remain awake
+and running; it provides no OS supervision or remote identity.
 
 The owner ID checks assume a trusted local caller. They are not a login system,
 signature check or authorization token. External-audience context is denied.

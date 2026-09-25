@@ -37,7 +37,8 @@ export function validateUsVisaChinaScope(value: unknown): UsVisaChinaScope {
 
 function parseCoverage(value: unknown): UsVisaChinaCoverage {
   exactObject(value, ['contractVersion', 'location', 'timeZone', 'startDate', 'endDate', 'firstPage', 'lastPage',
-    'inspectedPages', 'paginationComplete', 'appointmentAbsent', 'identityDigest', 'rosterDigest', 'termsDigest'],
+    'inspectedPages', 'paginationComplete', 'appointmentAbsent', 'identityDigest', 'subjectDigest', 'rosterDigest',
+    'termsDigest', 'termsVersion'],
   'visa coverage');
   if (value.contractVersion !== US_VISA_CHINA_CONTRACT_VERSION || value.location !== 'Beijing' ||
       value.timeZone !== 'Asia/Shanghai' || value.startDate !== '2026-12-15' || value.endDate !== '2027-01-31' ||
@@ -54,7 +55,13 @@ function parseCoverage(value: unknown): UsVisaChinaCoverage {
   return { contractVersion: 1, location: 'Beijing', timeZone: 'Asia/Shanghai', startDate: '2026-12-15',
     endDate: '2027-01-31', firstPage: 1, lastPage: value.lastPage as number, inspectedPages: pages,
     paginationComplete: true, appointmentAbsent: true, identityDigest: digest(value.identityDigest),
-    rosterDigest: digest(value.rosterDigest), termsDigest: digest(value.termsDigest) };
+    subjectDigest: digest(value.subjectDigest), rosterDigest: digest(value.rosterDigest),
+    termsDigest: digest(value.termsDigest), termsVersion: identifier(value.termsVersion) };
+}
+
+function identifier(value: unknown): string {
+  if (typeof value !== 'string' || !IDENTIFIER.test(value)) throw new Error('Invalid visa coverage.');
+  return value;
 }
 
 export function createUsVisaChinaPolicyAdapter(): MonitoredActionPolicyAdapter {

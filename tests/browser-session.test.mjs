@@ -2,11 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowserSession, BrowserEpochRegistry } from '../dist/index.js';
 
-function response(request, snapshot = { state: 'calendar', page: 1, hasNext: false, candidates: [] }) {
+function calendarSnapshot(overrides = {}) {
+  return { state: 'calendar', contractVersion: 1, location: 'Beijing', timeZone: 'Asia/Shanghai',
+    startDate: '2026-12-15', endDate: '2027-01-31', identityDigest: '1'.repeat(64),
+    subjectDigest: '2'.repeat(64), rosterDigest: '3'.repeat(64), termsDigest: '4'.repeat(64),
+    termsVersion: 'terms-1', appointmentAbsent: true, page: 1, hasNext: false, candidates: [], ...overrides };
+}
+
+function response(request, snapshot = calendarSnapshot(),
+  documentId = 'document-a') {
   return { protocolVersion: 1, kind: 'result', requestId: request.requestId,
     profileId: request.profileId, connectionGeneration: request.connectionGeneration,
     epoch: request.epoch, serviceGeneration: request.serviceGeneration, origin: request.origin,
-    tabId: request.tabId, sequence: request.sequence, pageState: snapshot.state, snapshot };
+    tabId: request.tabId, sequence: request.sequence, documentId,
+    pageState: snapshot.state, snapshot };
 }
 
 function fixture(overrides = {}) {
@@ -72,6 +81,30 @@ test('final gesture guard rejects cancellation that occurs after authorization',
   await f.session.shutdown();
 });
 
+test('navigation wait is fenced by the captured epoch and never replays a committed gesture', async () => {
+  const destination = Promise.withResolvers(); let gestures = 0; let inspections = 0;
+  const f = fixture({ transport: {
+    async inspect(request) { inspections++; return destination.promise.then(snapshot =>
+      response(request, snapshot, 'document-b')); },
+    async gesture(request, authorize) {
+      const finalCheck = await authorize(); finalCheck(); gestures++;
+      return response(request, calendarSnapshot(), 'document-a');
+    },
+    async revoke() {}, async close() {}
+  } });
+  const pending = f.session.gestureAndWaitForNavigation(
+    { kind: 'booking.intent', slotId: 'slot-a', intentId: 'intent-a' }, 'calendar', ['calendar'], fence(f.calls));
+  void pending.catch(() => {});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(inspections, 1);
+  await f.session.transferToHuman('challenge');
+  await assert.rejects(pending, /not current|stopped/i);
+  destination.resolve(calendarSnapshot({ page: 2 }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(gestures, 1);
+  await f.session.shutdown();
+});
+
 test('handoff durably pauses before invalidating ownership and rejects a late response', async () => {
   let resolveInspect;
   const f = fixture({ transport: {
@@ -119,6 +152,56 @@ test('resume creates a fresh epoch only after exact identity subject and terms p
   }; } } });
   await bad.session.transferToHuman('identity_check');
   await assert.rejects(bad.session.resume(), /resume preflight/i);
+});
+
+test('resume preserves the candidate sequence consumed by preflight', async () => {
+  const f = fixture({ persistence: {
+    async pauseForHuman() {}, async releaseWorker() {}, async recoverHandoff() {},
+    async resumePreflight() { return { profileId: 'profile-a', connectionGeneration: 2,
+      identityDigest: 'a'.repeat(64), subjectDigest: 'b'.repeat(64), termsVersion: 'terms-1',
+      appointmentAbsent: true, sequence: 2 }; }
+  } });
+  await f.session.transferToHuman('challenge');
+  await f.session.resume();
+  await f.session.inspect('calendar', fence(f.calls));
+  assert.deepEqual(f.calls.filter(item => item[0] === 'inspect'), [['inspect', 3]]);
+  await f.session.shutdown();
+});
+
+test('resume does not install candidate authority when the trusted lifecycle commit fails', async () => {
+  const f = fixture();
+  await f.session.transferToHuman('challenge');
+  await assert.rejects(f.session.resume(() => { throw new Error('synthetic commit failure'); }), /commit failure/);
+  await assert.rejects(f.session.inspect('calendar', fence(f.calls)), /not current/i);
+  assert.ok(f.calls.some(item => item[0] === 'revoke'));
+  await f.session.shutdown();
+});
+
+test('a reconstructed confirmed handoff stays human-owned until an explicit resume', async () => {
+  const f = fixture({ initialState: 'human' });
+  await assert.rejects(f.session.inspect('calendar', fence(f.calls)), /not current/i);
+  await f.session.resume();
+  await f.session.inspect('calendar', fence(f.calls));
+  assert.ok(f.calls.some(item => item[0] === 'preflight'));
+  await f.session.shutdown();
+});
+
+test('a reconstructed ambiguous handoff requires exact retirement recovery before resume', async () => {
+  const retired = { profileId: 'profile-a', connectionGeneration: 2, epoch: 'f'.repeat(64),
+    serviceGeneration: 'service-a', allowedOrigin: 'http://127.0.0.1:43117' };
+  let recovered;
+  const f = fixture({ initialState: 'faulted', initialFaultEpoch: retired, persistence: {
+    async pauseForHuman() {}, async releaseWorker() {},
+    async recoverHandoff(value) { recovered = value; },
+    async resumePreflight() { return { profileId: 'profile-a', connectionGeneration: 2,
+      identityDigest: 'a'.repeat(64), subjectDigest: 'b'.repeat(64), termsVersion: 'terms-1',
+      appointmentAbsent: true }; }
+  } });
+  await assert.rejects(f.session.resume(), /recover/i);
+  await f.session.recoverHandoff();
+  assert.deepEqual(recovered, { profileId: retired.profileId, epoch: retired.epoch });
+  await f.session.resume();
+  await f.session.shutdown();
 });
 
 test('one registry grants only one exclusive browser epoch per profile', async () => {

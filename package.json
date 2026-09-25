@@ -21,6 +21,7 @@
     "operations:demo": "npm run build && node dist/operations-demo.js",
     "owner-control": "npm run build && node dist/cli/owner-control-main.js",
     "service": "npm run build && node dist/cli/service-main.js",
+    "service:demo": "npm run build && node dist/service-demo.js",
     "owner-control:demo": "npm run build && node dist/control-demo.js",
     "verify": "node scripts/verify.mjs"
   },

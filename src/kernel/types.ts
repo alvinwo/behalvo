@@ -1,7 +1,7 @@
 /** Domain data is transport- and model-independent. No provider session owns it. */
 import type { Connection, OperationCommand, VerificationState } from '../operations/types.js';
 import type {
-    MonitoredActionGrant, MonitoredActionReference, MonitorObservationSummary, MonitorPauseReason, MonitorState,
+    MonitoredActionGrant, MonitoredActionReference, MonitorObservationSummary, MonitorPauseReason, MonitorResumeEvidence, MonitorState,
     MonitoredGrantSettlementOutcome
 } from '../monitoring/types.js';
 
@@ -143,6 +143,34 @@ export type DomainEvent = {
     data: { id: string; jobId: string; observation: MonitorObservationSummary; status: 'active' | 'paused';
         nextDueAt: string | null; consecutiveFailures: number; backoffMs: number;
         pauseReason: MonitorPauseReason | null; recordedAt: string };
+} | {
+    type: 'monitor.paused';
+    data: { id: string; expectedControlRevision: number; ownerId: string | null;
+        reason: 'owner_paused' | 'owner_takeover' | 'session_expired' | 'needs_human' |
+            'rate_limited' | 'contract_changed'; jobId: string | null; handoffId: string;
+        binding: import('../browser/types.js').BrowserEpoch & { tabId: number }; pausedAt: string };
+} | {
+    type: 'monitor.handoff_settled';
+    data: { id: string; handoffId: string; state: 'confirmed' | 'failed'; settledAt: string };
+} | {
+    type: 'monitor.resume_requested';
+    data: { id: string; ownerId: string; jobId: string; expectedControlRevision: number;
+        recoverHandoff: boolean; serviceGeneration: string; installationGeneration: string; requestedAt: string;
+        requestWindowStartedAt: string; requestsInWindow: number };
+} | {
+    type: 'monitor.resume_started';
+    data: { id: string; jobId: string; candidate: import('../browser/types.js').BrowserEpoch & { tabId: number };
+        startedAt: string };
+} | {
+    type: 'monitor.resume_retirement_failed';
+    data: { id: string; jobId: string; handoffId: string;
+        candidate: import('../browser/types.js').BrowserEpoch & { tabId: number }; failedAt: string };
+} | {
+    type: 'monitor.resume_finished';
+    data: { id: string; jobId: string; outcome: 'resumed' | 'rejected' | 'interrupted';
+        reason: 'preflight_passed' | 'binding_changed' | 'existing_appointment' | 'checkpoint' |
+            'provider_unavailable' | 'cancelled' | 'deadline' | 'process_interrupted';
+        evidence: MonitorResumeEvidence | null; nextDueAt: string | null; finishedAt: string };
 } | {
     type: 'monitor.interrupted';
     data: { id: string; jobId: string; nextDueAt: string; interruptedAt: string };

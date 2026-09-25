@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { OperationStoppedError, type TrustedExecutionFence } from '../operations/execution-context.js';
 import {
-  BROWSER_PROTOCOL_VERSION, parseBrowserGesture, parseBrowserResponse,
+  BROWSER_PROTOCOL_VERSION, BrowserGestureRejectedError, parseBrowserGesture, parseBrowserResponse,
   type BrowserEpoch, type BrowserGestureCommand, type BrowserPageSnapshot, type BrowserPageState,
   type BrowserRequest, type BrowserResponse, type BrowserSessionLifecycle, type BrowserSessionPort
 } from './types.js';
@@ -11,6 +11,7 @@ export interface BrowserSessionTransport {
   gesture(request: BrowserRequest, authorize: () => Promise<() => void>,
     authority: { deadline: number; signal: AbortSignal }): Promise<unknown>;
   revoke(epoch: BrowserEpoch, tabId: number): Promise<void>;
+  reconcileRevocation(epoch: BrowserEpoch, tabId: number): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -21,6 +22,9 @@ export interface BrowserResumePreflight {
   subjectDigest: string;
   termsVersion: string;
   appointmentAbsent: boolean;
+  rosterDigest?: string;
+  termsDigest?: string;
+  sequence?: number;
 }
 
 export interface BrowserSessionPersistence {
@@ -32,6 +36,8 @@ export interface BrowserSessionPersistence {
   recoverHandoff(input: { profileId: string; epoch: string }): Promise<void>;
   /** Performs a fresh browser read of identity, subject, terms and appointment state. */
   resumePreflight(epoch: BrowserEpoch): Promise<BrowserResumePreflight>;
+  /** Durably records a candidate whose exact retirement acknowledgement was lost. */
+  candidateRetirementFailed?(epoch: BrowserEpoch): Promise<void>;
 }
 
 export class BrowserEpochRegistry {
@@ -51,6 +57,17 @@ export class BrowserEpochRegistry {
 }
 
 const sharedEpochRegistry = new BrowserEpochRegistry();
+const browserPageStates = new Set<BrowserPageState>(['login', 'security_question', 'group_roster', 'calendar',
+  'booking_review', 'challenge', 'session_expired', 'forbidden', 'rate_limited', 'terms_changed', 'unknown',
+  'confirmation', 'ambiguous_submission', 'appointment']);
+const MAX_GESTURE_WINDOW_MS = 60_000;
+
+export class BrowserUnexpectedDestinationError extends Error {
+  constructor(readonly snapshot: BrowserPageSnapshot) {
+    super('Browser navigation reached an unexpected destination.');
+    this.name = 'BrowserUnexpectedDestinationError';
+  }
+}
 
 export interface BrowserSessionOptions {
   profileId: string;
@@ -61,6 +78,10 @@ export interface BrowserSessionOptions {
   identityDigest: string;
   subjectDigest: string;
   termsVersion: string;
+  rosterDigest?: string;
+  termsDigest?: string;
+  initialState?: 'active' | 'human' | 'faulted';
+  initialFaultEpoch?: BrowserEpoch;
   transport: BrowserSessionTransport;
   persistence: BrowserSessionPersistence;
   registry?: BrowserEpochRegistry;
@@ -84,12 +105,18 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
     this.#validateOptions();
     this.#registry = options.registry ?? sharedEpochRegistry;
     this.#epoch = this.#newEpoch();
-    this.#registry.acquire(options.profileId, this.#owner);
+    this.#active = options.initialState === undefined || options.initialState === 'active';
+    if (options.initialState === 'faulted') {
+      this.#faulted = true;
+      this.#faultEpoch = { ...options.initialFaultEpoch! };
+    }
+    if (this.#active) this.#registry.acquire(options.profileId, this.#owner);
   }
 
   get epoch(): BrowserEpoch { return { ...this.#epoch }; }
   get profileId(): string { return this.options.profileId; }
   get connectionGeneration(): number { return this.options.connectionGeneration; }
+  get tabId(): number { return this.options.tabId; }
 
   async recognize(fence: TrustedExecutionFence): Promise<BrowserPageSnapshot> {
     const token = this.#captureOperation();
@@ -115,20 +142,63 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
   async gesture(command: BrowserGestureCommand, expectedState: BrowserPageState,
     fence: TrustedExecutionFence): Promise<BrowserPageSnapshot> {
     const token = this.#captureOperation();
+    const response = await this.#gestureResponse(command, expectedState, fence, token);
+    return structuredClone(response.snapshot);
+  }
+
+  async gestureAndWaitForNavigation(command: BrowserGestureCommand, expectedState: BrowserPageState,
+    destinationStates: readonly BrowserPageState[], fence: TrustedExecutionFence): Promise<BrowserPageSnapshot> {
+    if (!Array.isArray(destinationStates) || destinationStates.length < 1 || destinationStates.length > 3 ||
+        destinationStates.some(state => !browserPageStates.has(state)) ||
+        new Set(destinationStates).size !== destinationStates.length)
+      throw new Error('Invalid browser navigation destination contract.');
+    const token = this.#captureOperation();
+    const deadline = Math.min(fence.deadline, Date.now() + MAX_GESTURE_WINDOW_MS);
+    const navigationFence: TrustedExecutionFence = { serviceGeneration: fence.serviceGeneration,
+      deadline, signal: fence.signal, assertCurrent: () => fence.assertCurrent() };
+    const source = await this.#gestureResponse(command, expectedState, navigationFence, token);
+    for (;;) {
+      await this.#assertCurrent(navigationFence, token);
+      const request = this.#request(token, 'recognize');
+      const response = parseBrowserResponse(await this.#withinNavigation(token,
+        this.options.transport.inspect(request), navigationFence));
+      await this.#assertCurrent(navigationFence, token);
+      this.#assertResponse(request, response);
+      if (response.documentId !== source.documentId) {
+        if (!destinationStates.includes(response.snapshot.state))
+          throw new BrowserUnexpectedDestinationError(structuredClone(response.snapshot));
+        return structuredClone(response.snapshot);
+      }
+      await this.#withinNavigation(token, new Promise<void>(resolve => setTimeout(resolve, 5)), navigationFence);
+    }
+  }
+
+  async #gestureResponse(command: BrowserGestureCommand, expectedState: BrowserPageState,
+    fence: TrustedExecutionFence, token: BrowserOperationToken): Promise<BrowserResponse> {
     await this.#assertCurrent(fence, token);
     const checked = parseBrowserGesture(command);
     const request = this.#request(token, 'gesture', expectedState, checked);
-    const response = parseBrowserResponse(await this.#withinEpoch(token, this.options.transport.gesture(request, async () => {
-      await this.#assertCurrent(fence, token);
-      return () => {
-        this.#assertOperationToken(token);
-        if (fence.serviceGeneration !== this.options.serviceGeneration || fence.signal.aborted ||
-            Date.now() >= fence.deadline) throw new OperationStoppedError();
-      };
-    }, { deadline: fence.deadline, signal: fence.signal })));
+    let raw: unknown;
+    try {
+      raw = await this.#withinEpoch(token, this.options.transport.gesture(request, async () => {
+        await this.#assertCurrent(fence, token);
+        return () => {
+          this.#assertOperationToken(token);
+          if (fence.serviceGeneration !== this.options.serviceGeneration || fence.signal.aborted ||
+              Date.now() >= fence.deadline) throw new OperationStoppedError();
+        };
+      }, { deadline: fence.deadline, signal: fence.signal }));
+    } catch (error) {
+      if (error instanceof BrowserGestureRejectedError) {
+        await this.#assertCurrent(fence, token);
+        throw new BrowserUnexpectedDestinationError(structuredClone(error.snapshot));
+      }
+      throw error;
+    }
+    const response = parseBrowserResponse(raw);
     await this.#assertCurrent(fence, token);
     this.#assertResponse(request, response);
-    return structuredClone(response.snapshot);
+    return response;
   }
 
   async transferToHuman(reason: string): Promise<void> {
@@ -178,7 +248,8 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
     }
   }
 
-  async resume(): Promise<BrowserEpoch> {
+  async resume(trustedLifecycleCommit?: (candidate: BrowserEpoch, sequence: number,
+      preflight: Readonly<BrowserResumePreflight>) => void): Promise<BrowserEpoch> {
     if (this.#closed) throw new Error('Browser session is closed.');
     if (this.#faulted) throw new Error('Browser handoff must be explicitly recovered before resume.');
     if (this.#handoffPending || this.#resuming) throw new Error('Browser lifecycle transition is already in progress.');
@@ -186,7 +257,11 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
     this.#resuming = true;
     const revision = ++this.#transitionRevision;
     const candidate = this.#newEpoch();
+    let candidateOwned = false;
+    let installed = false;
     try {
+      this.#registry.acquire(this.options.profileId, this.#owner);
+      candidateOwned = true;
       const preflight = await this.options.persistence.resumePreflight({ ...candidate });
       this.#assertTransition(revision, 'resume');
       if (preflight.profileId !== this.options.profileId ||
@@ -195,12 +270,35 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
           preflight.subjectDigest !== this.options.subjectDigest ||
           preflight.termsVersion !== this.options.termsVersion || preflight.appointmentAbsent !== true)
         throw new Error('Browser resume preflight did not match the trusted binding.');
-      this.#registry.acquire(this.options.profileId, this.#owner);
+      if ((this.options.rosterDigest !== undefined && preflight.rosterDigest !== this.options.rosterDigest) ||
+          (this.options.termsDigest !== undefined && preflight.termsDigest !== this.options.termsDigest) ||
+          (preflight.sequence !== undefined && (!Number.isSafeInteger(preflight.sequence) || preflight.sequence < 0)))
+        throw new Error('Browser resume preflight did not match the trusted binding.');
+      const sequence = preflight.sequence ?? 0;
+      if (trustedLifecycleCommit !== undefined) {
+        if (typeof trustedLifecycleCommit !== 'function') throw new Error('Invalid browser lifecycle commit.');
+        trustedLifecycleCommit({ ...candidate }, sequence, structuredClone(preflight));
+        this.#assertTransition(revision, 'resume');
+      }
       this.#epoch = candidate;
       this.#epochController = new AbortController();
-      this.#sequence = 0;
+      this.#sequence = sequence;
       this.#active = true;
+      installed = true;
       return { ...candidate };
+    } catch (error) {
+      if (candidateOwned && !installed) {
+        try { await this.options.transport.revoke(candidate, this.options.tabId); }
+        catch {
+          if (!this.#closed && revision === this.#transitionRevision) {
+            this.#faulted = true;
+            this.#faultEpoch = { ...candidate };
+          }
+          await this.options.persistence.candidateRetirementFailed?.({ ...candidate });
+        }
+        this.#registry.release(this.options.profileId, this.#owner);
+      }
+      throw error;
     } finally {
       if (revision === this.#transitionRevision) this.#resuming = false;
     }
@@ -303,6 +401,29 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
     finally { if (onAbort) signal.removeEventListener('abort', onAbort); }
   }
 
+  async #withinNavigation<T>(token: BrowserOperationToken, operation: Promise<T>,
+    fence: TrustedExecutionFence): Promise<T> {
+    void operation.catch(() => {});
+    this.#assertOperationToken(token);
+    if (fence.signal.aborted || Date.now() >= fence.deadline) throw new OperationStoppedError();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onEpochAbort: (() => void) | undefined;
+    let onFenceAbort: (() => void) | undefined;
+    const stopped = new Promise<never>((_, reject) => {
+      const stop = () => reject(new OperationStoppedError());
+      onEpochAbort = stop; onFenceAbort = stop;
+      token.controller.signal.addEventListener('abort', onEpochAbort, { once: true });
+      fence.signal.addEventListener('abort', onFenceAbort, { once: true });
+      timer = setTimeout(stop, Math.max(1, fence.deadline - Date.now()));
+    });
+    try { return await Promise.race([operation, stopped]); }
+    finally {
+      if (timer) clearTimeout(timer);
+      if (onEpochAbort) token.controller.signal.removeEventListener('abort', onEpochAbort);
+      if (onFenceAbort) fence.signal.removeEventListener('abort', onFenceAbort);
+    }
+  }
+
   #validateOptions(): void {
     if (!this.options || typeof this.options.profileId !== 'string' || !this.options.profileId ||
         !Number.isSafeInteger(this.options.connectionGeneration) || this.options.connectionGeneration < 1 ||
@@ -312,6 +433,16 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
         !/^[a-f0-9]{64}$/.test(this.options.identityDigest) ||
         !/^[a-f0-9]{64}$/.test(this.options.subjectDigest) ||
         typeof this.options.termsVersion !== 'string' || !this.options.termsVersion)
+      throw new Error('Invalid browser session configuration.');
+    if (this.options.initialState !== undefined && !['active', 'human', 'faulted'].includes(this.options.initialState))
+      throw new Error('Invalid browser session configuration.');
+    const fault = this.options.initialFaultEpoch;
+    if ((this.options.initialState === 'faulted') !== (fault !== undefined) ||
+        (fault !== undefined && (fault.profileId !== this.options.profileId ||
+          fault.connectionGeneration !== this.options.connectionGeneration ||
+          typeof fault.serviceGeneration !== 'string' || fault.serviceGeneration.length < 1 ||
+          fault.allowedOrigin !== this.options.allowedOrigin ||
+          !/^[a-f0-9]{64}$/.test(fault.epoch))))
       throw new Error('Invalid browser session configuration.');
   }
 }

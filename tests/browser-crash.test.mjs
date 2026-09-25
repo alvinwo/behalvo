@@ -50,7 +50,7 @@ test('handoff during an awaited gesture invalidates its authorization before any
           resolve({ protocolVersion: 1, kind: 'result', requestId: request.requestId,
             profileId: request.profileId, connectionGeneration: request.connectionGeneration,
             epoch: request.epoch, serviceGeneration: request.serviceGeneration, origin: request.origin,
-            tabId: request.tabId, sequence: request.sequence, pageState: 'calendar',
+            tabId: request.tabId, sequence: request.sequence, documentId: 'document-a', pageState: 'calendar',
             snapshot: { state: 'calendar', page: 1, hasNext: false, candidates: [] } });
         } catch (error) { reject(error); }
       };

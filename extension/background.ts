@@ -56,7 +56,7 @@ export function createNativeRequestBoundary(
     }
     if (message.kind === 'session.revoke') {
       useControl(controls, message.controlId);
-      if (!active || !sameBinding(active, message)) bindingError();
+      if (active && !sameBinding(active, message)) bindingError();
       rememberRetiredBinding(retiredBindings, message);
       if (pending) pending.state = 'cancelled';
       active = undefined; activeDocumentId = undefined; pending = undefined;
@@ -111,10 +111,10 @@ export function createNativeRequestBoundary(
       // acknowledgement arrives. Only that validated outcome can supersede it.
       await operation.cancellationCompletion;
       if (operationWasCancelled(operation)) supersededMessage();
-      const snapshot = validateExtensionSnapshot(raw);
+      const snapshot = validateContentSnapshot(raw);
       operation.state = 'settled'; rememberSettled(settledOperations, operation);
       if (pending === operation) pending = undefined;
-      return responseFor(operation.request, snapshot, 'result');
+      return responseFor(operation.request, snapshot, 'result', operation.documentId);
     }
     const request = validateExtensionRequest(message);
     if (!active || !sameBinding(active, request) || request.sequence !== lastSequence + 1) bindingError();
@@ -142,29 +142,46 @@ export function createNativeRequestBoundary(
       try {
         remainingOperationTime(operation.expiresAt);
         const contentRequest = { ...request, documentId };
-        const snapshot = validateExtensionSnapshot(await sendContent(request.tabId, contentRequest));
+        const raw = await sendContent(request.tabId, contentRequest);
+        const contractChanged = isContentPageContractMarker(raw);
+        const snapshot = validateContentSnapshot(raw);
         if (operationWasCancelled(operation)) {
           await cleanupCancelledPreparation(sendContent, operation);
           supersededMessage();
         }
         if (active !== operationBinding || pending !== operation) bindingError();
         remainingOperationTime(operation.expiresAt);
+        if (contractChanged) {
+          operation.state = 'settled'; rememberSettled(settledOperations, operation); pending = undefined;
+          return responseFor(request, snapshot, 'result', documentId);
+        }
         operation.state = 'prepared';
-        return responseFor(request, snapshot, 'gesture.prepared');
+        return responseFor(request, snapshot, 'gesture.prepared', documentId);
       } catch (error) { if (pending === operation) pending = undefined; throw error; }
     }
-    const snapshot = validateExtensionSnapshot(await sendContent(request.tabId, { ...request, documentId }));
+    const snapshot = validateContentSnapshot(await sendContent(request.tabId, { ...request, documentId }));
     if (active !== operationBinding) bindingError();
-    return responseFor(request, snapshot, 'result');
+    return responseFor(request, snapshot, 'result', documentId);
   };
 }
 
+function validateContentSnapshot(value: unknown): Record<string, unknown> {
+  if (isContentPageContractMarker(value)) return validateExtensionSnapshot({ state: 'unknown' });
+  return validateExtensionSnapshot(value);
+}
+
+function isContentPageContractMarker(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return Object.keys(item).length === 1 && item.error === 'page_contract_changed';
+}
+
 function responseFor(request: ExtensionRequest, snapshot: Record<string, unknown>,
-  kind: 'result' | 'gesture.prepared'): unknown {
+  kind: 'result' | 'gesture.prepared', documentId: string): unknown {
   const response = { protocolVersion: request.protocolVersion, kind, requestId: request.requestId,
     profileId: request.profileId, connectionGeneration: request.connectionGeneration, epoch: request.epoch,
     serviceGeneration: request.serviceGeneration, origin: request.origin, tabId: request.tabId,
-    sequence: request.sequence, pageState: snapshot.state, snapshot };
+    sequence: request.sequence, documentId, pageState: snapshot.state, snapshot };
   return kind === 'result' ? validateExtensionResponse(response) : response;
 }
 

@@ -18,6 +18,7 @@ export interface BrowserEpoch {
 }
 
 export type BrowserGestureCommand =
+  | { kind: 'calendar.first_page' }
   | { kind: 'calendar.next_page' }
   | { kind: 'slot.select'; slotId: string }
   | { kind: 'booking.intent'; slotId: string; intentId: string }
@@ -29,6 +30,10 @@ export interface BrowserSlot {
   date: string;
   time: string;
   location: 'Beijing';
+}
+
+export interface BrowserCalendarCandidate extends BrowserSlot {
+  evidenceDigest: string;
 }
 
 export interface BrowserBooking {
@@ -45,13 +50,23 @@ export type BrowserPageSnapshot =
   | { state: 'login' | 'security_question' | 'challenge' | 'session_expired' | 'forbidden' |
       'rate_limited' | 'terms_changed' | 'unknown' }
   | { state: 'group_roster'; identityDigest: string; subjectDigest: string; rosterDigest: string; termsVersion: string }
-  | { state: 'calendar'; page: number; hasNext: boolean; candidates: BrowserSlot[] }
+  | { state: 'calendar'; contractVersion: 1; location: 'Beijing'; timeZone: 'Asia/Shanghai';
+      startDate: '2026-12-15'; endDate: '2027-01-31'; identityDigest: string; subjectDigest: string;
+      rosterDigest: string; termsDigest: string; termsVersion: string; appointmentAbsent: true;
+      page: number; hasNext: boolean; candidates: BrowserCalendarCandidate[] }
   | { state: 'booking_review'; slot: BrowserSlot; identityDigest: string; rosterDigest: string;
       termsDigest: string; evidenceDigest: string; appointmentAbsent: true;
       bookingType: 'new_group_appointment'; timeZone: 'Asia/Shanghai' }
   | { state: 'confirmation'; booking: BrowserBooking }
   | { state: 'appointment'; complete: true; booking: BrowserBooking }
   | { state: 'ambiguous_submission'; intentId: string };
+
+export class BrowserGestureRejectedError extends Error {
+  constructor(readonly snapshot: BrowserPageSnapshot) {
+    super('Browser gesture was rejected by the current page contract.');
+    this.name = 'BrowserGestureRejectedError';
+  }
+}
 
 interface BrowserEnvelope {
   protocolVersion: typeof BROWSER_PROTOCOL_VERSION;
@@ -78,6 +93,7 @@ export type BrowserRequest = BrowserEnvelope & ({
 
 export type BrowserResponse = BrowserEnvelope & {
   kind: 'result';
+  documentId: string;
   pageState: BrowserPageState;
   snapshot: BrowserPageSnapshot;
 };
@@ -87,6 +103,8 @@ export interface BrowserSessionPort {
   inspect(expectedState: BrowserPageState, fence: TrustedExecutionFence): Promise<BrowserPageSnapshot>;
   gesture(command: BrowserGestureCommand, expectedState: BrowserPageState,
     fence: TrustedExecutionFence): Promise<BrowserPageSnapshot>;
+  gestureAndWaitForNavigation(command: BrowserGestureCommand, expectedState: BrowserPageState,
+    destinationStates: readonly BrowserPageState[], fence: TrustedExecutionFence): Promise<BrowserPageSnapshot>;
   transferToHuman(reason: string): Promise<void>;
   recoverHandoff(): Promise<void>;
   resume(): Promise<BrowserEpoch>;
@@ -174,7 +192,8 @@ function parseEnvelope(value: Record<string, unknown>): BrowserEnvelope {
 
 export function parseBrowserGesture(value: unknown): BrowserGestureCommand {
   const item = object(value);
-  if (item.kind === 'calendar.next_page' || item.kind === 'appointment.readback') {
+  if (item.kind === 'calendar.first_page' || item.kind === 'calendar.next_page' ||
+      item.kind === 'appointment.readback') {
     exact(item, ['kind']); return { kind: item.kind };
   }
   if (item.kind === 'slot.select') {
@@ -188,7 +207,8 @@ export function parseBrowserGesture(value: unknown): BrowserGestureCommand {
 }
 
 function validGestureState(command: BrowserGestureCommand, expected: BrowserPageState): boolean {
-  if (command.kind === 'calendar.next_page' || command.kind === 'slot.select' || command.kind === 'booking.intent')
+  if (command.kind === 'calendar.first_page' || command.kind === 'calendar.next_page' ||
+      command.kind === 'slot.select' || command.kind === 'booking.intent')
     return expected === 'calendar';
   if (command.kind === 'booking.submit') return expected === 'booking_review';
   return ['confirmation', 'ambiguous_submission', 'appointment'].includes(expected);
@@ -230,6 +250,12 @@ function parseSlot(value: unknown): BrowserSlot {
   return { id: identifier(item.id), date: item.date, time: item.time, location: 'Beijing' };
 }
 
+function parseCalendarCandidate(value: unknown): BrowserCalendarCandidate {
+  const item = object(value); exact(item, ['id', 'date', 'time', 'location', 'evidenceDigest']);
+  const slot = parseSlot({ id: item.id, date: item.date, time: item.time, location: item.location });
+  return { ...slot, evidenceDigest: digest(item.evidenceDigest) };
+}
+
 function parseBooking(value: unknown): BrowserBooking {
   const item = object(value); exact(item, ['referenceDigest', 'status', 'rosterDigest', 'date', 'time', 'location', 'timeZone']);
   const slot = parseSlot({ id: 'booking', date: item.date, time: item.time, location: item.location });
@@ -251,9 +277,18 @@ export function parseBrowserSnapshot(value: unknown): BrowserPageSnapshot {
       rosterDigest: digest(item.rosterDigest), termsVersion: identifier(item.termsVersion) };
   }
   if (state === 'calendar') {
-    exact(item, ['state', 'page', 'hasNext', 'candidates']);
-    if (typeof item.hasNext !== 'boolean' || !Array.isArray(item.candidates) || item.candidates.length > 64) invalid();
-    return { state, page: bounded(item.page, 100), hasNext: item.hasNext, candidates: item.candidates.map(parseSlot) };
+    exact(item, ['state', 'contractVersion', 'location', 'timeZone', 'startDate', 'endDate',
+      'identityDigest', 'subjectDigest', 'rosterDigest', 'termsDigest', 'termsVersion',
+      'appointmentAbsent', 'page', 'hasNext', 'candidates']);
+    if (item.contractVersion !== 1 || item.location !== 'Beijing' || item.timeZone !== 'Asia/Shanghai' ||
+        item.startDate !== '2026-12-15' || item.endDate !== '2027-01-31' || item.appointmentAbsent !== true ||
+        typeof item.hasNext !== 'boolean' || !Array.isArray(item.candidates) || item.candidates.length > 64) invalid();
+    return { state, contractVersion: 1, location: 'Beijing', timeZone: 'Asia/Shanghai',
+      startDate: '2026-12-15', endDate: '2027-01-31', identityDigest: digest(item.identityDigest),
+      subjectDigest: digest(item.subjectDigest), rosterDigest: digest(item.rosterDigest),
+      termsDigest: digest(item.termsDigest), termsVersion: identifier(item.termsVersion), appointmentAbsent: true,
+      page: bounded(item.page, 100), hasNext: item.hasNext,
+      candidates: item.candidates.map(parseCalendarCandidate) };
   }
   if (state === 'booking_review') {
     exact(item, ['state', 'slot', 'identityDigest', 'rosterDigest', 'termsDigest', 'evidenceDigest',
@@ -281,11 +316,12 @@ export function parseBrowserResponse(value: unknown): BrowserResponse {
   assertSize(value); rejectSensitive(value);
   const item = object(value);
   exact(item, ['protocolVersion', 'kind', 'requestId', 'profileId', 'connectionGeneration', 'epoch',
-    'serviceGeneration', 'origin', 'tabId', 'sequence', 'pageState', 'snapshot']);
+    'serviceGeneration', 'origin', 'tabId', 'sequence', 'documentId', 'pageState', 'snapshot']);
   if (item.kind !== 'result') invalid();
   const snapshot = parseBrowserSnapshot(item.snapshot); const state = pageState(item.pageState);
   if (state !== snapshot.state) invalid();
-  return { ...parseEnvelope(item), kind: 'result', pageState: state, snapshot };
+  return { ...parseEnvelope(item), kind: 'result', documentId: identifier(item.documentId),
+    pageState: state, snapshot };
 }
 
 export function browserMessageBytes(value: JsonValue | BrowserRequest | BrowserResponse): Buffer {

@@ -1,0 +1,30 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✖ a due page-derived visa monitor atomically dispatches exactly one execution without owner admission (113.404833ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 244.48379
+
+✖ failing tests:
+
+test at tests/us-visa-runtime.test.mjs:260:1
+✖ a due page-derived visa monitor atomically dispatches exactly one execution without owner admission (113.404833ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+    [
+      'monitor',
+  -   'execute'
+    ]
+
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/us-visa-runtime.test.mjs:276:10)
+
+COMMAND_EXIT_CODE="1"

@@ -10,6 +10,23 @@ import { BrowserEpochRegistry, BrowserSession, NativeMessageReader, NativeMessag
 import { createNativeRequestBoundary, dispatchNativePortMessage } from '../extension/dist/background.js';
 
 const extensionId = 'a'.repeat(32);
+const calendarDigests = { identityDigest: '1'.repeat(64), subjectDigest: '2'.repeat(64),
+  rosterDigest: '3'.repeat(64), termsDigest: '4'.repeat(64) };
+
+function calendarSnapshot(overrides = {}) {
+  return { state: 'calendar', contractVersion: 1, location: 'Beijing', timeZone: 'Asia/Shanghai',
+    startDate: '2026-12-15', endDate: '2027-01-31', ...calendarDigests,
+    termsVersion: 'terms-1', appointmentAbsent: true, page: 1, hasNext: false, candidates: [], ...overrides };
+}
+
+function calendarDataset(overrides = {}) {
+  return { behalvoPageState: 'calendar', behalvoContractVersion: '1', behalvoLocation: 'Beijing',
+    behalvoTimeZone: 'Asia/Shanghai', behalvoStartDate: '2026-12-15', behalvoEndDate: '2027-01-31',
+    behalvoIdentityDigest: calendarDigests.identityDigest, behalvoSubjectDigest: calendarDigests.subjectDigest,
+    behalvoRosterDigest: calendarDigests.rosterDigest, behalvoTermsDigest: calendarDigests.termsDigest,
+    behalvoTermsVersion: 'terms-1', behalvoAppointmentAbsent: 'true', behalvoPage: '1',
+    behalvoHasNext: 'false', ...overrides };
+}
 
 function loadContent(document) {
   const manifest = JSON.parse(readFileSync(new URL('../extension/manifest.json', import.meta.url), 'utf8'));
@@ -83,7 +100,7 @@ test('manifest content rejects contradictory visa review and booking evidence in
 
 test('framed native, background, and compiled content path revokes a delayed gesture before completed handoff', async () => {
   let clicks = 0;
-  const root = { dataset: { behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'true' }, click() {} };
+  const root = { dataset: calendarDataset({ behalvoHasNext: 'true' }), click() {} };
   const next = { dataset: { behalvoGesture: 'calendar.next_page' }, click() { clicks++; } };
   const document = { querySelector(selector) {
     if (selector === '[data-behalvo-page-state]') return root;
@@ -117,9 +134,25 @@ test('framed native, background, and compiled content path revokes a delayed ges
   await session.shutdown();
 });
 
+test('background and compiled content acknowledge exact repeated retirement with fresh controls', async () => {
+  const listener = loadContent({ querySelector() { return null; }, querySelectorAll() { return []; } });
+  const boundary = createNativeRequestBoundary(contentSender(listener));
+  const binding = { protocolVersion: 1, profileId: 'profile-retired', connectionGeneration: 1,
+    epoch: 'd'.repeat(64), serviceGeneration: 'service-e2e', origin: 'http://127.0.0.1:43117', tabId: 7 };
+  const first = await boundary({ ...binding, kind: 'session.revoke', controlId: 'retire-first' });
+  assert.equal(first.kind, 'session.revoked');
+  const second = await boundary({ ...binding, kind: 'session.revoke', controlId: 'retire-second' });
+  assert.equal(second.kind, 'session.revoked');
+  assert.equal(second.controlId, 'retire-second');
+  await assert.rejects(boundary({ ...binding, kind: 'session.revoke', controlId: 'retire-second' }), /binding|replay/i);
+  const replacement = { ...binding, epoch: 'e'.repeat(64), kind: 'session.activate', controlId: 'activate-replacement' };
+  assert.equal((await boundary(replacement)).kind, 'session.activated');
+  await assert.rejects(boundary({ ...binding, kind: 'session.revoke', controlId: 'retire-conflict' }), /binding|replay/i);
+});
+
 test('compiled content rejects a framed commit after its trusted operation deadline', async () => {
   let clicks = 0;
-  const root = { dataset: { behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'true' }, click() {} };
+  const root = { dataset: calendarDataset({ behalvoHasNext: 'true' }), click() {} };
   const next = { dataset: {}, click() { clicks++; } };
   const document = { querySelector(selector) {
     if (selector === '[data-behalvo-page-state]') return root;
@@ -166,14 +199,14 @@ test('an expired compiled intent commit leaves no late intent value or gesture',
   const input = { dataset: { behalvoIntentInput: slotId }, value: '', click() {} };
   let clicks = 0;
   const document = { querySelector(selector) {
-    if (selector === '[data-behalvo-page-state]') return { dataset: {
-      behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'false' } };
+    if (selector === '[data-behalvo-page-state]') return { dataset: calendarDataset() };
     if (selector === `[data-behalvo-intent-input="${slotId}"]`) return input;
     if (selector === `[data-behalvo-gesture="booking.intent"][data-behalvo-intent-slot="${slotId}"]`)
       return { dataset: {}, click() { clicks++; } };
     return null;
   }, querySelectorAll(selector) { return selector === '[data-behalvo-slot-id]' ? [{ dataset: {
-    behalvoSlotId: slotId, behalvoDate: '2027-01-04', behalvoTime: '09:00', behalvoLocation: 'Beijing'
+    behalvoSlotId: slotId, behalvoDate: '2027-01-04', behalvoTime: '09:00', behalvoLocation: 'Beijing',
+    behalvoEvidenceDigest: '5'.repeat(64)
   }, click() {} }] : []; } };
   const send = contentSender(loadContent(document));
   const binding = { protocolVersion: 1, profileId: 'profile-expired-intent', connectionGeneration: 1,
@@ -195,7 +228,7 @@ test('an expired compiled intent commit leaves no late intent value or gesture',
 
 test('abort is acknowledged in compiled content before a delayed framed commit', async () => {
   let clicks = 0;
-  const root = { dataset: { behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'true' }, click() {} };
+  const root = { dataset: calendarDataset({ behalvoHasNext: 'true' }), click() {} };
   const document = { querySelector(selector) {
     if (selector === '[data-behalvo-page-state]') return root;
     if (selector === '[data-behalvo-gesture="calendar.next_page"]') return { dataset: {}, click() { clicks++; } };
@@ -332,8 +365,7 @@ test('original deadline and cancellation overtake a commit held between backgrou
 test('acknowledged revoke settles a held commit before the same native channel resumes', async () => {
   let clicks = 0; let releaseCommit;
   const listener = loadContent({ querySelector(selector) {
-    if (selector === '[data-behalvo-page-state]') return { dataset: {
-      behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'true' } };
+    if (selector === '[data-behalvo-page-state]') return { dataset: calendarDataset({ behalvoHasNext: 'true' }) };
     if (selector === '[data-behalvo-gesture="calendar.next_page"]')
       return { dataset: {}, click() { clicks++; } };
     return null;
@@ -387,7 +419,7 @@ test('acknowledged revoke settles a held commit before the same native channel r
   const inspect = await reader.read();
   await dispatchNativePortMessage(boundary, port, inspect);
   await Promise.all(postWrites);
-  assert.deepEqual(await inspection, { state: 'calendar', page: 1, hasNext: true, candidates: [] });
+  assert.deepEqual(await inspection, calendarSnapshot({ hasNext: true }));
 
   const shutdown = session.shutdown();
   const finalRevoke = await reader.read();
@@ -545,8 +577,7 @@ for (const acknowledgement of ['cancelled', 'failed', 'malformed', 'timeout', 's
 test('compiled content preserves one absolute expiry across delayed prepare delivery', async () => {
   let clicks = 0; let releaseCommit;
   const listener = loadContent({ querySelector(selector) {
-    if (selector === '[data-behalvo-page-state]') return { dataset: {
-      behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'true' } };
+    if (selector === '[data-behalvo-page-state]') return { dataset: calendarDataset({ behalvoHasNext: 'true' }) };
     if (selector === '[data-behalvo-gesture="calendar.next_page"]')
       return { dataset: {}, click() { clicks++; } };
     return null;
@@ -587,7 +618,7 @@ test('compiled content commits the exact form rendered by the loopback portal', 
   const html = await (await fetch(`${server.origin}/`)).text();
   assert.match(html, /<form method="post" action="\/gesture">/);
   let submitted;
-  const root = { dataset: { behalvoPageState: 'calendar', behalvoPage: '1', behalvoHasNext: 'true' }, click() {} };
+  const root = { dataset: calendarDataset({ behalvoHasNext: 'true' }), click() {} };
   const next = { dataset: { behalvoGesture: 'calendar.next_page' }, click() {
     submitted = fetch(`${server.origin}/gesture`, { method: 'POST', redirect: 'manual',
       headers: { origin: server.origin, 'content-type': 'application/x-www-form-urlencoded' },
@@ -610,8 +641,14 @@ test('compiled content commits the exact form rendered by the loopback portal', 
   await boundary({ ...binding, kind: 'gesture.commit', controlId: 'commit-http',
     requestId: request.requestId, sequence: request.sequence, operationId: request.operationId });
   assert.equal((await submitted).status, 303);
-  assert.deepEqual(state.inspect(), { state: 'calendar', page: 2, hasNext: false,
-    candidates: [{ id: 'slot-2027-01-04-0900', date: '2027-01-04', time: '09:00', location: 'Beijing' }] });
+  const paged = state.inspect();
+  assert.equal(paged.state, 'calendar');
+  assert.equal(paged.page, 2);
+  assert.equal(paged.hasNext, false);
+  assert.deepEqual(paged.candidates.map(candidate => ({ id: candidate.id, date: candidate.date,
+    time: candidate.time, location: candidate.location })),
+  [{ id: 'slot-2027-01-04-0900', date: '2027-01-04', time: '09:00', location: 'Beijing' }]);
+  assert.match(paged.candidates[0].evidenceDigest, /^[a-f0-9]{64}$/);
 
   const slotId = 'slot-2027-01-04-0900'; const intentId = 'journaled-intent';
   const intentHtml = await (await fetch(`${server.origin}/`)).text();
@@ -624,10 +661,9 @@ test('compiled content commits the exact form rendered by the loopback portal', 
       body: new URLSearchParams({ kind: 'booking.intent', slotId, intentId: intentInput.value }) });
   } };
   const candidate = { dataset: { behalvoSlotId: slotId, behalvoDate: '2027-01-04',
-    behalvoTime: '09:00', behalvoLocation: 'Beijing' }, click() {} };
+    behalvoTime: '09:00', behalvoLocation: 'Beijing', behalvoEvidenceDigest: '5'.repeat(64) }, click() {} };
   const intentDocument = { querySelector(selector) {
-    if (selector === '[data-behalvo-page-state]') return { dataset: {
-      behalvoPageState: 'calendar', behalvoPage: '2', behalvoHasNext: 'false' } };
+    if (selector === '[data-behalvo-page-state]') return { dataset: calendarDataset({ behalvoPage: '2' }) };
     if (selector === `[data-behalvo-intent-input="${slotId}"]`) return intentInput;
     if (selector === `[data-behalvo-gesture="booking.intent"][data-behalvo-intent-slot="${slotId}"]`)
       return intentButton;

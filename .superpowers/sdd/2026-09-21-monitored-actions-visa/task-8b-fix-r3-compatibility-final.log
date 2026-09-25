@@ -1,0 +1,21 @@
+COMMAND="npm run build && node --test --test-reporter=spec tests/browser-protocol.test.mjs tests/browser-extension-e2e.test.mjs tests/browser-session.test.mjs tests/native-host.test.mjs tests/synthetic-portal.test.mjs tests/browser-crash.test.mjs tests/operations.test.mjs tests/monitoring-policy.test.mjs tests/monitoring-service.test.mjs tests/monitoring-storage.test.mjs tests/service-storage.test.mjs tests/service-runtime.test.mjs tests/service-lifecycle.test.mjs tests/encrypted-storage.test.mjs tests/storage-backup.test.mjs tests/us-visa-policy.test.mjs tests/us-visa-adapter.test.mjs tests/us-visa-runtime.test.mjs tests/us-visa-unknown.test.mjs tests/us-visa-observation.test.mjs"
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✔ verification-only recovery requires the exact retained adapter and grant binding (0.827423ms)
+✔ confirmation and authoritative appointment readback are distinct and retain one reference (1.523378ms)
+✔ a thrown transport error after submit is fixed unknown and never exposes or retries it (1.047875ms)
+✔ repository ships no live native-host registration (0.534132ms)
+ℹ tests 430
+ℹ suites 0
+ℹ pass 430
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3832.251725
+
+COMMAND_EXIT_CODE="0"

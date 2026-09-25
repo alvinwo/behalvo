@@ -70,6 +70,28 @@ Proactive follow-up uses persisted timers, not in-memory `setTimeout`. A due tim
 
 M0 demonstrates persistence and recovery, not a finished 24/7 daemon. Production operation still requires supervision, rate limits, budgets, quiet hours, and real channel adapters.
 
+### Foreground monitored-action slice
+
+The local service now composes monitored actions through the same journal, SQLite
+store, durable FIFO queue, scheduler, and single worker used by other service
+jobs. An authenticated owner reviews and arms one exact standing grant. A due
+monitor can only observe through its registered adapter; an eligible observation
+atomically records the observation, reserves the one-effect allowance, stops
+recurrence, starts the exact action, and admits its execute job. There is no
+second effect loop and restart does not discover or dispatch orphan actions.
+
+The browser remains a trusted boundary with explicit origin, profile, connection,
+service generation, document, sequence, and operation bindings. Human takeover
+durably pauses the monitor and revokes the browser epoch. Explicit resume queues a
+fresh read-only preflight before new automation authority is activated. Model or
+script text has no route to arm a grant or synthesize a browser gesture.
+
+The executable acceptance uses a synthetic scheduling site, compiled extension
+content/background code in a fake browser host, and length-prefixed native
+messages. It proves composition and recovery semantics, not installed Chrome,
+Keychain, or live portal behavior. See [MONITORED_ACTIONS.md](MONITORED_ACTIONS.md)
+and [VISA_DISCOVERY.md](VISA_DISCOVERY.md).
+
 ## 6. Long history and bounded model context
 
 **Raw history is retained; only access to it is compressed.** Original message bodies are stored as artifacts and journal entries reference them. Summaries are derived, source-linked navigation aids and are never authoritative policy, approval, fact, or completion evidence.
@@ -142,7 +164,10 @@ npm ci
 npm run check
 npm run demo
 npm run operations:demo
+npm run service:demo
 ```
 
 The demos use synthetic data, temporary SQLite databases, and fake providers. They
-send no real messages, change no real accounts and create no paid resources.
+send no real messages, change no real accounts and create no paid resources. The
+service demo additionally uses paired loopback HTTP and a local fixed-origin
+synthetic portal; its fake DOM/Chrome host is not browser-installation evidence.

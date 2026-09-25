@@ -1259,7 +1259,8 @@ test('restart replays a completed disconnect receipt after its acknowledgement i
   });
 });
 
-test('local service disconnect revokes durable, browser, and retained-secret broker authority', async t => {
+for (const reservedStatus of ['active', 'running', 'unknown'])
+test(`local service disconnect revokes ${reservedStatus} durable, browser, and retained-secret broker authority`, async t => {
   const { root, profile } = privateDirectory(t);
   const dbPath = join(root, 'service.db');
   const initial = new SqliteStore(dbPath, { serviceQueue: { upgradeExisting: true } });
@@ -1272,7 +1273,12 @@ test('local service disconnect revokes durable, browser, and retained-secret bro
   });
   const monitoringRegistry = new MonitoringRegistry();
   monitoringRegistry.register({ id: 'visa.observe', version: 1, validateScope(value) { return value; },
-    coverageSufficient() { return true; }, selectCommand() { return undefined; } });
+    coverageSufficient() { return true; }, selectCommand({ grant, observation }) { return {
+      kind: 'operation.execute', operationId: grant.adapter, operationVersion: '1', connectionId: grant.connectionId,
+      provider: 'visa-scheduling', subject: 'subject-a', connectionGeneration: 1, resourceId: 'appointment',
+      arguments: {}, affectedResourceIds: ['appointment'], precondition: { state: {}, source: 'synthetic', observedAt: observation.observedAt },
+      expectedResult: {}, subjectRevision: 0, requestFingerprint: 'd'.repeat(64)
+    }; } });
   const monitoring = new MonitoringService(initial, monitoringRegistry, {
     workspaceId: 'workspace', ownerId: 'owner', installationGeneration: 'installation-a', clock: () => now
   });
@@ -1284,6 +1290,17 @@ test('local service disconnect revokes durable, browser, and retained-secret bro
   monitoring.configureMonitor({ ownerId: 'owner', id: 'monitor-a', grantId: grant.id, workId: 'work', nextDueAt: now,
     maxObservationAgeMs: 60_000, intervalMs: 60_000, jitterMs: 5_000, requestBudget: 3,
     requestWindowMs: 300_000, backoffBaseMs: 60_000, backoffMaxMs: 600_000 });
+  let reserved;
+  if (reservedStatus !== 'active') {
+    reserved = monitoring.reserve({ grantId: grant.id, workId: 'work',
+      observation: { observedAt: now, complete: true, coverage: {}, candidates: [{}], result: 'complete' },
+      maxObservationAgeMs: 60_000, binding: { adapter: 'visa.observe', adapterVersion: 1,
+        connectionId: 'connection-a', connectionGeneration: 1, browserProfileId: 'profile-a', subjectDigest: 'c'.repeat(64) } });
+    if (reservedStatus === 'unknown') {
+      initial.finishActionAttempt('workspace', reserved.id, reserved.attemptId, 'unknown', 'Synthetic uncertainty', { recordedAt: now });
+      monitoring.settleGrant({ grantId: grant.id, actionId: reserved.id, outcome: 'unknown' });
+    }
+  }
   initial.close();
 
   const provider = new SyntheticSecretProvider();
@@ -1316,6 +1333,7 @@ test('local service disconnect revokes durable, browser, and retained-secret bro
     fullDiskEncryptionAcknowledged: false, secretReferences: [password] });
 
   await manager.disconnect({ connectionId: 'connection-a', deletePurposes: [] });
+  await manager.disconnect({ connectionId: 'connection-a', deletePurposes: [] });
   assert.equal(browserRevokes, 1);
   await assert.rejects(broker.withSecret({ ...password }, () => {}), /Secret storage operation failed\./);
   await assert.rejects(browser.inspect('login', { serviceGeneration: 'service-generation',
@@ -1324,7 +1342,19 @@ test('local service disconnect revokes durable, browser, and retained-secret bro
   await service.shutdown();
   const reopened = new SqliteStore(dbPath, { serviceQueue: { upgradeExisting: false } });
   assert.equal(reopened.state('workspace').connections['connection-a'].status, 'revoked');
-  assert.equal(reopened.state('workspace').monitoredActionGrants['grant-a'].status, 'revoked');
+  const revoked = reopened.state('workspace').monitoredActionGrants['grant-a'];
+  assert.equal(revoked.status, reserved ? 'blocked' : 'revoked');
+  assert.ok(revoked.revokedAt);
+  if (reserved) {
+    assert.equal(revoked.reservedActionId, reserved.id);
+    assert.equal(reopened.state('workspace').actions[reserved.id].status, 'unknown');
+    const denied = new MonitoringService(reopened, monitoringRegistry, { workspaceId: 'workspace', ownerId: 'owner', installationGeneration: 'installation-a', clock: () => now });
+    reopened.admitActionJob({ workspaceId: 'workspace', ownerId: 'owner', source: 'owner:service', requestId: 'readback-old-connection',
+      envelope: { kind: 'readback', actionId: reserved.id, digest: reserved.digest }, instanceId: 'worker', at: now });
+    const job = reopened.claimServiceJob('workspace', 'worker', now);
+    await assert.rejects(denied.runReservedActionJob(job, { serviceGeneration: 'service-generation',
+      deadline: Date.now() + 1_000, signal: new AbortController().signal, async assertCurrent() {} }), /connection/i);
+  }
   assert.equal(reopened.state('workspace').monitors['monitor-a'].status, 'stopped');
   reopened.close();
 });

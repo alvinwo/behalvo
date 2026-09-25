@@ -50,8 +50,10 @@ export interface UsVisaChinaCoverage {
   paginationComplete: true;
   appointmentAbsent: true;
   identityDigest: string;
+  subjectDigest: string;
   rosterDigest: string;
   termsDigest: string;
+  termsVersion: string;
 }
 
 export interface UsVisaChinaBooking {

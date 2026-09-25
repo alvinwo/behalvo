@@ -8,6 +8,13 @@ import { createNativeHostManifest, encodeNativeMessage, NativeHostBoundary, Nati
 const epoch = { profileId: 'profile-a', connectionGeneration: 2, epoch: 'a'.repeat(64),
   serviceGeneration: 'service-a', allowedOrigin: 'http://127.0.0.1:43117' };
 
+function calendarSnapshot() {
+  return { state: 'calendar', contractVersion: 1, location: 'Beijing', timeZone: 'Asia/Shanghai',
+    startDate: '2026-12-15', endDate: '2027-01-31', identityDigest: '1'.repeat(64),
+    subjectDigest: '2'.repeat(64), rosterDigest: '3'.repeat(64), termsDigest: '4'.repeat(64),
+    termsVersion: 'terms-1', appointmentAbsent: true, page: 1, hasNext: false, candidates: [] };
+}
+
 function request(sequence = 1, extra = {}) {
   return { protocolVersion: 1, kind: 'inspect', requestId: `request-${sequence}`, profileId: epoch.profileId,
     connectionGeneration: epoch.connectionGeneration, epoch: epoch.epoch,
@@ -19,8 +26,8 @@ function response(input) {
   return { protocolVersion: 1, kind: 'result', requestId: input.requestId, profileId: input.profileId,
     connectionGeneration: input.connectionGeneration, epoch: input.epoch,
     serviceGeneration: input.serviceGeneration, origin: input.origin, tabId: input.tabId,
-    sequence: input.sequence, pageState: 'calendar',
-    snapshot: { state: 'calendar', page: 1, hasNext: false, candidates: [] } };
+    sequence: input.sequence, documentId: 'document-a', pageState: 'calendar',
+    snapshot: calendarSnapshot() };
 }
 
 function controlResponse(input, kind) {
@@ -158,6 +165,27 @@ test('native host transport sends one framed request and validates the exact fra
   assert.deepEqual(sent, request(1));
   await writeNativeMessage(fromExtension, response(sent));
   assert.deepEqual(await pending, response(request(1)));
+  await transport.close();
+});
+
+test('native transport reconciles an exact retired epoch without an in-memory binding', async () => {
+  const fromExtension = new PassThrough();
+  const toExtension = new PassThrough();
+  const transport = new NativeMessagingTransport(fromExtension, toExtension);
+  const reader = new NativeMessageReader(toExtension);
+
+  const firstPending = transport.reconcileRevocation(epoch, 7);
+  const first = await reader.read();
+  assert.equal(first.kind, 'session.revoke');
+  await writeNativeMessage(fromExtension, controlResponse(first, 'session.revoked'));
+  await firstPending;
+
+  const secondPending = transport.reconcileRevocation(epoch, 7);
+  const second = await reader.read();
+  assert.equal(second.kind, 'session.revoke');
+  assert.notEqual(second.controlId, first.controlId);
+  await writeNativeMessage(fromExtension, controlResponse(second, 'session.revoked'));
+  await secondPending;
   await transport.close();
 });
 

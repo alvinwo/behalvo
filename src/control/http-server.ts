@@ -56,6 +56,10 @@ type Route =
   | { readonly kind: 'service-status' | 'jobs' | 'chat' | 'reminders' }
   | { readonly kind: 'job'; readonly jobId: string }
   | { readonly kind: 'disconnect-connection'; readonly connectionId: string }
+  | { readonly kind: 'monitoring-setup' | 'grant-list' | 'grant-propose' | 'monitor-list' }
+  | { readonly kind: 'grant-detail' | 'grant-review' | 'grant-arm' | 'grant-revoke'; readonly grantId: string }
+  | { readonly kind: 'monitor-detail' | 'monitor-pause' | 'monitor-takeover' | 'monitor-resume' | 'monitor-stop';
+      readonly monitorId: string }
   | { readonly kind: 'review' | 'approve' | 'cancel' | 'execute' | 'readback'; readonly actionId: string };
 
 class TransportError extends Error {
@@ -176,6 +180,16 @@ function selectRoute(url: URL, serviceEnabled: boolean): Route {
     if (url.pathname === '/api/jobs') return { kind: 'jobs' };
     if (url.pathname === '/api/chat') return { kind: 'chat' };
     if (url.pathname === '/api/reminders') return { kind: 'reminders' };
+    if (url.pathname === '/api/monitoring/synthetic/setup') return { kind: 'monitoring-setup' };
+    if (url.pathname === '/api/grants') return { kind: 'grant-list' };
+    if (url.pathname === '/api/monitors') return { kind: 'monitor-list' };
+    const grant = /^\/api\/grants\/([^/]+)(?:\/(review|arm|revoke))?$/.exec(url.pathname);
+    if (grant) return { kind: grant[2] === 'review' ? 'grant-review' : grant[2] === 'arm' ? 'grant-arm' :
+      grant[2] === 'revoke' ? 'grant-revoke' : 'grant-detail', grantId: decodedIdentifier(grant[1]!) };
+    const monitor = /^\/api\/monitors\/([^/]+)(?:\/(pause|takeover|resume|stop))?$/.exec(url.pathname);
+    if (monitor) return { kind: monitor[2] === 'pause' ? 'monitor-pause' : monitor[2] === 'takeover' ? 'monitor-takeover' :
+      monitor[2] === 'resume' ? 'monitor-resume' : monitor[2] === 'stop' ? 'monitor-stop' : 'monitor-detail',
+      monitorId: decodedIdentifier(monitor[1]!) };
     const job = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
     if (job) return { kind: 'job', jobId: decodedIdentifier(job[1]!) };
     const connection = /^\/api\/connections\/([^/]+)\/disconnect$/.exec(url.pathname);
@@ -191,10 +205,12 @@ function selectRoute(url: URL, serviceEnabled: boolean): Route {
 }
 
 function admitRoute(req: IncomingMessage, url: URL, route: Route): void {
-  const permittedMethods = route.kind === 'reminders' ? ['GET', 'POST']
-    : [['asset', 'list', 'service-status', 'jobs', 'job'].includes(route.kind) ? 'GET' : 'POST'];
+  const permittedMethods = route.kind === 'reminders' || route.kind === 'grant-list' ? ['GET', 'POST']
+    : [['asset', 'list', 'service-status', 'jobs', 'job', 'monitor-list', 'grant-detail', 'monitor-detail']
+      .includes(route.kind) ? 'GET' : 'POST'];
   if (!permittedMethods.includes(req.method ?? '')) throw new TransportError(405);
-  if (route.kind === 'list' || route.kind === 'jobs' || (route.kind === 'reminders' && req.method === 'GET')) {
+  if (route.kind === 'list' || route.kind === 'jobs' || route.kind === 'monitor-list' ||
+      (['reminders', 'grant-list'].includes(route.kind) && req.method === 'GET')) {
     const after = url.searchParams.getAll('after');
     if ([...url.searchParams.keys()].some(name => name !== 'after') || after.length > 1)
       throw new TransportError(400);
@@ -295,18 +311,24 @@ export async function startOwnerControlServer(options: {
         return;
       }
       if (route.kind === 'service-status' || route.kind === 'jobs' || route.kind === 'job' ||
+          route.kind === 'grant-detail' || route.kind === 'monitor-detail' || route.kind === 'monitor-list' ||
+          (route.kind === 'grant-list' && req.method === 'GET') ||
           (route.kind === 'reminders' && req.method === 'GET')) {
         const adapter = options.app.serviceControl;
         if (!adapter) throw new OwnerControlError('not_found');
         const principal = options.app.sessions.authenticate(bearer(req));
         if (route.kind === 'service-status') sendJson(res, 200, adapter.status(principal));
         else if (route.kind === 'job') sendJson(res, 200, adapter.job(principal, route.jobId));
+        else if (route.kind === 'grant-detail') sendJson(res, 200, adapter.grant(principal, route.grantId));
+        else if (route.kind === 'monitor-detail') sendJson(res, 200, adapter.monitor(principal, route.monitorId));
         else {
           const afterText = url.searchParams.getAll('after')[0];
           if (afterText !== undefined && !/^(0|[1-9][0-9]*)$/.test(afterText)) throw new TransportError(400);
           const after = afterText === undefined ? undefined : Number(afterText);
           if (after !== undefined && !Number.isSafeInteger(after)) throw new TransportError(400);
           sendJson(res, 200, route.kind === 'reminders' ? adapter.reminders(principal, after)
+            : route.kind === 'grant-list' ? adapter.grants(principal, afterText)
+            : route.kind === 'monitor-list' ? adapter.monitors(principal, afterText)
             : adapter.jobs(principal, after), MAXIMUM_LIST_BYTES);
         }
         return;
@@ -345,6 +367,23 @@ export async function startOwnerControlServer(options: {
         if (!adapter) throw new OwnerControlError('not_found');
         exactKeys(body, ['deletePurposes']);
         sendJson(res, 200, await adapter.disconnectConnection(principal, route.connectionId, body));
+        return;
+      }
+      if (route.kind === 'monitoring-setup' || route.kind === 'grant-propose' || route.kind === 'grant-list' || route.kind === 'grant-review' ||
+          route.kind === 'grant-arm' || route.kind === 'grant-revoke' || route.kind === 'monitor-pause' ||
+          route.kind === 'monitor-takeover' || route.kind === 'monitor-resume' || route.kind === 'monitor-stop') {
+        if (!adapter) throw new OwnerControlError('not_found');
+        const result = route.kind === 'monitoring-setup' ? adapter.setupSyntheticMonitoring(principal, body)
+          : route.kind === 'grant-propose' || route.kind === 'grant-list' ? adapter.proposeGrant(principal, body)
+          : route.kind === 'grant-review' ? adapter.reviewGrant(principal, route.grantId, body)
+          : route.kind === 'grant-arm' ? adapter.armGrant(principal, route.grantId, body)
+          : route.kind === 'grant-revoke' ? adapter.revokeGrant(principal, route.grantId, body)
+          : route.kind === 'monitor-pause' ? await adapter.pauseMonitor(principal, route.monitorId, body)
+          : route.kind === 'monitor-takeover' ? await adapter.takeoverMonitor(principal, route.monitorId, body)
+          : route.kind === 'monitor-resume' ? adapter.resumeMonitor(principal, route.monitorId, body)
+          : adapter.stopMonitor(principal,
+              (route as Extract<Route, { readonly monitorId: string }>).monitorId, body);
+        sendJson(res, route.kind === 'monitor-resume' ? 202 : 200, result, MAXIMUM_REVIEW_BYTES);
         return;
       }
       if (route.kind === 'chat' || route.kind === 'reminders' || route.kind === 'execute' || route.kind === 'readback') {

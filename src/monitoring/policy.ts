@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { identifier, instant, nonempty } from '../kernel/types.js';
+import { identifier, instant, nonempty, type State } from '../kernel/types.js';
 import type { Connection, OperationCommand } from '../operations/types.js';
 import { canonicalJson, exactObject, jsonValue, validateOperationCommand } from '../operations/validation.js';
 import type {
-  MonitoredActionBinding, MonitoredActionGrant, MonitoredActionPolicyAdapter, Observation
+  MonitoredActionBinding, MonitoredActionGrant, MonitoredActionPolicyAdapter, MonitorState, Observation
 } from './types.js';
 
 const OBSERVATION_RESULTS = new Set([
@@ -25,13 +25,15 @@ export function canonicalInstant(value: unknown, label = 'timestamp'): asserts v
 export function monitoredActionGrantDigest(grant: Pick<MonitoredActionGrant,
   'id' | 'workspaceId' | 'ownerId' | 'adapter' | 'adapterVersion' | 'connectionId' |
   'connectionGeneration' | 'browserProfileId' | 'subjectDigest' | 'scope' | 'maximumEffects' |
-  'expiresAt' | 'revision'>): string {
+  'expiresAt' | 'revision'> & Pick<Partial<MonitoredActionGrant>, 'armPlan'>): string {
   const scope = jsonValue(grant.scope, 'monitored action scope');
-  const canonical = canonicalJson(jsonValue([
+  const legacyTuple = [
     grant.id, grant.workspaceId, grant.ownerId, grant.adapter, grant.adapterVersion,
     grant.connectionId, grant.connectionGeneration, grant.browserProfileId, grant.subjectDigest,
     scope, grant.maximumEffects, grant.expiresAt, grant.revision
-  ], 'monitored action grant'));
+  ];
+  const canonical = canonicalJson(jsonValue(grant.armPlan === undefined ? legacyTuple :
+    ['monitored-arm-plan-v1', legacyTuple, grant.armPlan], 'monitored action grant'));
   return createHash('sha256').update(canonical).digest('hex');
 }
 
@@ -52,7 +54,7 @@ export function validateGrant(grant: MonitoredActionGrant): void {
   exactMonitoringObject(grant, ['id', 'workspaceId', 'ownerId', 'adapter', 'adapterVersion', 'connectionId',
     'connectionGeneration', 'browserProfileId', 'subjectDigest', 'scope', 'maximumEffects', 'expiresAt',
     'createdAt', 'revision', 'digest', 'status'], ['activatedAt', 'installationGeneration', 'revokedAt',
-    'revocationReason', 'reservedActionId', 'reservationAttemptId', 'reservationObservationDigest', 'settlement'],
+    'revocationReason', 'reservedActionId', 'reservationAttemptId', 'reservationObservationDigest', 'settlement', 'armPlan'],
   'monitored action grant');
   for (const [value, label] of [[grant.id, 'grantId'], [grant.workspaceId, 'workspaceId'],
     [grant.ownerId, 'ownerId'], [grant.adapter, 'adapter'], [grant.connectionId, 'connectionId'],
@@ -63,6 +65,7 @@ export function validateGrant(grant: MonitoredActionGrant): void {
   if (!/^[a-f0-9]{64}$/.test(grant.subjectDigest) || !/^[a-f0-9]{64}$/.test(grant.digest))
     throw new Error('Invalid monitored action digest');
   jsonValue(grant.scope, 'monitored action scope');
+  if (grant.armPlan !== undefined) validateArmPlan(grant.armPlan);
   canonicalInstant(grant.expiresAt, 'expiry'); canonicalInstant(grant.createdAt, 'creation time');
   if (Date.parse(grant.expiresAt) <= Date.parse(grant.createdAt)) throw new Error('Monitored action expiry must follow creation');
   if (!['pending', 'active', 'revoked', 'expired', 'consumed', 'blocked'].includes(grant.status))
@@ -72,8 +75,8 @@ export function validateGrant(grant: MonitoredActionGrant): void {
       (!grant.activatedAt || !grant.installationGeneration)) throw new Error('Activated grant binding is missing');
   if (grant.activatedAt) canonicalInstant(grant.activatedAt, 'activation time');
   if (grant.installationGeneration) identifier(grant.installationGeneration, 'installationGeneration');
-  if (grant.revokedAt) canonicalInstant(grant.revokedAt, 'revocation time');
-  if (grant.revocationReason && !['owner_revoked', 'material_drift'].includes(grant.revocationReason))
+  if (grant.revokedAt !== undefined) canonicalInstant(grant.revokedAt, 'revocation time');
+  if (grant.revocationReason !== undefined && !['owner_revoked', 'material_drift'].includes(grant.revocationReason))
     throw new Error('Invalid grant revocation reason');
   if (grant.reservedActionId) identifier(grant.reservedActionId, 'actionId');
   if (grant.reservationAttemptId) identifier(grant.reservationAttemptId, 'attemptId');
@@ -97,10 +100,59 @@ export function validateGrant(grant: MonitoredActionGrant): void {
       grant.status === 'active' && (!activated || revoked || reserved || grant.settlement) ||
       grant.status === 'revoked' && (!revoked || reserved || grant.settlement) ||
       grant.status === 'expired' && (revoked || reserved || grant.settlement) ||
-      grant.status === 'blocked' && (!activated || revoked ||
-        (reserved ? grant.settlement?.outcome === 'accepted_verified' : grant.settlement !== undefined)) ||
-      grant.status === 'consumed' && (!activated || revoked || !reserved || grant.settlement?.outcome !== 'accepted_verified'))
+      grant.status === 'blocked' && (!activated ||
+        (reserved ? grant.settlement?.outcome === 'accepted_verified' : revoked || grant.settlement !== undefined)) ||
+      grant.status === 'consumed' && (!activated || !reserved || grant.settlement?.outcome !== 'accepted_verified'))
     throw new Error('Monitored action status provenance mismatch');
+}
+
+export function validateArmPlan(value: unknown): asserts value is NonNullable<MonitoredActionGrant['armPlan']> {
+  exactObject(value, ['version', 'fixtureId', 'monitorId', 'workId', 'workRevision', 'termsVersion', 'polling',
+    'stopPolicy'], 'monitored arm plan');
+  if (value.version !== 1 || value.fixtureId !== 'visa-beijing-group-v1' || value.termsVersion !== 'terms-1' ||
+      value.stopPolicy !== 'synthetic-visa-one-effect-v1') throw new Error('Invalid monitored arm plan');
+  identifier(value.monitorId, 'monitorId'); identifier(value.workId, 'workId');
+  if (!Number.isSafeInteger(value.workRevision) || (value.workRevision as number) < 1)
+    throw new Error('Invalid monitored arm plan');
+  exactObject(value.polling, ['maxObservationAgeMs', 'intervalMs', 'jitterMs', 'requestBudget', 'requestWindowMs',
+    'backoffBaseMs', 'backoffMaxMs'], 'monitored polling plan');
+  const expected = { maxObservationAgeMs: 60_000, intervalMs: 2_000, jitterMs: 250, requestBudget: 30,
+    requestWindowMs: 60_000, backoffBaseMs: 2_000, backoffMaxMs: 60_000 } as const;
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    if (value.polling[key] !== expectedValue) throw new Error('Invalid monitored polling plan');
+  }
+}
+
+/** Rechecks the complete reviewed plan against current durable authority at every execution boundary. */
+export function assertArmPlanCurrent(state: State, grant: MonitoredActionGrant, monitor?: MonitorState): void {
+  if (!grant.armPlan) return;
+  validateGrant(grant);
+  const plan = grant.armPlan, work = state.works[plan.workId], connection = state.connections[grant.connectionId];
+  if (!work || work.revision !== plan.workRevision || ['done', 'cancelled'].includes(work.phase) ||
+      !connection || connection.status !== 'active' || connection.generation !== grant.connectionGeneration ||
+      connection.provider !== 'visa-scheduling' || connection.subject !== 'synthetic-account')
+    throw new Error('Reviewed monitored arm plan binding changed');
+  if (monitor && (monitor.id !== plan.monitorId || monitor.grantId !== grant.id || monitor.workId !== plan.workId ||
+      monitor.adapter !== grant.adapter || monitor.adapterVersion !== grant.adapterVersion ||
+      monitor.connectionId !== grant.connectionId || monitor.connectionGeneration !== grant.connectionGeneration ||
+      monitor.browserProfileId !== grant.browserProfileId || monitor.subjectDigest !== grant.subjectDigest ||
+      Object.entries(plan.polling).some(([key, value]) => monitor[key as keyof MonitorState] !== value)))
+    throw new Error('Configured monitor no longer matches reviewed arm plan');
+}
+
+/** Check ownership before evaluation, leaving material-drift revocation to the evaluation boundary. */
+export function assertArmPlanReservationLifecycle(state: State, grant: MonitoredActionGrant): MonitorState | undefined {
+  if (!grant.armPlan) return undefined;
+  const monitor = state.monitors[grant.armPlan.monitorId];
+  if (!monitor || monitor.status !== 'active' || monitor.inFlightJobId !== null)
+    throw new Error('Reviewed monitor is not available for reservation');
+  return monitor;
+}
+
+/** Scheduled admission records its owned observation before narrowing, clearing the in-flight binding atomically. */
+export function assertArmPlanReservationReady(state: State, grant: MonitoredActionGrant): void {
+  const monitor = assertArmPlanReservationLifecycle(state, grant);
+  assertArmPlanCurrent(state, grant, monitor);
 }
 
 export function validateBinding(binding: MonitoredActionBinding): void {

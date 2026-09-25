@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { parseBrowserGesture, type BrowserGestureCommand, type BrowserPageSnapshot,
-  type BrowserSlot } from '../browser/types.js';
+  type BrowserCalendarCandidate, type BrowserSlot } from '../browser/types.js';
 import { SyntheticPortalState } from './state.js';
 
 export interface SyntheticPortalServer {
@@ -80,7 +80,18 @@ function render(snapshot: BrowserPageSnapshot, intent: { intentId: string; slotI
     `data-behalvo-roster-digest="${snapshot.rosterDigest}"`,
     `data-behalvo-terms-version="${attribute(snapshot.termsVersion)}"`);
   if (snapshot.state === 'calendar') {
-    attributes.push(`data-behalvo-page="${snapshot.page}"`, `data-behalvo-has-next="${snapshot.hasNext}"`);
+    attributes.push(`data-behalvo-contract-version="${snapshot.contractVersion}"`,
+      `data-behalvo-location="${snapshot.location}"`, `data-behalvo-time-zone="${snapshot.timeZone}"`,
+      `data-behalvo-start-date="${snapshot.startDate}"`, `data-behalvo-end-date="${snapshot.endDate}"`,
+      `data-behalvo-identity-digest="${snapshot.identityDigest}"`,
+      `data-behalvo-subject-digest="${snapshot.subjectDigest}"`,
+      `data-behalvo-roster-digest="${snapshot.rosterDigest}"`,
+      `data-behalvo-terms-digest="${snapshot.termsDigest}"`,
+      `data-behalvo-terms-version="${attribute(snapshot.termsVersion)}"`,
+      'data-behalvo-appointment-absent="true"',
+      `data-behalvo-page="${snapshot.page}"`, `data-behalvo-has-next="${snapshot.hasNext}"`);
+    controls.push(form({ kind: 'calendar.first_page' },
+      'data-behalvo-gesture="calendar.first_page"', 'First page'));
     if (snapshot.hasNext) controls.push(form({ kind: 'calendar.next_page' },
       'data-behalvo-gesture="calendar.next_page"', 'Next'));
     for (const candidate of snapshot.candidates) controls.push(slotForm(candidate), intentForm(candidate));
@@ -112,12 +123,13 @@ function render(snapshot: BrowserPageSnapshot, intent: { intentId: string; slotI
     `<body><main ${attributes.join(' ')}><h1>Synthetic scheduling portal</h1>${controls.join('')}</main></body></html>`;
 }
 
-function slotForm(slot: BrowserSlot): string {
+function slotForm(slot: BrowserCalendarCandidate): string {
   return form({ kind: 'slot.select', slotId: slot.id },
-    `data-behalvo-gesture="slot.select" ${slotAttributes(slot)}`, 'Select');
+    `data-behalvo-gesture="slot.select" ${slotAttributes(slot)} ` +
+    `data-behalvo-evidence-digest="${slot.evidenceDigest}"`, 'Select');
 }
 
-function intentForm(slot: BrowserSlot): string {
+function intentForm(slot: BrowserCalendarCandidate): string {
   return `<form method="post" action="/gesture"><input type="hidden" name="kind" value="booking.intent">` +
     `<input type="hidden" name="slotId" value="${attribute(slot.id)}">` +
     `<input type="hidden" name="intentId" value="" data-behalvo-intent-input="${attribute(slot.id)}">` +

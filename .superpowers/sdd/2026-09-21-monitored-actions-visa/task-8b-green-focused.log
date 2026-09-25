@@ -1,0 +1,26 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✔ owner revocation atomically stops a running monitor and discards its late observation (23.190833ms)
+✔ atomic scheduled dispatch rolls every reservation and queue write back on a commit fault (14.189665ms)
+✔ a full FIFO leaves no completed observation, reserved allowance, or orphan action (51.866223ms)
+✔ scheduled dispatch duplicate lookup precedes capacity and returns one exact execute job (46.954989ms)
+✔ encrypted backup authenticates the scheduled monitor execution binding (30.64728ms)
+▶ queued scheduled execution survives restart while a claimed interruption becomes unknown without redispatch
+  ✔ queued (14.995354ms)
+  ✔ running (10.247852ms)
+✔ queued scheduled execution survives restart while a claimed interruption becomes unknown without redispatch (26.089057ms)
+✔ a due page-derived visa monitor atomically dispatches exactly one execution without owner admission (275.45667ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 405.725804
+
+COMMAND_EXIT_CODE="0"
+COMMAND="npm run build && node --test --test-reporter=spec --test-name-pattern='owner revocation atomically stops|atomic scheduled dispatch rolls|full FIFO leaves|scheduled dispatch duplicate lookup|encrypted backup authenticates|queued scheduled execution survives|due page-derived visa monitor' tests/monitoring-service.test.mjs tests/us-visa-runtime.test.mjs"

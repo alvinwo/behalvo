@@ -1,0 +1,95 @@
+Script started on 2026-09-23 02:26:40+09:00 [COMMAND="npm run build && node --test --test-reporter=spec --test-name-pattern='final compiled reread rejects terminal|calendar contract changes during|read-only disappearance' tests/us-visa-observation.test.mjs" <not executed on terminal>]
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✖ final compiled reread rejects terminal and intermediate pagination contradictions (109.188474ms)
+✖ calendar contract changes during gesture stay typed and never click (509.195806ms)
+✖ calendar contract changes during gesture.commit stay typed and never click (508.482331ms)
+✖ read-only disappearance rejects candidate A and a later fresh poll may return distinct candidate B (30.28562ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 0
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1292.490022
+
+✖ failing tests:
+
+test at tests/us-visa-observation.test.mjs:149:1
+✖ final compiled reread rejects terminal and intermediate pagination contradictions (109.188474ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+    {
+      candidates: [],
+      complete: false,
+      coverage: {
+  +     checkpoint: 'pagination_changed'
+  -     checkpoint: 'unknown'
+      },
+      observedAt: '2026-09-22T17:26:47.094Z',
+      result: 'contract_changed'
+    }
+
+      at assertContractChanged (file:///workspace/scratch/871e778ff34c/task8a-r2-red-ZTSouO/tests/us-visa-observation.test.mjs:52:10)
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/task8a-r2-red-ZTSouO/tests/us-visa-observation.test.mjs:169:7)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { observedAt: '2026-09-22T17:26:47.094Z', complete: false, coverage: { checkpoint: 'pagination_changed' }, candidates: [], result: 'contract_changed' },
+    expected: { observedAt: '2026-09-22T17:26:47.094Z', complete: false, coverage: { checkpoint: 'unknown' }, candidates: [], result: 'contract_changed' },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at tests/us-visa-observation.test.mjs:177:3
+✖ calendar contract changes during gesture stay typed and never click (509.195806ms)
+  Error: Native messaging response timed out.
+      at Timeout.<anonymous> (file:///workspace/scratch/871e778ff34c/task8a-r2-red-ZTSouO/dist/browser/native-host.js:289:52)
+      at listOnTimeout (node:internal/timers:635:17)
+      at process.processTimers (node:internal/timers:571:7)
+
+test at tests/us-visa-observation.test.mjs:177:3
+✖ calendar contract changes during gesture.commit stay typed and never click (508.482331ms)
+  Error: Native messaging response timed out.
+      at Timeout.<anonymous> (file:///workspace/scratch/871e778ff34c/task8a-r2-red-ZTSouO/dist/browser/native-host.js:289:52)
+      at listOnTimeout (node:internal/timers:635:17)
+      at process.processTimers (node:internal/timers:571:7)
+
+test at tests/us-visa-observation.test.mjs:244:1
+✖ read-only disappearance rejects candidate A and a later fresh poll may return distinct candidate B (30.28562ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+    {
+      candidates: [],
+      complete: false,
+      coverage: {
+  +     checkpoint: 'pagination_changed'
+  -     evidenceDigest: 'ceb6fbdc9d2b7661f8593a33f51146fcb74c8f1884f8f342faac7f232e48baa7',
+  -     preflight: 'candidate_disappeared_before_reservation'
+      },
+      observedAt: '2026-09-22T17:26:48.152Z',
+  +   result: 'contract_changed'
+  -   result: 'provider_unavailable'
+    }
+
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/task8a-r2-red-ZTSouO/tests/us-visa-observation.test.mjs:256:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { observedAt: '2026-09-22T17:26:48.152Z', complete: false, coverage: { checkpoint: 'pagination_changed' }, candidates: [], result: 'contract_changed' },
+    expected: { observedAt: '2026-09-22T17:26:48.152Z', complete: false, coverage: { preflight: 'candidate_disappeared_before_reservation', evidenceDigest: 'ceb6fbdc9d2b7661f8593a33f51146fcb74c8f1884f8f342faac7f232e48baa7' }, candidates: [], result: 'provider_unavailable' },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+Script done on 2026-09-23 02:26:48+09:00 [COMMAND_EXIT_CODE="1"]

@@ -10,6 +10,7 @@ workflows. The project/runtime is **Behalvo**; an individual agent may have its 
 [Local MVP guide](docs/local-mvp.md) · [General operations guide](docs/general-operations.md) · [Agent evaluation guide](docs/AGENT_EVALUATION.md) · [中文 MVP 说明](docs/local-mvp.zh-CN.md) ·
 [Architecture overview](docs/architecture.md) ·
 [Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) · [Private storage guide](docs/PRIVATE_STORAGE.md) ·
+[Local service](docs/LOCAL_SERVICE.md) · [Monitored actions](docs/MONITORED_ACTIONS.md) · [Visa discovery](docs/VISA_DISCOVERY.md) ·
 [中文架构导读](docs/architecture.zh-CN.md) ·
 [Brand](docs/BRAND.md) · [Roadmap](docs/ROADMAP.md) · [Verification](docs/VERIFICATION.md) · [Local owner control](docs/OWNER_CONTROL.md)
 
@@ -42,6 +43,16 @@ For the local synthetic owner-control acceptance path:
 ```bash
 npm run owner-control:demo
 ```
+
+For the composed synthetic monitored-action acceptance path:
+
+```bash
+npm run service:demo
+```
+
+This demo uses a fixed loopback scheduling origin, compiled manifest-selected
+extension scripts, framed native transport, and encrypted temporary storage. It
+does not use installed Chrome, Keychain, credentials, or a real portal.
 
 The owner-control `init-demo`, `serve`, and acceptance-demo commands currently
 require a POSIX platform and deliberately refuse Windows. This restriction is
@@ -102,7 +113,7 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | --- | --- |
 | Append-only Journal, rebuildable state, historical reads | Automatic long-history consolidation / semantic retrieval |
 | Durable owner + assistant messages across process restarts | Email, WhatsApp, WeChat, SMS or phone channels |
-| WorkItems/Facts shared across explicitly linked threads | Browser automation or model-generated real-world effects |
+| WorkItems/Facts shared across explicitly linked threads | Live browser automation or model-generated real-world effects |
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |
 | Pinned Pi multi-provider adapter and separate file credential store | Independent live-model operation-loop verification |
 | Provider-owned OAuth login flow in the REPL | Hosted multi-user deployment |
@@ -118,7 +129,8 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | Foreground loopback service with pairing, durable chat/reminders, review, approval, explicit synthetic execution/readback and status | Remote/mobile identity, OS-supervised 24/7 operation, real-provider control or deployment |
 | Fenced local-only browser sessions, one-host MV3 boundary, and synthetic scheduling portal | Live browser/visa adapter, production credentials, or real portal automation |
 | Callback-scoped synthetic secrets, fail-closed native Keychain-helper transport, interprocess private-profile custody, and durable retryable disconnect controls | Installed signed Keychain helper, arbitrary sync/backup-root detection, live credential collection, or live private connection validation |
-| Disabled-by-default China visa policy, owner-bound authenticated discovery fixtures, durable current-authority checks, exact compiled-page evidence, encrypted synthetic intent transport, and bounded strict booking/readback | Live visa registration, owner-laptop discovery, portal credentials, browser installation, polling, or real booking |
+| Disabled-by-default China visa policy, owner-bound authenticated discovery fixtures, durable current-authority checks, exact compiled-page evidence, encrypted synthetic intent transport, and bounded strict booking/readback | Live visa registration, owner-laptop discovery, portal credentials, browser installation, live polling, or real booking |
+| Paired synthetic monitored-action setup/review/arm, foreground polling across restart and handoff, one verified booking, stopped recurrence, and effect-free rebuild | Installed Chrome/native host, signed Keychain helper, current live terms/group verification, owner activation, or OS-supervised service |
 
 ## Mental model
 
@@ -153,11 +165,15 @@ src/
   memory/       audience-scoped, budgeted context assembly
   model/        provider-neutral contracts, registry, bundled Pi adapter
   evaluation/   synthetic-v1 scenarios, bounded runner, safe report CLI
+  service/      foreground service composition and synthetic monitored-action wiring
+  monitoring/   standing-grant policy, scheduler, reservation and lifecycle
+  synthetic-portal/ fixed-origin synthetic page/server and compiled browser harness
   cli/          local REPL, app wiring and cancellable terminal input
   ports.ts      channel/effect extension contracts
   index.ts      local library entry point
   mvp-demo.ts   restart/cross-thread MVP scenario
   operations-demo.ts  synthetic multi-operation and unknown-readback scenario
+  service-demo.ts  paired restart/handoff/race/booking/rebuild acceptance scenario
 ```
 
 One package, not a forest of empty packages. Pi is the sole pinned runtime integration dependency and remains outside the kernel. No event

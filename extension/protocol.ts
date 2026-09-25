@@ -21,7 +21,8 @@ export interface ExtensionRequest {
   expectedPageState?: ExtensionPageState;
   operationId?: string;
   operationExpiresAt?: number;
-  command?: { kind: 'calendar.next_page' } | { kind: 'slot.select'; slotId: string } |
+  command?: { kind: 'calendar.first_page' } | { kind: 'calendar.next_page' } |
+    { kind: 'slot.select'; slotId: string } |
     { kind: 'booking.intent'; slotId: string; intentId: string } |
     { kind: 'booking.submit'; slotId: string; intentId: string } | { kind: 'appointment.readback' };
 }
@@ -37,6 +38,7 @@ export interface ExtensionResponse {
   origin: string;
   tabId: number;
   sequence: number;
+  documentId: string;
   pageState: ExtensionPageState;
   snapshot: Record<string, unknown>;
 }
@@ -113,14 +115,14 @@ export function validateExtensionResponse(value: unknown): ExtensionResponse {
   rejectSensitive(value);
   const item = value as Record<string, unknown>;
   const keys = ['protocolVersion', 'kind', 'requestId', 'profileId', 'connectionGeneration', 'epoch',
-    'serviceGeneration', 'origin', 'tabId', 'sequence', 'pageState', 'snapshot'];
+    'serviceGeneration', 'origin', 'tabId', 'sequence', 'documentId', 'pageState', 'snapshot'];
   if (Object.keys(item).sort().join('\0') !== keys.sort().join('\0') || item.protocolVersion !== 1 ||
       item.kind !== 'result' || item.origin !== EXTENSION_ALLOWED_ORIGIN ||
       !positive(item.connectionGeneration) || !positive(item.tabId) || !positive(item.sequence) ||
       typeof item.epoch !== 'string' || !/^[a-f0-9]{64}$/.test(item.epoch) ||
       typeof item.pageState !== 'string' || !pageStates.has(item.pageState as ExtensionPageState) ||
       !item.snapshot || typeof item.snapshot !== 'object' || Array.isArray(item.snapshot)) invalid();
-  identifier(item.requestId); identifier(item.profileId); identifier(item.serviceGeneration);
+  identifier(item.requestId); identifier(item.profileId); identifier(item.serviceGeneration); identifier(item.documentId);
   const snapshot = validateExtensionSnapshot(item.snapshot);
   if (snapshot.state !== item.pageState) invalid();
   return structuredClone({ ...item, snapshot }) as unknown as ExtensionResponse;
@@ -129,7 +131,7 @@ export function validateExtensionResponse(value: unknown): ExtensionResponse {
 export function validateExtensionNativeMessage(value: unknown): ExtensionNativeMessage {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const kind = (value as Record<string, unknown>).kind;
-    if (kind === 'inspect' || kind === 'gesture') return validateExtensionRequest(value);
+    if (kind === 'recognize' || kind === 'inspect' || kind === 'gesture') return validateExtensionRequest(value);
     if (kind === 'session.activate' || kind === 'session.revoke') return validateSessionControl(value);
     if (kind === 'gesture.commit' || kind === 'gesture.cancel') return validateGestureControl(value) as
       ExtensionGestureCommit | ExtensionGestureCancel;
@@ -153,7 +155,7 @@ export function validateExtensionPreparedResponse(value: unknown): ExtensionPrep
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
   const item = value as Record<string, unknown>;
   exact(item, ['protocolVersion', 'kind', 'requestId', 'profileId', 'connectionGeneration', 'epoch',
-    'serviceGeneration', 'origin', 'tabId', 'sequence', 'pageState', 'snapshot']);
+    'serviceGeneration', 'origin', 'tabId', 'sequence', 'documentId', 'pageState', 'snapshot']);
   if (item.kind !== 'gesture.prepared') invalid();
   validateResultBinding(item);
   const snapshot = validateExtensionSnapshot(item.snapshot);
@@ -181,10 +183,16 @@ export function validateExtensionSnapshot(value: unknown): Record<string, unknow
     exact(item, ['state', 'identityDigest', 'subjectDigest', 'rosterDigest', 'termsVersion']);
     digest(item.identityDigest); digest(item.subjectDigest); digest(item.rosterDigest); identifier(item.termsVersion);
   } else if (state === 'calendar') {
-    exact(item, ['state', 'page', 'hasNext', 'candidates']);
-    if (!Number.isSafeInteger(item.page) || (item.page as number) < 1 || (item.page as number) > 100 ||
+    exact(item, ['state', 'contractVersion', 'location', 'timeZone', 'startDate', 'endDate',
+      'identityDigest', 'subjectDigest', 'rosterDigest', 'termsDigest', 'termsVersion',
+      'appointmentAbsent', 'page', 'hasNext', 'candidates']);
+    if (item.contractVersion !== 1 || item.location !== 'Beijing' || item.timeZone !== 'Asia/Shanghai' ||
+        item.startDate !== '2026-12-15' || item.endDate !== '2027-01-31' || item.appointmentAbsent !== true ||
+        !Number.isSafeInteger(item.page) || (item.page as number) < 1 || (item.page as number) > 100 ||
         typeof item.hasNext !== 'boolean' || !Array.isArray(item.candidates) || item.candidates.length > 64) invalid();
-    for (const candidate of item.candidates) validateSlot(candidate);
+    digest(item.identityDigest); digest(item.subjectDigest); digest(item.rosterDigest); digest(item.termsDigest);
+    identifier(item.termsVersion);
+    for (const candidate of item.candidates) validateCalendarCandidate(candidate);
   } else if (state === 'booking_review') {
     exact(item, ['state', 'slot', 'identityDigest', 'rosterDigest', 'termsDigest', 'evidenceDigest',
       'appointmentAbsent', 'bookingType', 'timeZone']); validateSlot(item.slot);
@@ -205,7 +213,7 @@ export function validateExtensionSnapshot(value: unknown): Record<string, unknow
 function validateCommand(value: unknown, state: string): void {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
   const command = value as Record<string, unknown>;
-  if (command.kind === 'calendar.next_page') {
+  if (command.kind === 'calendar.first_page' || command.kind === 'calendar.next_page') {
     if (Object.keys(command).length !== 1 || state !== 'calendar') invalid();
   } else if (command.kind === 'slot.select') {
     if (Object.keys(command).sort().join() !== 'kind,slotId' || state !== 'calendar') invalid();
@@ -218,6 +226,14 @@ function validateCommand(value: unknown, state: string): void {
   } else if (command.kind === 'appointment.readback') {
     if (Object.keys(command).length !== 1 || !['confirmation', 'ambiguous_submission', 'appointment'].includes(state)) invalid();
   } else invalid();
+}
+
+function validateCalendarCandidate(value: unknown): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
+  const item = value as Record<string, unknown>;
+  exact(item, ['id', 'date', 'time', 'location', 'evidenceDigest']);
+  validateSlot({ id: item.id, date: item.date, time: item.time, location: item.location });
+  digest(item.evidenceDigest);
 }
 
 function validateSessionControl(value: unknown): ExtensionSessionControl {
@@ -253,7 +269,7 @@ function validateResultBinding(item: Record<string, unknown>): void {
   if (item.protocolVersion !== 1 || item.origin !== EXTENSION_ALLOWED_ORIGIN ||
       typeof item.epoch !== 'string' || !/^[a-f0-9]{64}$/.test(item.epoch) ||
       typeof item.pageState !== 'string' || !pageStates.has(item.pageState as ExtensionPageState)) invalid();
-  identifier(item.requestId); identifier(item.profileId); identifier(item.serviceGeneration);
+  identifier(item.requestId); identifier(item.profileId); identifier(item.serviceGeneration); identifier(item.documentId);
   positiveRequired(item.connectionGeneration); positiveRequired(item.tabId); positiveRequired(item.sequence);
 }
 

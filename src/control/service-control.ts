@@ -11,6 +11,9 @@ import type { OwnerControlSessions } from './session.js';
 import type { PrivateConnectionControl } from '../connections/private-connection.js';
 import type { UsVisaChinaReadiness } from '../adapters/us-visa-china/types.js';
 import { sanitizeUsVisaChinaReadiness, usVisaChinaDefaultReadiness } from '../adapters/us-visa-china/discovery.js';
+import type { SyntheticMonitoringComposition } from '../service/synthetic-monitoring.js';
+import { SYNTHETIC_MONITORING_IDS } from '../service/synthetic-monitoring.js';
+import type { MonitoredActionGrant, MonitorState } from '../monitoring/types.js';
 import {
   OwnerControlError,
   type ControlActionSummary,
@@ -30,11 +33,22 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const EXECUTION_TTL = 2 * 60_000;
 const MAXIMUM_CHAT_BYTES = 32 * 1024;
+const ARM_TTL = 2 * 60_000;
 
 interface Confirmation {
   principal: ControlPrincipal;
   actionId: string;
   digest: string;
+  deadline: number;
+  tokenDigest: Buffer;
+  reserved: boolean;
+}
+
+interface ArmConfirmation {
+  principal: ControlPrincipal;
+  grantId: string;
+  digest: string;
+  revision: number;
   deadline: number;
   tokenDigest: Buffer;
   reserved: boolean;
@@ -52,6 +66,7 @@ export interface ServiceControlServiceOptions {
   clock?: () => number;
   privateConnections?: PrivateConnectionControl;
   visaAdapterReadiness?: UsVisaChinaReadiness;
+  syntheticMonitoring?: SyntheticMonitoringComposition;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -101,6 +116,8 @@ export class ServiceControlService implements ServiceControlAdapter {
   readonly #privateConnections: PrivateConnectionControl | undefined;
   readonly #visaAdapterReadiness: UsVisaChinaReadiness;
   readonly #confirmations = new Map<string, Confirmation>();
+  readonly #armConfirmations = new Map<string, ArmConfirmation>();
+  readonly #syntheticMonitoring: SyntheticMonitoringComposition | undefined;
   #closed = false;
 
   constructor(options: ServiceControlServiceOptions) {
@@ -116,6 +133,7 @@ export class ServiceControlService implements ServiceControlAdapter {
     this.#privateConnections = options.privateConnections;
     this.#visaAdapterReadiness = options.visaAdapterReadiness === undefined
       ? usVisaChinaDefaultReadiness() : sanitizeUsVisaChinaReadiness(options.visaAdapterReadiness);
+    this.#syntheticMonitoring = options.syntheticMonitoring;
   }
 
   list(principal: ControlPrincipal, after?: string) {
@@ -200,8 +218,167 @@ export class ServiceControlService implements ServiceControlAdapter {
       queue, runtime, unresolvedActionIds, unresolvedActions,
       connections: this.#connectionSummaries(),
       monitoredAdapters: [structuredClone(this.#visaAdapterReadiness)],
-      limits: { foreground: true, awakeOnly: true, supervised: false }
+      limits: { foreground: true, awakeOnly: true, supervised: false },
+      ...(this.#syntheticMonitoring ? { monitoring: { mode: 'synthetic' as const, configured: true as const,
+        fixtureId: 'visa-beijing-group-v1' as const,
+        installation: this.#store.monitorInstallation()?.active ? 'active' as const : 'blocked' as const,
+        limitsProfile: 'synthetic-visa-one-effect-v1' as const } } : {})
     };
+  }
+
+  setupSyntheticMonitoring(principal: ControlPrincipal, input: unknown) {
+    this.#state(principal); const monitoring = this.#requireSyntheticMonitoring();
+    const body = exact(input, ['requestId', 'fixtureId']); id(body.requestId, 'requestId');
+    if (body.fixtureId !== 'visa-beijing-group-v1') throw new OwnerControlError('invalid_request');
+    try { const result = monitoring.setup(body.requestId as string); return { duplicate: result.duplicate,
+      receipt: result.receipt, fixtureId: body.fixtureId,
+      connectionId: SYNTHETIC_MONITORING_IDS.connectionId, workId: SYNTHETIC_MONITORING_IDS.workId }; }
+    catch (error) { this.#monitoringError(error); }
+  }
+
+  grants(principal: ControlPrincipal, after?: string) {
+    const state = this.#state(principal); if (!this.#syntheticMonitoring) throw new OwnerControlError('not_found');
+    if (after !== undefined) id(after, 'after');
+    const items = Object.values(state.monitoredActionGrants).sort((a, b) => a.id.localeCompare(b.id))
+      .filter(item => after === undefined || item.id > after).slice(0, 100).map(item => this.#grantView(item));
+    return { items, nextAfter: items.length === 100 ? items[99]!.id : null };
+  }
+
+  grant(principal: ControlPrincipal, grantId: string) {
+    const state = this.#state(principal); this.#requireSyntheticMonitoring(); id(grantId, 'grantId');
+    const grant = state.monitoredActionGrants[grantId];
+    if (!grant?.armPlan) throw new OwnerControlError('not_found');
+    return this.#grantView(grant);
+  }
+
+  proposeGrant(principal: ControlPrincipal, input: unknown) {
+    this.#state(principal); const monitoring = this.#requireSyntheticMonitoring();
+    const body = exact(input, ['requestId', 'fixtureId']); const requestId = id(body.requestId, 'requestId');
+    if (body.fixtureId !== 'visa-beijing-group-v1') throw new OwnerControlError('invalid_request');
+    const grantId = `synthetic-visa-grant-${createHash('sha256').update(requestId).digest('hex')}`;
+    try { const proposed = monitoring.propose(requestId, grantId);
+      return { duplicate: proposed.duplicate, receipt: proposed.receipt, grant: this.#grantView(proposed.grant) }; }
+    catch (error) { this.#monitoringError(error); }
+  }
+
+  reviewGrant(principal: ControlPrincipal, grantId: string, input: unknown) {
+    exact(input, []); const grant = this.#grantRecord(principal, grantId);
+    const key = this.#armKey(principal, grantId); this.#deleteArmConfirmation(key);
+    if (this.#armConfirmations.size >= 100) throw new OwnerControlError('rate_limited');
+    const canArm = grant.status === 'pending' && Date.parse(grant.expiresAt) > this.#now();
+    if (!canArm) return { grant: this.#grantView(grant), canArm: false };
+    const armToken = randomBytes(32).toString('base64url');
+    const deadline = Math.min(this.#now() + ARM_TTL, Date.parse(grant.expiresAt));
+    this.#armConfirmations.set(key, { principal, grantId, digest: grant.digest, revision: grant.revision,
+      deadline, tokenDigest: tokenDigest(armToken), reserved: false });
+    return { grant: this.#grantView(grant), canArm: true, armToken,
+      armExpiresAt: new Date(deadline).toISOString() };
+  }
+
+  armGrant(principal: ControlPrincipal, grantId: string, input: unknown) {
+    this.#state(principal); const monitoring = this.#requireSyntheticMonitoring(); id(grantId, 'grantId');
+    const body = exact(input, ['requestId', 'digest', 'revision', 'armToken']); id(body.requestId, 'requestId');
+    const expectedDigest = digest(body.digest);
+    if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1 ||
+        typeof body.armToken !== 'string' || !TOKEN_PATTERN.test(body.armToken)) throw new OwnerControlError('invalid_request');
+    const envelope: ServiceEnvelope = { kind: 'monitoring_arm', grantId, digest: expectedDigest,
+      revision: body.revision as number };
+    const existing = this.#store.findServiceReceipt({ workspaceId: this.#binding.workspaceId,
+      source: 'owner:service', requestId: body.requestId as string }, envelope);
+    if (existing) {
+      const state = this.#store.state(this.#binding.workspaceId); const current = state.monitoredActionGrants[grantId];
+      const monitor = current?.armPlan ? state.monitors[current.armPlan.monitorId] : undefined;
+      if (!current || !monitor) throw new ServiceStorageError('integrity', 'Monitoring arm receipt is inconsistent.');
+      return { duplicate: true, receipt: existing, grant: this.#grantView(current), monitor: this.#monitorView(monitor) };
+    }
+    const key = this.#armKey(principal, grantId); const confirmation = this.#armConfirmations.get(key);
+    const supplied = tokenDigest(body.armToken);
+    if (!confirmation || confirmation.reserved || confirmation.principal !== principal ||
+        confirmation.digest !== expectedDigest || confirmation.revision !== body.revision ||
+        this.#now() >= confirmation.deadline || !equal(supplied, confirmation.tokenDigest))
+      throw new OwnerControlError('conflict');
+    confirmation.reserved = true;
+    try {
+      const result = monitoring.arm(body.requestId as string, grantId, expectedDigest, body.revision as number, () => {
+        if (this.#closed || !confirmation.reserved || confirmation.principal !== principal ||
+            this.#now() >= confirmation.deadline || !equal(supplied, confirmation.tokenDigest))
+          throw new OwnerControlError('conflict');
+      });
+      this.#deleteArmConfirmation(key);
+      return { duplicate: result.duplicate, receipt: result.receipt,
+        grant: this.#grantView(result.grant), monitor: this.#monitorView(result.monitor) };
+    } catch (error) { confirmation.reserved = false; this.#monitoringError(error); }
+  }
+
+  revokeGrant(principal: ControlPrincipal, grantId: string, input: unknown) {
+    const grant = this.#grantRecord(principal, grantId); const body = exact(input, ['requestId', 'digest', 'revision']);
+    const requestId = id(body.requestId, 'requestId'); if (digest(body.digest) !== grant.digest || body.revision !== grant.revision)
+      throw new OwnerControlError('conflict');
+    try { const value = this.#requireSyntheticMonitoring().service.revokeGrantForOwner({ ownerId: principal.ownerId,
+      source: 'owner:service', requestId, grantId, digest: grant.digest, revision: grant.revision,
+      kind: 'monitoring_revoke' });
+      return { grant: this.#grantView(value.grant), receipt: value.receipt, duplicate: value.duplicate }; }
+    catch (error) { this.#monitoringError(error); }
+  }
+
+  monitors(principal: ControlPrincipal, after?: string) {
+    const state = this.#state(principal); this.#requireSyntheticMonitoring(); if (after !== undefined) id(after, 'after');
+    const items = Object.values(state.monitors).sort((a, b) => a.id.localeCompare(b.id))
+      .filter(item => after === undefined || item.id > after).slice(0, 100).map(item => this.#monitorView(item));
+    return { items, nextAfter: items.length === 100 ? items[99]!.id : null };
+  }
+
+  monitor(principal: ControlPrincipal, monitorId: string) {
+    const state = this.#state(principal); this.#requireSyntheticMonitoring(); id(monitorId, 'monitorId');
+    const monitor = state.monitors[monitorId]; if (!monitor) throw new OwnerControlError('not_found');
+    return this.#monitorView(monitor);
+  }
+
+  async pauseMonitor(principal: ControlPrincipal, monitorId: string, input: unknown) {
+    return this.#pauseMonitor(principal, monitorId, input, 'owner_paused');
+  }
+  async takeoverMonitor(principal: ControlPrincipal, monitorId: string, input: unknown) {
+    return this.#pauseMonitor(principal, monitorId, input, 'owner_takeover');
+  }
+  resumeMonitor(principal: ControlPrincipal, monitorId: string, input: unknown) {
+    const monitor = this.#monitorRecord(principal, monitorId);
+    const body = exact(input, ['requestId', 'digest', 'revision', 'controlRevision', 'recoverHandoff']);
+    const requestId = id(body.requestId, 'requestId'); const expectedDigest = digest(body.digest);
+    if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1 ||
+        !Number.isSafeInteger(body.controlRevision) || (body.controlRevision as number) < 0 ||
+        typeof body.recoverHandoff !== 'boolean') throw new OwnerControlError('invalid_request');
+    const envelope: Extract<ServiceEnvelope, { kind: 'monitor'; purpose: 'resume' }> = { kind: 'monitor',
+      purpose: 'resume', monitorId, grantId: monitor.grantId, digest: expectedDigest,
+      revision: body.revision as number, controlRevision: body.controlRevision as number,
+      recoverHandoff: body.recoverHandoff };
+    const identity = { workspaceId: this.#binding.workspaceId, source: 'owner:service', requestId };
+    try {
+      const receipt = this.#store.findServiceReceipt(identity, envelope);
+      if (receipt?.jobId) return { receipt,
+        job: this.#jobSummary(this.#store.serviceJob(this.#binding.workspaceId, receipt.jobId), receipt), duplicate: true };
+      const installationGeneration = this.#requireSyntheticMonitoring().binding.installationGeneration;
+      const admitted = this.#runtime.admitMonitorResume({ requestId, monitorId, grantId: monitor.grantId,
+        digest: expectedDigest, revision: body.revision as number,
+        controlRevision: body.controlRevision as number, recoverHandoff: body.recoverHandoff as boolean,
+        installationGeneration });
+      void this.#runtime.drain().catch(() => {});
+      return { ...admitted, job: this.#jobSummary(admitted.job, admitted.receipt) };
+    } catch (error) { this.#serviceError(error); }
+  }
+  stopMonitor(principal: ControlPrincipal, monitorId: string, input: unknown) {
+    const monitor = this.#monitorRecord(principal, monitorId);
+    const grant = this.#grantRecord(principal, monitor.grantId);
+    const body = exact(input, ['requestId', 'digest', 'revision', 'controlRevision']);
+    const requestId = id(body.requestId, 'requestId'); const expectedDigest = digest(body.digest);
+    if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1 ||
+        !Number.isSafeInteger(body.controlRevision) || (body.controlRevision as number) < 0)
+      throw new OwnerControlError('invalid_request');
+    try {
+      const value = this.#requireSyntheticMonitoring().service.revokeGrantForOwner({ ownerId: principal.ownerId,
+        source: 'owner:service', requestId, grantId: grant.id, monitorId, digest: expectedDigest,
+        revision: body.revision as number, controlRevision: body.controlRevision as number, kind: 'monitoring_stop' });
+      return { grant: this.#grantView(value.grant), receipt: value.receipt, duplicate: value.duplicate };
+    } catch (error) { this.#monitoringError(error); }
   }
 
   async disconnectConnection(principal: ControlPrincipal, connectionId: string, input: unknown) {
@@ -372,6 +549,105 @@ export class ServiceControlService implements ServiceControlAdapter {
     if (this.#closed) return;
     this.#closed = true;
     for (const key of [...this.#confirmations.keys()]) this.#deleteConfirmation(key);
+    for (const key of [...this.#armConfirmations.keys()]) this.#deleteArmConfirmation(key);
+  }
+
+  #requireSyntheticMonitoring(): SyntheticMonitoringComposition {
+    if (!this.#syntheticMonitoring) throw new OwnerControlError('not_found');
+    return this.#syntheticMonitoring;
+  }
+
+  #grantRecord(principal: ControlPrincipal, grantId: string): MonitoredActionGrant {
+    const state = this.#state(principal); this.#requireSyntheticMonitoring(); id(grantId, 'grantId');
+    const grant = state.monitoredActionGrants[grantId];
+    if (!grant?.armPlan) throw new OwnerControlError('not_found');
+    return grant;
+  }
+
+  #monitorRecord(principal: ControlPrincipal, monitorId: string): MonitorState {
+    const state = this.#state(principal); this.#requireSyntheticMonitoring(); id(monitorId, 'monitorId');
+    const monitor = state.monitors[monitorId]; if (!monitor) throw new OwnerControlError('not_found');
+    return monitor;
+  }
+
+  #grantView(grant: MonitoredActionGrant) {
+    return { id: grant.id, digest: grant.digest, revision: grant.revision, status: grant.status,
+      adapter: grant.adapter, adapterVersion: grant.adapterVersion, connectionId: grant.connectionId,
+      connectionGeneration: grant.connectionGeneration, browserProfileId: grant.browserProfileId,
+      subjectDigest: grant.subjectDigest, scope: structuredClone(grant.scope), maximumEffects: grant.maximumEffects,
+      expiresAt: grant.expiresAt, armPlan: grant.armPlan ? structuredClone(grant.armPlan) : null,
+      allowance: { reservedActionId: grant.reservedActionId ?? null,
+        settlement: grant.settlement ? structuredClone(grant.settlement) : null },
+      revokedAt: grant.revokedAt ?? null };
+  }
+
+  #monitorView(monitor: MonitorState) {
+    const state = this.#store.state(this.#binding.workspaceId);
+    const grant = state.monitoredActionGrants[monitor.grantId];
+    const action = grant?.reservedActionId ? state.actions[grant.reservedActionId] : undefined;
+    return { id: monitor.id, grantId: monitor.grantId, workId: monitor.workId, status: monitor.status,
+      nextDueAt: monitor.nextDueAt, pauseReason: monitor.pauseReason, inFlightJobId: monitor.inFlightJobId,
+      polling: { maxObservationAgeMs: monitor.maxObservationAgeMs, intervalMs: monitor.intervalMs,
+        jitterMs: monitor.jitterMs, requestBudget: monitor.requestBudget, requestWindowMs: monitor.requestWindowMs,
+        backoffBaseMs: monitor.backoffBaseMs, backoffMaxMs: monitor.backoffMaxMs },
+      requestsInWindow: monitor.requestsInWindow, requestWindowStartedAt: monitor.requestWindowStartedAt,
+      lastObservation: monitor.lastObservation ? structuredClone(monitor.lastObservation) : null,
+      controlRevision: monitor.control?.revision ?? null,
+      handoff: monitor.control?.handoff ? { id: monitor.control.handoff.id,
+        state: monitor.control.handoff.state } : null,
+      resume: monitor.control?.resume ? { jobId: monitor.control.resume.jobId,
+        state: monitor.control.resume.candidate ? 'resuming' as const : 'queued' as const } : null,
+      action: action ? { id: action.id, digest: action.digest, status: action.status,
+        readbackEligible: ['accepted', 'unknown'].includes(action.status) } : null,
+      limits: { foreground: true as const, awakeOnly: true as const, supervised: false as const } };
+  }
+
+  async #pauseMonitor(principal: ControlPrincipal, monitorId: string, input: unknown,
+    reason: 'owner_paused' | 'owner_takeover') {
+    const current = this.#monitorRecord(principal, monitorId);
+    const body = exact(input, ['requestId', 'digest', 'revision', 'controlRevision']);
+    id(body.requestId, 'requestId'); const expectedDigest = digest(body.digest);
+    if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1 ||
+        !Number.isSafeInteger(body.controlRevision) || (body.controlRevision as number) < 0)
+      throw new OwnerControlError('invalid_request');
+    const monitoring = this.#requireSyntheticMonitoring();
+    const binding = current.control?.resume?.candidate ? { ...current.control.resume.candidate } :
+      current.status === 'paused' && current.control?.handoff ? { ...current.control.handoff.binding } :
+      { ...monitoring.session.epoch, tabId: monitoring.session.tabId };
+    try {
+      const paused = monitoring.service.pauseMonitorForOwner({ ownerId: principal.ownerId,
+        source: 'owner:service', requestId: body.requestId as string, monitorId,
+        digest: expectedDigest, revision: body.revision as number,
+        controlRevision: body.controlRevision as number, reason,
+        binding });
+      if (paused.duplicate) return { monitor: this.#monitorView(paused.monitor), receipt: paused.receipt, duplicate: true };
+      const handoffId = paused.monitor.control?.handoff?.id;
+      if (!handoffId) throw new Error('Monitor handoff was not recorded.');
+      try {
+        await monitoring.session.transferToHuman(reason);
+        const settled = monitoring.service.settleMonitorHandoff({ monitorId, handoffId, state: 'confirmed' });
+        return { monitor: this.#monitorView(settled), receipt: paused.receipt, duplicate: false };
+      } catch (error) {
+        const settled = monitoring.service.settleMonitorHandoff({ monitorId, handoffId, state: 'failed' });
+        return { monitor: this.#monitorView(settled), receipt: paused.receipt,
+          duplicate: false, unavailable: true as const };
+      }
+    } catch (error) { this.#monitoringError(error); }
+  }
+
+  #monitoringError(error: unknown): never {
+    if (error instanceof OwnerControlError) throw error;
+    if (isFatalServiceStorageError(error)) this.#serviceError(error);
+    throw new OwnerControlError('conflict');
+  }
+
+  #armKey(principal: ControlPrincipal, grantId: string): string {
+    return `${principal.sessionId}\u0000${grantId}`;
+  }
+
+  #deleteArmConfirmation(key: string): void {
+    const confirmation = this.#armConfirmations.get(key); if (!confirmation) return;
+    this.#armConfirmations.delete(key); confirmation.tokenDigest.fill(0);
   }
 
   #connectionSummaries() {
@@ -408,10 +684,25 @@ export class ServiceControlService implements ServiceControlAdapter {
       ? { threadId: job.parameters.threadId, workId: job.parameters.workId ?? null } : null;
     const actionId = job.parameters.kind === 'execute' || job.parameters.kind === 'readback'
       ? job.parameters.actionId : null;
+    let monitoring: ControlJobSummary['monitoring'];
+    if (job.parameters.kind === 'monitor') {
+      let resumeReason: NonNullable<ControlJobSummary['monitoring']>['resumeReason'] = null;
+      let resumeEvidence: NonNullable<ControlJobSummary['monitoring']>['resumeEvidence'] = null;
+      if (job.parameters.purpose === 'resume' && job.result) {
+        const record = job.result.recordIds.map(recordId => this.#store.record(this.#binding.workspaceId, recordId))
+          .find(item => item.event.type === 'monitor.resume_finished');
+        if (record?.event.type === 'monitor.resume_finished') {
+          resumeReason = record.event.data.reason;
+          resumeEvidence = record.event.data.evidence ? structuredClone(record.event.data.evidence) : null;
+        }
+      }
+      monitoring = { monitorId: job.parameters.monitorId,
+        purpose: job.parameters.purpose === 'resume' ? 'resume' : 'observe', resumeReason, resumeEvidence };
+    }
     return {
       id: job.id, position: job.position, requestId: receipt.requestId, kind: job.kind, status: job.status,
       admittedAt: job.admittedAt, startedAt: job.startedAt ?? null, finishedAt: job.finishedAt ?? null,
-      focus, actionId, resultReason: job.result?.reason ?? null
+      focus, actionId, resultReason: job.result?.reason ?? null, ...(monitoring ? { monitoring } : {})
     };
   }
 
@@ -536,6 +827,9 @@ export class ServiceControlService implements ServiceControlAdapter {
   #clearPrincipal(principal: ControlPrincipal): void {
     for (const [key, confirmation] of this.#confirmations) {
       if (confirmation.principal === principal) this.#deleteConfirmation(key);
+    }
+    for (const [key, confirmation] of this.#armConfirmations) {
+      if (confirmation.principal === principal) this.#deleteArmConfirmation(key);
     }
   }
 

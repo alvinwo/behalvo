@@ -126,6 +126,35 @@ test('service UI exposes disabled visa discovery readiness without claiming live
   assert.equal(/live.*ready/i.test(text), false);
 });
 
+test('synthetic monitoring UI renders exact authority and explicit handoff recovery controls', async () => {
+  const ui = createOwnerControlUi({ now: NOW });
+  await pair(ui);
+  ui.queueJson(200, serviceStatus({ databaseMode: 'encrypted', monitoring: { mode: 'synthetic', configured: true,
+    fixtureId: 'visa-beijing-group-v1', installation: 'active', limitsProfile: 'synthetic-visa-one-effect-v1' } }));
+  ui.queueJson(200, { items: [], nextAfter: null });
+  ui.queueJson(200, { items: [], nextAfter: null });
+  ui.queueJson(200, { items: [{ id: 'grant-a', digest: DIGEST, revision: 1, status: 'active',
+    adapter: 'us-visa-china', expiresAt: '2027-01-31T16:00:00.000Z', allowance: { reservedActionId: null } }], nextAfter: null });
+  ui.queueJson(200, { items: [{ id: 'monitor-a', grantId: 'grant-a', status: 'paused', pauseReason: 'owner_paused',
+    controlRevision: 4, handoff: { id: 'handoff-a', state: 'failed' }, resume: null,
+    nextDueAt: null, requestsInWindow: 2, polling: { requestBudget: 30 }, action: null }], nextAfter: null });
+  await ui.click('service-refresh');
+  assert.equal(ui.element('synthetic-monitoring').hidden, false);
+  assert.match(ui.element('grants').textContent, /grant-a.*active/);
+  assert.match(ui.element('monitors').textContent, /monitor-a.*paused.*handoff failed/i);
+  const monitorItem = ui.element('monitors').children[0];
+  const reconcile = monitorItem.children.find(child => child.tagName === 'LABEL').children[0];
+  assert.equal(reconcile.checked, false);
+  const resume = monitorItem.children.find(child => child.tagName === 'BUTTON' && /resume/i.test(child.textContent));
+  reconcile.checked = true;
+  ui.queueJson(202, { receipt: { id: 'resume-receipt' }, job: { id: 'resume-job' }, duplicate: false });
+  await resume.dispatch('click');
+  const call = ui.fetchCalls.find(entry => entry.path === '/api/monitors/monitor-a/resume');
+  assert.deepEqual(JSON.parse(call.init.body), { requestId: JSON.parse(call.init.body).requestId,
+    digest: DIGEST, revision: 1, controlRevision: 4, recoverHandoff: true });
+  assert.equal(ui.storageCalls.length, 0);
+});
+
 test('service UI shows connection metadata without references and submits selected disconnect deletions', async () => {
   const ui = createOwnerControlUi({ now: NOW });
   await pair(ui);

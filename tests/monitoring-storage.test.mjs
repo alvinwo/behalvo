@@ -64,7 +64,7 @@ async function fixture(t, options = {}) {
   });
   if (!options.pending)
     service.activateGrant({ ownerId, grantId: proposed.id, digest: proposed.digest, revision: proposed.revision });
-  return { directory, path, store, registry, service, grant: proposed };
+  return { directory, path, store, registry, service, grant: proposed, key: options.key };
 }
 
 function observation(candidate = { value: 'first' }) {
@@ -487,4 +487,132 @@ test('replay and encrypted snapshot verification reject a reservation whose requ
   t.after(() => tampered.close());
   assert.throws(() => tampered.rebuild(workspaceId), /reservation|start|monitored/i);
   await assert.rejects(tampered.backup(join(f.directory, 'tampered-backup.db')), /private file operation failed/i);
+});
+
+for (const dispatch of ['none', 'queued', 'running', 'bound'])
+  test(`owner revoke atomically retains the reserved allowance and stops ${dispatch} execution`, async t => {
+    const f = await fixture(t, { key: randomBytes(32) });
+    const action = f.service.reserve({ grantId: 'grant-1', workId: 'work', observation: observation(),
+      maxObservationAgeMs: 60_000, binding: binding(), actionId: 'action-revoke', attemptId: 'attempt-revoke' });
+    let job;
+    if (dispatch !== 'none') {
+      job = f.store.admitActionJob({ workspaceId, ownerId, requestId: 'execute-revoke', source: 'owner:service',
+        envelope: { kind: 'execute', actionId: action.id, digest: action.digest }, instanceId: 'worker', at: now }).job;
+      if (dispatch !== 'queued') job = f.store.claimServiceJob(workspaceId, 'worker', now);
+      if (dispatch === 'bound') f.store.recordMonitoredActionIntent(workspaceId, job.claim, {
+        actionId: action.id, grantId: 'grant-1', attemptId: action.attemptId,
+        intentId: 'intent-revoke', evidence: 'Synthetic intent', at: now });
+    }
+    const prior = f.service.grant('grant-1');
+    const input = { ownerId, grantId: prior.id, digest: prior.digest, revision: prior.revision, reason: 'owner_revoked' };
+    for (const change of [{ ownerId: 'other' }, { digest: 'f'.repeat(64) }, { revision: 2 }, { reason: 'invalid' }])
+      assert.throws(() => f.service.revokeGrant({ ...input, ...change }));
+    const revoked = f.service.revokeGrant(input);
+    assert.equal(revoked.status, 'blocked');
+    assert.equal(revoked.revokedAt, now);
+    assert.equal(revoked.revocationReason, 'owner_revoked');
+    for (const field of ['digest', 'revision', 'reservedActionId', 'reservationAttemptId', 'reservationObservationDigest'])
+      assert.equal(revoked[field], prior[field]);
+    assert.equal(revoked.settlement.outcome, 'unknown');
+    assert.equal(f.store.state(workspaceId).actions[action.id].status, 'unknown');
+    if (job) {
+      const terminal = f.store.serviceJob(workspaceId, job.id);
+      assert.equal(terminal.status, 'stopped');
+      assert.equal(terminal.result.reason, dispatch === 'bound' ? 'action_unknown' : 'action_ineligible');
+      if (dispatch === 'bound') assert.equal(terminal.result.attemptId, action.attemptId);
+      else assert.deepEqual(terminal.result.recordIds, []);
+    }
+    const version = f.store.state(workspaceId).version;
+    assert.deepEqual(f.service.revokeGrant({ ...input, reason: 'material_drift' }), revoked);
+    assert.equal(f.store.state(workspaceId).version, version);
+    assert.throws(() => f.service.revokeGrant({ ...input, reason: 'invalid' }));
+    assert.throws(() => f.service.reserve({ grantId: 'grant-1', workId: 'work', observation: observation({ value: 'new' }),
+      maxObservationAgeMs: 60_000, binding: binding(), actionId: 'new-action', attemptId: 'new-attempt' }));
+    const state = f.store.state(workspaceId);
+    assert.deepEqual(f.store.rebuild(workspaceId), state);
+    await f.store.backup(join(f.directory, 'revoked-backup.db'));
+    f.store.close();
+    // No runtime cleanup occurs between the revocation commit and reopening.
+    const reopened = new SqliteStore(f.path, { encryptionKey: f.key, serviceQueue: { upgradeExisting: false } });
+    assert.deepEqual(reopened.state(workspaceId), state);
+    assert.deepEqual(reopened.inspectInterruptedServiceJobs(workspaceId, now), { repaired: 0, interrupted: 0 });
+    if (job) assert.equal(reopened.serviceJob(workspaceId, job.id).status, 'stopped');
+    reopened.close();
+    const backup = new SqliteStore(join(f.directory, 'revoked-backup.db'), { encryptionKey: f.key, readOnly: true });
+    assert.deepEqual(backup.state(workspaceId), state);
+    backup.close();
+  });
+
+for (const outcome of ['unknown', 'failed', 'accepted_unverified', 'accepted_verified'])
+  test(`reserved revoke preserves ${outcome} evidence and the bound job result`, async t => {
+    const f = await fixture(t); t.after(() => f.store.close());
+    const action = f.service.reserve({ grantId: 'grant-1', workId: 'work', observation: observation(),
+      maxObservationAgeMs: 60_000, binding: binding(), actionId: 'action-settled', attemptId: 'attempt-settled' });
+    f.store.admitActionJob({ workspaceId, ownerId, source: 'owner:service', requestId: 'execute-settled',
+      envelope: { kind: 'execute', actionId: action.id, digest: action.digest }, instanceId: 'worker', at: now });
+    const job = f.store.claimServiceJob(workspaceId, 'worker', now);
+    f.store.recordMonitoredActionIntent(workspaceId, job.claim, { actionId: action.id, grantId: 'grant-1',
+      attemptId: action.attemptId, intentId: 'intent-settled', evidence: 'Synthetic intent', at: now });
+    f.store.finishActionAttempt(workspaceId, action.id, action.attemptId,
+      outcome.startsWith('accepted') ? 'accepted' : outcome, 'Synthetic existing outcome', { recordedAt: now });
+    if (outcome === 'accepted_verified') {
+      const verification = { status: 'satisfied', recordedAt: now, observation: {
+        connectionId: 'connection-a', provider: 'synthetic-provider', subject: 'synthetic-subject',
+        connectionGeneration: 1, resourceId: 'resource', source: 'synthetic-readback', observedAt: now, state: {} } };
+      f.store.recordActionVerification(workspaceId, f.store.state(workspaceId).version, action.id,
+        [{ type: 'action.verification_recorded', data: { id: action.id, verification } }], { recordedAt: now }, undefined, job.claim);
+    }
+    const original = f.service.settleGrant({ grantId: 'grant-1', actionId: action.id, outcome });
+    const priorAction = f.store.state(workspaceId).actions[action.id];
+    const revoked = f.service.revokeGrant({ ownerId, grantId: 'grant-1', digest: original.digest, revision: 1, reason: 'owner_revoked' });
+    assert.deepEqual(revoked.settlement, original.settlement);
+    assert.equal(revoked.revokedAt, now);
+    assert.deepEqual(f.store.state(workspaceId).actions[action.id], priorAction);
+    const terminal = f.store.serviceJob(workspaceId, job.id);
+    assert.equal(terminal.result.reason, { unknown: 'action_unknown', failed: 'action_failed',
+      accepted_unverified: 'readback_unresolved', accepted_verified: 'completed' }[outcome]);
+    assert.equal(terminal.status, outcome === 'accepted_verified' ? 'finished' : 'stopped');
+    assert.equal(f.store.journal(workspaceId).filter(record => record.event.type === 'action.finished').length, 1);
+    assert.deepEqual(f.store.rebuild(workspaceId), f.store.state(workspaceId));
+  });
+
+test('reserved revoke atomically stops every monitor and its queued or running inspection', async t => {
+  const f = await fixture(t); t.after(() => f.store.close());
+  for (const id of ['monitor-a', 'monitor-b', 'monitor-idle']) f.service.configureMonitor({
+    ownerId, id, grantId: 'grant-1', workId: 'work', nextDueAt: id === 'monitor-idle' ? '2026-09-21T13:00:00.000Z' : now,
+    maxObservationAgeMs: 60_000, intervalMs: 60_000, jitterMs: 5_000, requestBudget: 3,
+    requestWindowMs: 300_000, backoffBaseMs: 60_000, backoffMaxMs: 600_000 });
+  f.service.admitDueMonitors({ instanceId: 'worker', at: now, limit: 10 });
+  f.store.claimServiceJob(workspaceId, 'worker', now);
+  f.service.reserve({ grantId: 'grant-1', workId: 'work', observation: observation(),
+    maxObservationAgeMs: 60_000, binding: binding(), actionId: 'action-stop-monitors', attemptId: 'attempt-stop-monitors' });
+  f.service.revokeGrant({ ownerId, grantId: 'grant-1', digest: f.grant.digest, revision: 1, reason: 'owner_revoked' });
+  for (const monitor of Object.values(f.store.state(workspaceId).monitors)) {
+    assert.equal(monitor.status, 'stopped'); assert.equal(monitor.inFlightJobId, null);
+  }
+  for (const job of f.store.serviceJobs(workspaceId).items) {
+    assert.equal(job.status, 'stopped'); assert.equal(job.result.reason, 'monitor_terminal');
+  }
+  const journal = f.store.journal(workspaceId);
+  const revocation = journal.findIndex(record => record.event.type === 'monitored_action.grant_revoked');
+  assert.deepEqual(journal.slice(revocation).map(record => record.event.type), [
+    'monitored_action.grant_revoked', 'monitor.stopped', 'monitor.stopped', 'monitor.stopped',
+    'action.finished', 'monitored_action.grant_settled'
+  ]);
+  assert.deepEqual(f.store.rebuild(workspaceId), f.store.state(workspaceId));
+});
+
+test('failed reserved revocation transaction leaves action, allowance, jobs and journal intact', async t => {
+  const f = await fixture(t); t.after(() => f.store.close());
+  const action = f.service.reserve({ grantId: 'grant-1', workId: 'work', observation: observation(),
+    maxObservationAgeMs: 60_000, binding: binding(), actionId: 'action-rollback-revoke', attemptId: 'attempt-rollback-revoke' });
+  const job = f.store.admitActionJob({ workspaceId, ownerId, source: 'owner:service', requestId: 'execute-rollback-revoke',
+    envelope: { kind: 'execute', actionId: action.id, digest: action.digest }, instanceId: 'worker', at: now }).job;
+  const before = f.store.state(workspaceId), journal = f.store.journal(workspaceId);
+  assert.throws(() => f.store.terminalizeMonitoredGrant(workspaceId, before.version,
+    { type: 'monitored_action.grant_revoked', data: { id: 'grant-1', digest: f.grant.digest,
+      revision: 2, reason: 'owner_revoked', revokedAt: now } }, { recordedAt: now }));
+  assert.deepEqual(f.store.state(workspaceId), before);
+  assert.deepEqual(f.store.journal(workspaceId), journal);
+  assert.deepEqual(f.store.serviceJob(workspaceId, job.id), job);
 });

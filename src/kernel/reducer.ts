@@ -1,7 +1,9 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { DomainEvent, Fact, State } from './types.js';
 import { identifier, instant, nonempty, required } from './types.js';
 import { exactObject, isOperationCommand, jsonValue, validateConnection, validateOperationCommand, validateStoredObservation } from '../operations/validation.js';
-import { boundedMonitorJitter, canonicalInstant, monitoredActionCommandDigest, validateDigest, validateGrant } from '../monitoring/policy.js';
+import { assertArmPlanCurrent, assertArmPlanReservationReady, boundedMonitorJitter, canonicalInstant, exactMonitoringObject,
+    monitoredActionCommandDigest, validateDigest, validateGrant } from '../monitoring/policy.js';
 import type { MonitorState } from '../monitoring/types.js';
 export function emptyState(workspaceId: string): State {
     return { workspaceId, ownerId: '', version: 0, works: {}, actions: {}, timers: {}, facts: {}, connections: {},
@@ -15,11 +17,11 @@ function monitoredGrant(state: State, id: string) {
 function monitor(state: State, id: string) { return required(state.monitors, id, 'Monitor'); }
 
 function validateMonitor(value: MonitorState): void {
-    exactObject(value, ['id', 'workspaceId', 'grantId', 'workId', 'adapter', 'adapterVersion', 'connectionId',
+    exactMonitoringObject(value, ['id', 'workspaceId', 'grantId', 'workId', 'adapter', 'adapterVersion', 'connectionId',
         'connectionGeneration', 'browserProfileId', 'subjectDigest', 'maxObservationAgeMs', 'intervalMs', 'jitterMs',
         'requestBudget', 'requestWindowMs', 'backoffBaseMs', 'backoffMaxMs', 'status', 'nextDueAt',
         'requestWindowStartedAt', 'requestsInWindow', 'lastObservation', 'lastCompleteObservationAt',
-        'lastCompleteCoverage', 'consecutiveFailures', 'backoffMs', 'pauseReason', 'inFlightJobId'], 'monitor');
+        'lastCompleteCoverage', 'consecutiveFailures', 'backoffMs', 'pauseReason', 'inFlightJobId'], ['control'], 'monitor');
     for (const [item, label] of [[value.id, 'monitorId'], [value.workspaceId, 'workspaceId'], [value.grantId, 'grantId'],
         [value.workId, 'workId'], [value.adapter, 'adapter'], [value.connectionId, 'connectionId'],
         [value.browserProfileId, 'browserProfileId']] as const) identifier(item, label);
@@ -42,8 +44,39 @@ function validateMonitor(value: MonitorState): void {
     if (value.lastCompleteObservationAt !== null) canonicalInstant(value.lastCompleteObservationAt, 'complete observation time');
     if (value.lastCompleteCoverage !== null) jsonValue(value.lastCompleteCoverage, 'complete observation coverage');
     if (value.inFlightJobId !== null) identifier(value.inFlightJobId, 'jobId');
+    if (value.control !== undefined) {
+        exactObject(value.control, ['version', 'revision', 'handoff', 'resume'], 'monitor control');
+        if (value.control.version !== 1 || !Number.isSafeInteger(value.control.revision) || value.control.revision < 0)
+            throw new Error('Invalid monitor control');
+        if (value.control.handoff !== null) {
+            exactObject(value.control.handoff, ['id', 'state', 'binding'], 'monitor handoff');
+            identifier(value.control.handoff.id, 'handoffId');
+            if (!['pending', 'confirmed', 'failed'].includes(value.control.handoff.state)) throw new Error('Invalid monitor handoff');
+            exactObject(value.control.handoff.binding, ['profileId', 'connectionGeneration', 'epoch',
+                'serviceGeneration', 'allowedOrigin', 'tabId'], 'monitor handoff binding');
+            identifier(value.control.handoff.binding.profileId, 'profileId');
+            identifier(value.control.handoff.binding.epoch, 'epoch');
+            identifier(value.control.handoff.binding.serviceGeneration, 'serviceGeneration');
+            if (!Number.isSafeInteger(value.control.handoff.binding.connectionGeneration) ||
+                value.control.handoff.binding.connectionGeneration < 1 ||
+                !Number.isSafeInteger(value.control.handoff.binding.tabId) || value.control.handoff.binding.tabId < 1)
+                throw new Error('Invalid monitor handoff binding');
+        }
+        if (value.control.resume !== null) {
+            exactObject(value.control.resume, ['jobId', 'candidate'], 'monitor resume');
+            identifier(value.control.resume.jobId, 'jobId');
+            if (value.control.resume.candidate !== null) {
+                exactObject(value.control.resume.candidate, ['profileId', 'connectionGeneration', 'epoch',
+                    'serviceGeneration', 'allowedOrigin', 'tabId'], 'monitor resume candidate');
+                identifier(value.control.resume.candidate.profileId, 'profileId');
+                identifier(value.control.resume.candidate.epoch, 'epoch');
+                identifier(value.control.resume.candidate.serviceGeneration, 'serviceGeneration');
+            }
+        }
+    }
     if (value.pauseReason !== null && !['session_expired', 'needs_human', 'rate_limited', 'contract_changed',
-        'installation_changed', 'grant_unavailable'].includes(value.pauseReason)) throw new Error('Invalid monitor pause reason');
+        'installation_changed', 'grant_unavailable', 'owner_paused', 'owner_takeover'].includes(value.pauseReason))
+        throw new Error('Invalid monitor pause reason');
     if (value.lastObservation !== null) {
         exactObject(value.lastObservation, ['observedAt', 'complete', 'coverage', 'result'], 'monitor observation summary');
         canonicalInstant(value.lastObservation.observedAt, 'observation time');
@@ -130,9 +163,11 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             const grant = monitoredGrant(s, event.data.id);
             validateDigest(event.data.digest, 'grant digest'); canonicalInstant(event.data.revokedAt, 'revocation time');
             if (!['owner_revoked', 'material_drift'].includes(event.data.reason) || event.data.digest !== grant.digest ||
-                event.data.revision !== grant.revision || !['pending', 'active'].includes(grant.status))
+                event.data.revision !== grant.revision || grant.revokedAt !== undefined ||
+                !['pending', 'active', 'blocked', 'consumed'].includes(grant.status))
                 throw new Error('Invalid monitored action revocation');
-            grant.status = 'revoked'; grant.revokedAt = event.data.revokedAt; grant.revocationReason = event.data.reason;
+            if (!grant.reservedActionId) grant.status = 'revoked';
+            grant.revokedAt = event.data.revokedAt; grant.revocationReason = event.data.reason;
             for (const item of Object.values(s.monitors).filter(item => item.grantId === grant.id && item.status !== 'stopped')) {
                 item.status = 'stopped'; item.nextDueAt = null;
             }
@@ -177,6 +212,9 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
                 throw new Error('Invalid narrowed monitored action');
             exactObject(action.monitoredGrant, ['id', 'digest', 'revision'], 'monitored grant reference');
             validateOperationCommand(action.command);
+            if (grant.armPlan && (action.workId !== grant.armPlan.workId || action.workRevision !== grant.armPlan.workRevision))
+                throw new Error('Narrowed action no longer matches reviewed arm plan');
+            assertArmPlanReservationReady(s, grant);
             const work = required(s.works, action.workId, 'Work');
             if (work.revision !== action.workRevision || ['done', 'cancelled'].includes(work.phase))
                 throw new Error('Stale monitored action work');
@@ -239,7 +277,7 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             identifier(event.data.attemptId, 'attemptId'); identifier(event.data.intentId, 'intentId');
             nonempty(event.data.evidenceRef, 'intent evidence');
             if (action.status !== 'running' || action.attemptId !== event.data.attemptId || action.monitoredIntent ||
-                action.monitoredGrant?.id !== grant.id || grant.status !== 'blocked' ||
+                action.monitoredGrant?.id !== grant.id || grant.status !== 'blocked' || grant.revokedAt !== undefined ||
                 grant.reservedActionId !== action.id || grant.reservationAttemptId !== event.data.attemptId)
                 throw new Error('Monitored intent binding mismatch');
             action.monitoredIntent = { intentId: event.data.intentId, attemptId: event.data.attemptId,
@@ -255,7 +293,7 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             nonempty(event.data.evidenceRef, 'confirmation evidence');
             if (action.status !== 'running' || action.attemptId !== event.data.attemptId ||
                 !action.monitoredIntent || action.monitoredConfirmation || action.monitoredGrant?.id !== grant.id ||
-                grant.status !== 'blocked' || grant.reservedActionId !== action.id)
+                grant.status !== 'blocked' || grant.revokedAt !== undefined || grant.reservedActionId !== action.id)
                 throw new Error('Monitored confirmation binding mismatch');
             action.monitoredConfirmation = { referenceDigest: event.data.referenceDigest,
                 attemptId: event.data.attemptId, evidenceRef: event.data.evidenceRef };
@@ -267,6 +305,13 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             validateMonitor(configured);
             const grant = monitoredGrant(s, configured.grantId);
             const work = required(s.works, configured.workId, 'Work');
+            assertArmPlanCurrent(s, grant, configured);
+            const prior = s.monitors[configured.id];
+            const priorGrant = prior ? monitoredGrant(s, prior.grantId) : undefined;
+            const legalReplacement = prior !== undefined && prior.grantId !== configured.grantId &&
+                prior.status === 'stopped' && prior.inFlightJobId === null && priorGrant !== undefined &&
+                (priorGrant.status === 'revoked' || priorGrant.status === 'expired') &&
+                priorGrant.reservedActionId === undefined && priorGrant.settlement === undefined;
             if (configured.workspaceId !== s.workspaceId || configured.status !== 'active' || configured.inFlightJobId !== null ||
                 configured.nextDueAt === null || configured.pauseReason !== null || configured.requestsInWindow !== 0 ||
                 configured.lastObservation !== null || configured.lastCompleteObservationAt !== null ||
@@ -274,7 +319,8 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
                 configured.adapter !== grant.adapter || configured.adapterVersion !== grant.adapterVersion ||
                 configured.connectionId !== grant.connectionId || configured.connectionGeneration !== grant.connectionGeneration ||
                 configured.browserProfileId !== grant.browserProfileId || configured.subjectDigest !== grant.subjectDigest ||
-                grant.status !== 'active' || ['done', 'cancelled'].includes(work.phase) || Object.hasOwn(s.monitors, configured.id))
+                grant.status !== 'active' || ['done', 'cancelled'].includes(work.phase) ||
+                (Object.hasOwn(s.monitors, configured.id) && !legalReplacement))
                 throw new Error('Invalid monitor configuration');
             s.monitors[configured.id] = structuredClone(configured);
             break;
@@ -361,15 +407,129 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
                 item.backoffMs === 0 ? item.backoffBaseMs : item.backoffMs * 2);
             break;
         }
+        case 'monitor.paused': {
+            exactObject(event.data, ['id', 'expectedControlRevision', 'ownerId', 'reason', 'jobId', 'handoffId', 'binding',
+                'pausedAt'], 'monitor owner pause event');
+            const item = monitor(s, event.data.id);
+            if (event.data.ownerId !== null) identifier(event.data.ownerId, 'ownerId');
+            if (event.data.jobId !== null) identifier(event.data.jobId, 'jobId');
+            identifier(event.data.handoffId, 'handoffId');
+            canonicalInstant(event.data.pausedAt, 'pause time');
+            const ownerPause = event.data.ownerId === s.ownerId &&
+                ((event.data.jobId === null && item.status === 'active' && item.inFlightJobId === null) ||
+                 (event.data.jobId !== null && item.inFlightJobId === event.data.jobId &&
+                  (item.status === 'active' || item.status === 'paused'))) &&
+                ['owner_paused', 'owner_takeover'].includes(event.data.reason);
+            const automaticPause = event.data.ownerId === null && event.data.jobId !== null && item.status === 'paused' &&
+                item.inFlightJobId === null && item.pauseReason === event.data.reason &&
+                ['session_expired', 'needs_human', 'rate_limited', 'contract_changed'].includes(event.data.reason);
+            if (!item.control || item.control.revision !== event.data.expectedControlRevision ||
+                (!ownerPause && !automaticPause)) throw new Error('Invalid monitor pause');
+            const candidate = structuredClone(item);
+            candidate.status = 'paused'; candidate.nextDueAt = null; candidate.pauseReason = event.data.reason;
+            candidate.inFlightJobId = null;
+            candidate.control = { version: 1, revision: item.control.revision + 1,
+                handoff: { id: event.data.handoffId, state: 'pending', binding: structuredClone(event.data.binding) },
+                resume: null };
+            validateMonitor(candidate); s.monitors[item.id] = candidate;
+            break;
+        }
+        case 'monitor.handoff_settled': {
+            exactObject(event.data, ['id', 'handoffId', 'state', 'settledAt'], 'monitor handoff result');
+            const item = monitor(s, event.data.id); canonicalInstant(event.data.settledAt, 'handoff result time');
+            if (!item.control?.handoff || item.control.handoff.id !== event.data.handoffId ||
+                !['confirmed', 'failed'].includes(event.data.state)) throw new Error('Invalid monitor handoff result');
+            item.control.handoff.state = event.data.state; item.control.revision++;
+            break;
+        }
+        case 'monitor.resume_requested': {
+            exactObject(event.data, ['id', 'ownerId', 'jobId', 'expectedControlRevision', 'recoverHandoff',
+                'serviceGeneration', 'installationGeneration', 'requestedAt', 'requestWindowStartedAt',
+                'requestsInWindow'], 'monitor resume request');
+            const item = monitor(s, event.data.id);
+            identifier(event.data.ownerId, 'ownerId'); identifier(event.data.jobId, 'jobId');
+            identifier(event.data.serviceGeneration, 'serviceGeneration');
+            identifier(event.data.installationGeneration, 'installationGeneration');
+            canonicalInstant(event.data.requestedAt, 'resume request time');
+            canonicalInstant(event.data.requestWindowStartedAt, 'request window start');
+            if (event.data.ownerId !== s.ownerId || item.status !== 'paused' || item.inFlightJobId !== null ||
+                !item.control || item.control.revision !== event.data.expectedControlRevision ||
+                !((item.control.handoff?.state === 'confirmed' && event.data.recoverHandoff === false) ||
+                  ((item.control.handoff?.state === 'pending' || item.control.handoff?.state === 'failed') &&
+                    event.data.recoverHandoff === true)))
+                throw new Error('Invalid monitor resume request');
+            item.inFlightJobId = event.data.jobId;
+            item.requestWindowStartedAt = event.data.requestWindowStartedAt;
+            item.requestsInWindow = event.data.requestsInWindow;
+            item.control.revision++;
+            item.control.resume = { jobId: event.data.jobId, candidate: null };
+            break;
+        }
+        case 'monitor.resume_started': {
+            exactObject(event.data, ['id', 'jobId', 'candidate', 'startedAt'], 'monitor resume start');
+            const item = monitor(s, event.data.id); canonicalInstant(event.data.startedAt, 'resume start time');
+            if (!item.control?.resume || item.control.resume.jobId !== event.data.jobId ||
+                item.control.resume.candidate !== null || item.inFlightJobId !== event.data.jobId)
+                throw new Error('Invalid monitor resume start');
+            item.control.resume.candidate = structuredClone(event.data.candidate);
+            break;
+        }
+        case 'monitor.resume_retirement_failed': {
+            exactObject(event.data, ['id', 'jobId', 'handoffId', 'candidate', 'failedAt'],
+                'monitor resume retirement failure');
+            const item = monitor(s, event.data.id); identifier(event.data.handoffId, 'handoffId');
+            canonicalInstant(event.data.failedAt, 'resume retirement failure time');
+            if (!item.control?.resume || item.control.resume.jobId !== event.data.jobId ||
+                item.inFlightJobId !== event.data.jobId || !item.control.resume.candidate ||
+                !isDeepStrictEqual(item.control.resume.candidate, event.data.candidate))
+                throw new Error('Invalid monitor resume retirement failure');
+            item.control.handoff = { id: event.data.handoffId, state: 'failed',
+                binding: structuredClone(event.data.candidate) };
+            item.control.revision++;
+            break;
+        }
+        case 'monitor.resume_finished': {
+            exactObject(event.data, ['id', 'jobId', 'outcome', 'reason', 'evidence', 'nextDueAt', 'finishedAt'],
+                'monitor resume result');
+            const item = monitor(s, event.data.id); canonicalInstant(event.data.finishedAt, 'resume finish time');
+            if (!item.control?.resume || item.control.resume.jobId !== event.data.jobId ||
+                item.inFlightJobId !== event.data.jobId ||
+                !['resumed', 'rejected', 'interrupted'].includes(event.data.outcome))
+                throw new Error('Invalid monitor resume result');
+            if (event.data.outcome === 'interrupted' && item.control.resume.candidate &&
+                (item.control.handoff?.state !== 'failed' ||
+                 !isDeepStrictEqual(item.control.handoff.binding, item.control.resume.candidate)))
+                throw new Error('Interrupted resume candidate requires exact retirement handoff');
+            if (event.data.outcome === 'resumed') {
+                if (event.data.reason !== 'preflight_passed' || event.data.nextDueAt === null || !event.data.evidence)
+                    throw new Error('Invalid successful monitor resume');
+                exactMonitoringObject(event.data.evidence, ['observedAt', 'identityDigest', 'subjectDigest', 'rosterDigest',
+                    'termsDigest', 'termsVersion', 'appointmentAbsent', 'pageState', 'evidenceDigest'], [], 'resume evidence');
+                canonicalInstant(event.data.evidence.observedAt, 'resume evidence time');
+                for (const value of [event.data.evidence.identityDigest, event.data.evidence.subjectDigest,
+                    event.data.evidence.rosterDigest, event.data.evidence.termsDigest, event.data.evidence.evidenceDigest])
+                    validateDigest(value, 'resume evidence digest');
+                if (event.data.evidence.appointmentAbsent !== true || event.data.evidence.pageState !== 'calendar' ||
+                    typeof event.data.evidence.termsVersion !== 'string') throw new Error('Invalid resume evidence');
+                canonicalInstant(event.data.nextDueAt, 'next due time');
+                item.status = 'active'; item.nextDueAt = event.data.nextDueAt; item.pauseReason = null;
+                item.control.handoff = null; item.consecutiveFailures = 0; item.backoffMs = 0;
+            } else if (event.data.nextDueAt !== null || event.data.evidence !== null)
+                throw new Error('Invalid rejected monitor resume');
+            item.inFlightJobId = null; item.control.resume = null; item.control.revision++;
+            break;
+        }
         case 'monitor.resumed': {
             exactObject(event.data, ['id', 'ownerId', 'nextDueAt', 'resumedAt'], 'monitor resume event');
             const item = monitor(s, event.data.id);
             identifier(event.data.ownerId, 'ownerId'); canonicalInstant(event.data.nextDueAt, 'next due time');
             canonicalInstant(event.data.resumedAt, 'resume time');
-            if (item.status !== 'paused' || event.data.ownerId !== s.ownerId || item.inFlightJobId !== null)
+            if (item.status !== 'paused' || event.data.ownerId !== s.ownerId || item.inFlightJobId !== null ||
+                (item.control !== undefined && item.control.handoff?.state !== 'confirmed'))
                 throw new Error('Invalid monitor resume');
             item.status = 'active'; item.nextDueAt = event.data.nextDueAt; item.pauseReason = null;
             item.consecutiveFailures = 0; item.backoffMs = 0;
+            if (item.control) { item.control.revision++; item.control.handoff = null; item.control.resume = null; }
             break;
         }
         case 'monitor.stopped': {
@@ -379,12 +539,13 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             if (!['grant_reserved', 'grant_terminal', 'owner_stopped'].includes(event.data.reason))
                 throw new Error('Invalid monitor stop reason');
             const grant = monitoredGrant(s, item.grantId);
-            if (event.data.reason === 'grant_terminal' && !['revoked', 'expired'].includes(grant.status))
+            if (event.data.reason === 'grant_terminal' && grant.revokedAt === undefined && grant.status !== 'expired')
                 throw new Error('Monitor terminal stop requires terminal grant');
             if (event.data.reason === 'grant_reserved' &&
                 (grant.status !== 'blocked' || grant.reservedActionId === undefined))
                 throw new Error('Monitor reservation stop requires reserved grant');
             item.status = 'stopped'; item.nextDueAt = null; item.inFlightJobId = null;
+            if (item.control) { item.control.revision++; item.control.resume = null; }
             break;
         }
         case 'work.created': {
@@ -465,7 +626,7 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
                     connection.generation !== command.connectionGeneration) throw new Error('Operation connection binding changed');
                 if (a.monitoredGrant) {
                     const grant = monitoredGrant(s, a.monitoredGrant.id);
-                    if (a.approval || grant.status !== 'blocked' || grant.digest !== a.monitoredGrant.digest ||
+                    if (a.approval || grant.status !== 'blocked' || grant.revokedAt !== undefined || grant.digest !== a.monitoredGrant.digest ||
                         grant.revision !== a.monitoredGrant.revision || grant.reservedActionId !== a.id ||
                         grant.reservationAttemptId !== event.data.attemptId || grant.connectionId !== command.connectionId ||
                         grant.connectionGeneration !== command.connectionGeneration || grant.adapter !== command.operationId ||

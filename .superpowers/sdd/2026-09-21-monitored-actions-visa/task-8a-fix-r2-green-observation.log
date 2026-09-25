@@ -1,0 +1,26 @@
+Script started on 2026-09-23 02:31:05+09:00 [COMMAND="npm run build && node --test --test-reporter=spec tests/us-visa-observation.test.mjs" <not executed on terminal>]
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> behalvo@0.2.1 build
+> tsc -p tsconfig.json && tsc -p tsconfig.extension.json && tsc -p tsconfig.extension-content.json && node scripts/copy-control-assets.mjs
+
+✔ compiled synthetic page observation is contiguous and every poll restarts from page one (114.273013ms)
+✔ compiled page metadata drift and omission cannot produce a narrowing observation (20.038065ms)
+✔ final compiled reread rejects duplicate candidate identity and evidence before observation or execution (48.78699ms)
+✔ final compiled reread rejects terminal and intermediate pagination contradictions (47.140266ms)
+✔ calendar contract changes during gesture stay typed and never click (34.978724ms)
+✔ calendar contract changes during gesture.commit stay typed and never click (36.764688ms)
+✔ rendered 403 and 429 navigation destinations remain typed checkpoint observations (21.266256ms)
+✔ compiled checkpoint pages preserve distinct paused observation classes (27.066688ms)
+✔ read-only disappearance rejects candidate A and a later fresh poll may return distinct candidate B (59.119284ms)
+✔ reserved execution rereads page evidence and never selects a replacement candidate (34.342142ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 566.235048
+
+Script done on 2026-09-23 02:31:12+09:00 [COMMAND_EXIT_CODE="0"]

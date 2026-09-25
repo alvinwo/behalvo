@@ -39,6 +39,12 @@
   const createReminderButton = byId('create-reminder');
   const connectionsNode = byId('connections');
   const monitoredAdaptersNode = byId('monitored-adapters');
+  const syntheticMonitoringPanel = byId('synthetic-monitoring');
+  const monitoringSetupButton = byId('monitoring-setup');
+  const monitoringProposeButton = byId('monitoring-propose');
+  const monitoringReviewNode = byId('monitoring-review');
+  const grantsNode = byId('grants');
+  const monitorsNode = byId('monitors');
 
   let sessionToken = null;
   let selectedActionId = null;
@@ -57,6 +63,8 @@
   let activeExecutionRequest = null;
   let jobDetailGeneration = 0;
   const pendingAdmissions = { chat: null, reminder: null, readback: null };
+  const pendingMonitoring = new Map();
+  let monitoringGrants = new Map();
 
   class RequestFailure extends Error {
     constructor(kind, status = 0, code = '') {
@@ -132,6 +140,8 @@
     createReminderButton.disabled = sessionToken === null || !serviceAvailable || servicePending !== null;
     createReminderButton.textContent = pendingAdmissions.reminder ? 'Recover reminder receipt' : 'Create reminder';
     readbackButton.textContent = pendingAdmissions.readback ? 'Recover readback receipt' : 'Request readback';
+    monitoringSetupButton.disabled = sessionToken === null || servicePending !== null;
+    monitoringProposeButton.disabled = sessionToken === null || servicePending !== null;
     for (const entry of actionButtons) {
       entry.button.disabled = sessionToken === null || decisionPending || listPending ||
         pendingReviews.has(entry.actionId);
@@ -170,6 +180,11 @@
     jobResultNode.textContent = '';
     connectionsNode.textContent = '';
     monitoredAdaptersNode.textContent = '';
+    syntheticMonitoringPanel.hidden = true;
+    monitoringReviewNode.textContent = '';
+    grantsNode.textContent = '';
+    monitorsNode.textContent = '';
+    monitoringGrants = new Map();
     updateControls();
   }
 
@@ -289,6 +304,129 @@
         `supervised discovery ${adapter.discovery}; blockers: ${blockers}.`;
       monitoredAdaptersNode.append(item);
     }
+  }
+
+  function monitorReference(grantId, controlRevision) {
+    const grant = monitoringGrants.get(grantId);
+    if (!grant || typeof grant.digest !== 'string' || !Number.isSafeInteger(grant.revision))
+      throw new RequestFailure('invalid_response', 200);
+    return { digest: grant.digest, revision: grant.revision, controlRevision };
+  }
+
+  async function monitoringMutation(key, path, body, success) {
+    if (sessionToken === null || servicePending !== null) return;
+    const token = sessionToken; const marker = viewGeneration; const submitted = pendingMonitoring.get(key) ?? Object.freeze(body);
+    pendingMonitoring.set(key, submitted); servicePending = submitted; updateControls();
+    try {
+      const value = await request(path, token, 'POST', submitted);
+      if (token !== sessionToken || marker !== viewGeneration) return;
+      pendingMonitoring.delete(key); setStatus(success + (value?.duplicate ? ' Existing durable receipt recovered.' : ''));
+      return value;
+    } catch (error) {
+      if (token !== sessionToken || marker !== viewGeneration) return;
+      if (error instanceof RequestFailure && error.status === 401) expireSession();
+      else if (mutationResultIsUnconfirmed(error))
+        setStatus(`Monitoring request ${submitted.requestId} may have committed. Retry this same control to recover its receipt.`, true);
+      else { pendingMonitoring.delete(key); setStatus(requestFailureMessage(error), true); }
+    } finally {
+      if (servicePending === submitted) servicePending = null;
+      updateControls();
+    }
+  }
+
+  function renderGrantReview(value, grant) {
+    if (!isRecord(value) || typeof value.armToken !== 'string' || !TOKEN_PATTERN.test(value.armToken) ||
+        typeof value.armExpiresAt !== 'string' || value.canArm !== true) throw new RequestFailure('invalid_response', 200);
+    monitoringReviewNode.textContent = JSON.stringify({ grant: value.grant, armExpiresAt: value.armExpiresAt,
+      pollingMeaning: 'Bounded observation attempts; resume consumes one attempt. No catch-up or automatic resume.',
+      stopMeaning: 'Pause hands over browser control. Stop or revoke withdraws authority and never restores a reserved allowance.' }, null, 2);
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Arm exact reviewed grant';
+    button.addEventListener('click', () => monitoringMutation(`arm:${grant.id}`, `/api/grants/${encodeURIComponent(grant.id)}/arm`,
+      { requestId: nextRequestId('monitoring-arm'), digest: grant.digest, revision: grant.revision,
+        armToken: value.armToken }, 'Standing authority and monitor armed.'));
+    monitoringReviewNode.append(button);
+  }
+
+  function renderGrants(grants, token, marker) {
+    grantsNode.textContent = ''; monitoringGrants = new Map();
+    for (const grant of grants) {
+      if (!isRecord(grant) || typeof grant.id !== 'string' || typeof grant.digest !== 'string' ||
+          !Number.isSafeInteger(grant.revision) || typeof grant.status !== 'string')
+        throw new RequestFailure('invalid_response', 200);
+      monitoringGrants.set(grant.id, grant);
+      const item = document.createElement('li');
+      item.textContent = `${grant.id} — ${grant.status}; adapter ${grant.adapter}; expires ${grant.expiresAt}; ` +
+        `allowance ${grant.allowance?.reservedActionId ? 'reserved' : 'available'}. `;
+      if (grant.status === 'pending') {
+        const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Exact review';
+        review.addEventListener('click', async () => {
+          try {
+            const value = await request(`/api/grants/${encodeURIComponent(grant.id)}/review`, token, 'POST', {});
+            if (token === sessionToken && marker === viewGeneration) renderGrantReview(value, grant);
+          } catch (error) { if (token === sessionToken && marker === viewGeneration) setStatus(requestFailureMessage(error), true); }
+        });
+        item.append(review);
+      }
+      if (grant.status === 'active') {
+        const revoke = document.createElement('button'); revoke.type = 'button'; revoke.textContent = 'Revoke grant';
+        revoke.addEventListener('click', () => monitoringMutation(`revoke:${grant.id}`,
+          `/api/grants/${encodeURIComponent(grant.id)}/revoke`, { requestId: nextRequestId('monitoring-revoke'),
+            digest: grant.digest, revision: grant.revision }, 'Standing authority revoked.'));
+        item.append(revoke);
+      }
+      grantsNode.append(item);
+    }
+  }
+
+  function renderMonitors(monitors) {
+    monitorsNode.textContent = '';
+    for (const monitor of monitors) {
+      if (!isRecord(monitor) || typeof monitor.id !== 'string' || typeof monitor.grantId !== 'string' ||
+          typeof monitor.status !== 'string' || !Number.isSafeInteger(monitor.controlRevision))
+        throw new RequestFailure('invalid_response', 200);
+      const reference = monitorReference(monitor.grantId, monitor.controlRevision);
+      const item = document.createElement('li');
+      item.textContent = `${monitor.id} — ${monitor.status}; handoff ${monitor.handoff?.state ?? 'none'}; ` +
+        `pause ${monitor.pauseReason ?? 'none'}; attempts ${monitor.requestsInWindow}/${monitor.polling?.requestBudget}; ` +
+        `next ${monitor.nextDueAt ?? 'none'}. `;
+      const addControl = (label, suffix, extra = {}) => {
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+        button.addEventListener('click', () => monitoringMutation(`${suffix}:${monitor.id}`,
+          `/api/monitors/${encodeURIComponent(monitor.id)}/${suffix}`, { requestId: nextRequestId(`monitoring-${suffix}`),
+            ...reference, ...extra }, `${label} request recorded.`));
+        item.append(button); return button;
+      };
+      if (monitor.status === 'active' && monitor.action === null) {
+        addControl('Pause monitoring', 'pause'); addControl('Take over browser', 'takeover');
+      }
+      if (monitor.status === 'paused' && monitor.action === null) {
+        let recovery;
+        if (monitor.handoff && ['pending', 'failed'].includes(monitor.handoff.state)) {
+          const label = document.createElement('label'); const choice = document.createElement('input');
+          choice.type = 'checkbox'; choice.checked = false; choice.id = `monitor-recovery-${monitor.id}`;
+          label.htmlFor = choice.id; label.textContent = 'Reconcile prior handoff'; label.append(choice); item.append(label);
+          recovery = choice;
+        }
+        const resume = document.createElement('button'); resume.type = 'button'; resume.textContent = 'Resume after fresh page check';
+        resume.addEventListener('click', () => monitoringMutation(`resume:${monitor.id}`,
+          `/api/monitors/${encodeURIComponent(monitor.id)}/resume`, { requestId: nextRequestId('monitoring-resume'),
+            ...reference, recoverHandoff: recovery?.checked === true }, 'Resume job durably queued.'));
+        item.append(resume);
+      }
+      if (monitor.status !== 'stopped') addControl('Stop authority', 'stop');
+      monitorsNode.append(item);
+    }
+  }
+
+  async function fetchMonitoring(token, marker) {
+    const grants = await request('/api/grants', token);
+    if (token !== sessionToken || marker !== viewGeneration) return false;
+    const monitors = await request('/api/monitors', token);
+    if (token !== sessionToken || marker !== viewGeneration) return false;
+    if (!isRecord(grants) || !Array.isArray(grants.items) || !isRecord(monitors) || !Array.isArray(monitors.items))
+      throw new RequestFailure('invalid_response', 200);
+    renderGrants(grants.items, token, marker); renderMonitors(monitors.items);
+    return true;
   }
 
   function validConnection(value) {
@@ -520,6 +658,7 @@
         'Review the reported service lifecycle limits.';
       renderConnections(value.connections, token, marker);
       renderMonitoredAdapters(value.monitoredAdapters);
+      syntheticMonitoringPanel.hidden = value.monitoring === undefined;
       const maintenance = value.unresolvedActions.filter(action => isRecord(action) &&
         action.kind === 'crash_preserved_execution').map(action => action.actionId);
       serviceBarriers.textContent = maintenance.length > 0 ?
@@ -529,6 +668,7 @@
         'No unresolved action barriers reported.';
       if (!await fetchJobs(token, marker)) return;
       if (!await fetchReminders(token, marker)) return;
+      if (value.monitoring !== undefined && !await fetchMonitoring(token, marker)) return;
       if (marker === viewGeneration && token === sessionToken) setStatus('Service status and queue refreshed.');
     } catch (error) {
       if (marker !== viewGeneration || token !== sessionToken) return;
@@ -1015,6 +1155,10 @@
   cancelButton.addEventListener('click', () => decide('cancel'));
   executeButton.addEventListener('click', () => runActionJob('execute'));
   readbackButton.addEventListener('click', () => runActionJob('readback'));
+  monitoringSetupButton.addEventListener('click', () => monitoringMutation('setup', '/api/monitoring/synthetic/setup',
+    { requestId: nextRequestId('monitoring-setup'), fixtureId: 'visa-beijing-group-v1' }, 'Synthetic fixture set up.'));
+  monitoringProposeButton.addEventListener('click', () => monitoringMutation('propose', '/api/grants',
+    { requestId: nextRequestId('monitoring-propose'), fixtureId: 'visa-beijing-group-v1' }, 'Standing grant proposed.'));
   serviceRefreshButton.addEventListener('click', loadService);
   refreshJobsButton.addEventListener('click', refreshJobs);
   sendChatButton.addEventListener('click', () => admitService('chat'));

@@ -5,7 +5,8 @@ type ContentPageState = 'login' | 'security_question' | 'group_roster' | 'calend
   'booking_review' | 'challenge' | 'session_expired' | 'forbidden' | 'rate_limited' |
   'terms_changed' | 'unknown' | 'confirmation' | 'ambiguous_submission' | 'appointment';
 
-type ContentCommand = { kind: 'calendar.next_page' } | { kind: 'slot.select'; slotId: string } |
+type ContentCommand = { kind: 'calendar.first_page' } | { kind: 'calendar.next_page' } |
+  { kind: 'slot.select'; slotId: string } |
   { kind: 'booking.intent'; slotId: string; intentId: string } |
   { kind: 'booking.submit'; slotId: string; intentId: string } | { kind: 'appointment.readback' };
 
@@ -67,6 +68,10 @@ interface ContentDocument {
 
 function contentInvalid(): never { throw new Error('Browser request was rejected.'); }
 
+class ContentPageContractError extends Error {
+  constructor() { super('Browser page contract changed.'); this.name = 'ContentPageContractError'; }
+}
+
 function contentExact(value: Record<string, unknown>, keys: readonly string[]): void {
   const actual = Object.keys(value).sort(); const expected = [...keys].sort();
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) contentInvalid();
@@ -89,7 +94,7 @@ const contentStates = new Set<ContentPageState>(['login', 'security_question', '
 function validateContentCommand(value: unknown, state: ContentPageState): ContentCommand {
   if (!value || typeof value !== 'object' || Array.isArray(value)) contentInvalid();
   const command = value as Record<string, unknown>;
-  if (command.kind === 'calendar.next_page') {
+  if (command.kind === 'calendar.first_page' || command.kind === 'calendar.next_page') {
     contentExact(command, ['kind']); if (state !== 'calendar') contentInvalid(); return { kind: command.kind };
   }
   if (command.kind === 'slot.select') {
@@ -171,15 +176,39 @@ function validateContentMessage(value: unknown): ContentMessage {
 }
 
 function recognizeContentPage(page: ContentDocument): Record<string, unknown> {
+  const declaredState = page.querySelector('[data-behalvo-page-state]')?.dataset.behalvoPageState;
+  try { return readContentPage(page); }
+  catch (error) {
+    if (error instanceof ContentPageContractError) throw error;
+    if (declaredState === 'calendar') throw new ContentPageContractError();
+    throw error;
+  }
+}
+
+function readContentPage(page: ContentDocument): Record<string, unknown> {
   const root = page.querySelector('[data-behalvo-page-state]');
   const candidateState = root?.dataset.behalvoPageState;
   const state: ContentPageState = candidateState && contentStates.has(candidateState as ContentPageState)
     ? candidateState as ContentPageState : 'unknown';
   if (state === 'calendar') {
-    const candidates = [...page.querySelectorAll('[data-behalvo-slot-id]')].map(contentSlot);
+    const candidates = [...page.querySelectorAll('[data-behalvo-slot-id]')].map(element => ({
+      ...contentSlot(element), evidenceDigest: contentDigest(element.dataset.behalvoEvidenceDigest) }));
     if (!root) contentInvalid();
-    return { state, page: contentPage(root.dataset.behalvoPage),
-      hasNext: contentBoolean(root.dataset.behalvoHasNext), candidates };
+    const hasNext = contentBoolean(root.dataset.behalvoHasNext);
+    if (Boolean(page.querySelector('[data-behalvo-gesture="calendar.next_page"]')) !== hasNext) contentInvalid();
+    return { state, contractVersion: contentVersion(root.dataset.behalvoContractVersion),
+      location: contentLiteral(root.dataset.behalvoLocation, 'Beijing'),
+      timeZone: contentLiteral(root.dataset.behalvoTimeZone, 'Asia/Shanghai'),
+      startDate: contentLiteral(root.dataset.behalvoStartDate, '2026-12-15'),
+      endDate: contentLiteral(root.dataset.behalvoEndDate, '2027-01-31'),
+      identityDigest: contentDigest(root.dataset.behalvoIdentityDigest),
+      subjectDigest: contentDigest(root.dataset.behalvoSubjectDigest),
+      rosterDigest: contentDigest(root.dataset.behalvoRosterDigest),
+      termsDigest: contentDigest(root.dataset.behalvoTermsDigest),
+      termsVersion: contentIdentifier(root.dataset.behalvoTermsVersion),
+      appointmentAbsent: contentLiteral(root.dataset.behalvoAppointmentAbsent, 'true', true),
+      page: contentPage(root.dataset.behalvoPage),
+      hasNext, candidates };
   }
   if (state === 'group_roster') {
     if (!root) contentInvalid();
@@ -241,6 +270,11 @@ function contentPage(value: unknown): number {
   return page;
 }
 
+function contentVersion(value: unknown): 1 {
+  if (value !== '1') contentInvalid();
+  return 1;
+}
+
 function contentDigest(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) contentInvalid();
   return value;
@@ -268,6 +302,7 @@ function executeContentGesture(page: ContentDocument, request: ContentRequest, a
   let selector: string;
   let beforeClick: (() => void) | undefined;
   switch (request.command.kind) {
+    case 'calendar.first_page': selector = '[data-behalvo-gesture="calendar.first_page"]'; break;
     case 'calendar.next_page': selector = '[data-behalvo-gesture="calendar.next_page"]'; break;
     case 'slot.select': selector = `[data-behalvo-gesture="slot.select"][data-behalvo-slot-id="${request.command.slotId}"]`; break;
     case 'booking.intent': {
@@ -322,7 +357,7 @@ if (typeof chrome !== 'undefined' && globalThis.location.origin === CONTENT_ALLO
       if (message.kind === 'session.revoke') {
         contentUseControl(controls, message.controlId);
         const key = contentBindingKey(message);
-        if (retiredBindings.has(key) || (active && !sameContentBinding(active, message))) contentBindingError();
+        if (active && !sameContentBinding(active, message)) contentBindingError();
         active = undefined; pending = undefined;
         retireContentBinding(retiredBindings, key);
         respond({ ...message, kind: 'session.revoked', documentId }); return false;
@@ -349,11 +384,16 @@ if (typeof chrome !== 'undefined' && globalThis.location.origin === CONTENT_ALLO
             operation.request.requestId !== message.requestId || operation.request.sequence !== message.sequence ||
             operation.operationId !== message.operationId) contentBindingError();
         const page = document as unknown as ContentDocument;
-        executeContentGesture(page, operation.request, () => {
-          if (!active || !sameContentBinding(active, message) || monotonicContentNow() >= operation.expiresAt)
-            contentBindingError();
-          pending = undefined;
-        });
+        try {
+          executeContentGesture(page, operation.request, () => {
+            if (!active || !sameContentBinding(active, message) || monotonicContentNow() >= operation.expiresAt)
+              contentBindingError();
+            pending = undefined;
+          });
+        } catch (error) {
+          if (error instanceof ContentPageContractError) pending = undefined;
+          throw error;
+        }
         settledOperations.set(message.operationId, { ...message });
         if (settledOperations.size > 1_000)
           settledOperations.delete(settledOperations.keys().next().value!);
@@ -374,7 +414,10 @@ if (typeof chrome !== 'undefined' && globalThis.location.origin === CONTENT_ALLO
           expiresAt: request.operationExpiresAt! };
       }
       respond(snapshot);
-    } catch { respond({ error: 'Browser request was rejected.' }); }
+    } catch (error) {
+      respond(error instanceof ContentPageContractError
+        ? { error: 'page_contract_changed' } : { error: 'Browser request was rejected.' });
+    }
     return false;
   });
 }

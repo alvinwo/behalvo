@@ -48,8 +48,11 @@ export type { OwnerControlServiceOptions } from './control/review-service.js';
 export type { OwnerControlApp } from './control/local-app.js';
 export type { ControlAssets, OwnerControlServer } from './control/http-server.js';
 export { startLocalService, recoverLocalService } from './service/local-service.js';
+export { runServiceDemo } from './service-demo.js';
+export type { ServiceDemoOptions, ServiceDemoResult } from './service-demo.js';
 export type { LocalService, LocalServiceRecoveryOptions, LocalServiceRecoveryResult } from './service/local-service.js';
-export type { LocalServiceOptions } from './service/config.js';
+export type { LocalServiceOptions, SyntheticMonitoringOptions, SyntheticMonitoringBrowserContext,
+  SyntheticMonitoringBrowserFactory } from './service/config.js';
 export { MonitoringRegistry } from './monitoring/registry.js';
 export { MonitoringService, MonitoredActionService } from './monitoring/service.js';
 export type * from './monitoring/types.js';
@@ -57,7 +60,7 @@ export type { MonitoringServiceOptions, ProposeGrantInput, ConfigureMonitorInput
   ReserveMonitoredActionInput, AdmitDueMonitorResult } from './monitoring/service.js';
 export { evaluateMonitoredAction, monitoredActionGrantDigest, monitoredActionCommandDigest,
   observationDigest } from './monitoring/policy.js';
-export { BrowserSession, BrowserEpochRegistry } from './browser/session.js';
+export { BrowserSession, BrowserEpochRegistry, BrowserUnexpectedDestinationError } from './browser/session.js';
 export type { BrowserSessionOptions, BrowserSessionTransport, BrowserSessionPersistence,
   BrowserResumePreflight } from './browser/session.js';
 export { BROWSER_PROTOCOL_VERSION, MAX_BROWSER_MESSAGE_BYTES, SYNTHETIC_PORTAL_ORIGIN,

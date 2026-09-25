@@ -302,7 +302,9 @@ export class OperationService {
         exactObject(input, ['workspaceId', 'exclusiveMaintenance'], 'recover operations input');
         if (input.exclusiveMaintenance !== true) throw new Error('Exclusive maintenance required; all operation workers must be stopped');
         const running = Object.values(this.store.state(input.workspaceId).actions)
-            .filter((action): action is OperationAction => action.status === 'running' && isOperationCommand(action.command));
+            .filter((action): action is OperationAction => action.status === 'running' && isOperationCommand(action.command))
+            .filter(action => !action.monitoredGrant || !action.attemptId ||
+                !this.store.hasQueuedScheduledMonitorExecution(input.workspaceId, action.id, action.attemptId));
         for (const action of running) {
             const evidenceRef = this.store.putArtifact(input.workspaceId, 'Interrupted execution; remote outcome is unknown. No automatic retry.');
             const state = this.store.state(input.workspaceId);

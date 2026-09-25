@@ -1,0 +1,19 @@
+✖ compiled synthetic page observation is contiguous and every poll restarts from page one (28.864338ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 153.889102
+
+✖ failing tests:
+
+test at tests/us-visa-observation.test.mjs:62:1
+✖ compiled synthetic page observation is contiguous and every poll restarts from page one (28.864338ms)
+  TypeError: adapter.inspect is not a function
+      at TestContext.<anonymous> (file:///workspace/scratch/871e778ff34c/behalvo-published/.worktrees/monitored-actions/tests/us-visa-observation.test.mjs:68:31)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
