@@ -32,6 +32,7 @@ export async function startSyntheticPortal(input: { state?: SyntheticPortalState
 
 async function handle(request: IncomingMessage, response: ServerResponse, state: SyntheticPortalState,
   origin: string): Promise<void> {
+  response.setHeader('connection', 'close');
   response.setHeader('cache-control', 'no-store');
   response.setHeader('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'");
   if (request.headers.host !== origin.slice('http://'.length)) return safeError(response, 400);

@@ -87,7 +87,7 @@ test('native messaging waits for a delayed write callback', async () => {
 });
 
 test('native writer contains callback, destroy, and delayed raw stream errors behind fixed safe failures', () => {
-  const moduleUrl = new URL('../dist/index.js', import.meta.url).href;
+  const moduleUrl = new URL('../dist/browser/native-host.js', import.meta.url).href;
   const cases = [
     `const output = new Writable({write(_c,_e,done){done(new Error('private-callback'));}});
      try { await writeNativeMessage(output,{ok:true}); } catch(error) { console.log(error.message); }
@@ -109,7 +109,7 @@ test('native writer contains callback, destroy, and delayed raw stream errors be
 });
 
 test('native transport bounds a stalled write on timeout and close without unhandled rejection', () => {
-  const moduleUrl = new URL('../dist/index.js', import.meta.url).href;
+  const moduleUrl = new URL('../dist/browser/native-host.js', import.meta.url).href;
   const encodedRequest = JSON.stringify(request(1));
   const cases = [
     `const transport=new NativeMessagingTransport(new PassThrough(),output,32768,10);

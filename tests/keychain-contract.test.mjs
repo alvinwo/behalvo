@@ -308,7 +308,7 @@ test('Keychain list rejects foreign, duplicate, and unbounded metadata', async (
 });
 
 test('real helper early exit and stdin EPIPE reject safely without terminating the process', async () => {
-  const moduleUrl = new URL('../dist/index.js', import.meta.url).href;
+  const moduleUrl = new URL('../dist/secrets/keychain.js', import.meta.url).href;
   const script = `
     import { KeychainSecretProvider, NativeKeychainHelperTransport } from ${JSON.stringify(moduleUrl)};
     const transport = new NativeKeychainHelperTransport({ executablePath: '/usr/bin/true', platform: 'darwin',
