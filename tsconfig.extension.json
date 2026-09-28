@@ -13,7 +13,15 @@
     "sourceMap": true,
     "rootDir": "extension",
     "outDir": "extension/dist",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ]
   },
-  "include": ["extension/background.ts", "extension/protocol.ts"]
+  "include": [
+    "extension/background.ts",
+    "extension/protocol.ts",
+    "extension/popup.ts"
+  ]
 }
