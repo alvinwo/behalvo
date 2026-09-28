@@ -14,7 +14,7 @@ import {
   writeFileSync
 } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { dirname, join, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 import { acquireSyntheticProfileLease, inspectPrivateProfileCustody } from '../connections/private-connection.js';
 import { createNativeHostManifest, NATIVE_HOST_NAME } from './native-manifest.js';
 
