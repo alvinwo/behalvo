@@ -85,10 +85,12 @@ export { SyntheticSecretProvider } from './secrets/synthetic.js';
 export { KeychainSecretProvider, NativeKeychainHelperTransport } from './secrets/keychain.js';
 export type { KeychainHelperRequest, KeychainHelperResponse, KeychainHelperTransport,
   NativeHelperLaunch, NativeHelperLaunchResult, NativeKeychainHelperTransportOptions } from './secrets/keychain.js';
-export { PrivateConnectionManager, inspectPrivateProfileCustody } from './connections/private-connection.js';
+export { PrivateConnectionManager, inspectPrivateProfileCustody,
+  acquireSyntheticProfileLease, recoverSyntheticProfileLease } from './connections/private-connection.js';
 export type { PrivateConnectionRegistration, PrivateConnectionSummary, PrivateConnectionDisconnectResult,
   PrivateConnectionManagerOptions, PrivateConnectionControl, PrivateConnectionAuthority,
-  PrivateProfileCustodyInspection } from './connections/private-connection.js';
+  PrivateProfileCustodyInspection, SyntheticProfileLeaseInput, SyntheticProfileLease,
+  SyntheticProfileLeaseRecoveryOptions } from './connections/private-connection.js';
 export { US_VISA_CHINA_ADAPTER_ID, US_VISA_CHINA_ADAPTER_VERSION, US_VISA_CHINA_CONTRACT_VERSION,
   US_VISA_CHINA_STATE_IDS } from './adapters/us-visa-china/types.js';
 export type * from './adapters/us-visa-china/types.js';
