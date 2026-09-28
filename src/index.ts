@@ -75,6 +75,7 @@ export { NativeHostSecretAccess } from './browser/native-host.js';
 export { NATIVE_HOST_NAME, LIVE_US_VISA_NATIVE_HOST_REGISTRATION,
   createNativeHostManifest } from './browser/native-manifest.js';
 export type { NativeHostManifest } from './browser/native-manifest.js';
+export { runChromeNativeBroker } from './browser/native-broker.js';
 export { BridgeEnrollmentGate, BridgeIpcReader, encodeBridgeIpcMessage,
   writeBridgeIpcMessage, parseBridgeFrameEnvelope, MAX_BRIDGE_IPC_BYTES,
   MAX_BRIDGE_PENDING_BYTES } from './browser/bridge-ipc.js';

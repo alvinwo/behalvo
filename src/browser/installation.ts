@@ -345,7 +345,7 @@ function digestBytes(bytes: Uint8Array): string {
 }
 
 function launcherSource(nodePath: string, brokerPath: string, root: string): string {
-  return `#!/bin/sh\nexec ${shellQuote(nodePath)} ${shellQuote(brokerPath)} --root ${shellQuote(root)}\n`;
+  return `#!/bin/sh\nexec ${shellQuote(nodePath)} ${shellQuote(brokerPath)} --root ${shellQuote(root)} "$@"\n`;
 }
 
 function shellQuote(value: string): string {
