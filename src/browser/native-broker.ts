@@ -110,7 +110,7 @@ export async function runChromeNativeBroker(argv: readonly string[], io: BrokerI
       origin: response.origin
     });
 
-    await relay(nativeReader, ipcReader, socket, io.output, response.channelId);
+    await relay(nativeReader, ipcReader, socket, io.input, io.output, response.channelId);
   } catch (error) {
     if (error instanceof BrokerFailure) throw error;
     fail('BRIDGE_BROKER_CHANNEL_ERROR');
@@ -246,7 +246,7 @@ function parseEnrollmentResponse(value: unknown, request: ChromeEnrollment): Enr
 }
 
 async function relay(nativeReader: NativeMessageReader, ipcReader: BridgeIpcReader, socket: Socket,
-  output: Writable, channelId: string): Promise<void> {
+  input: Readable, output: Writable, channelId: string): Promise<void> {
   const chromeToService = (async () => {
     for (;;) {
       const message = await nativeReader.read();
@@ -271,6 +271,7 @@ async function relay(nativeReader: NativeMessageReader, ipcReader: BridgeIpcRead
     fail('BRIDGE_BROKER_CHANNEL_ERROR');
   } finally {
     socket.destroy();
+    input.destroy();
     await Promise.allSettled([chromeToService, serviceToChrome]);
   }
 }
