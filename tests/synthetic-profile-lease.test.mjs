@@ -29,6 +29,7 @@ const leaseInput = profile => ({
 
 test('synthetic profile lease reuses exclusive custody and preserves the profile on release', t => {
   const { profile } = privateProfile(t);
+  writeFileSync(join(profile, '.keep'), 'retained');
   const lease = acquireSyntheticProfileLease(leaseInput(profile));
   const inspection = inspectPrivateProfileCustody(profile);
   assert.ok(inspection);
@@ -39,7 +40,7 @@ test('synthetic profile lease reuses exclusive custody and preserves the profile
   assert.throws(() => acquireSyntheticProfileLease(leaseInput(profile)), /profile lease/i);
   lease.release();
   assert.equal(inspectPrivateProfileCustody(profile), null);
-  assert.doesNotThrow(() => readFileSync(join(profile, '.keep'), 'utf8'), 'profile contents are caller-owned');
+  assert.equal(readFileSync(join(profile, '.keep'), 'utf8'), 'retained');
 });
 
 test('synthetic profile lease refuses Chrome Singleton markers and refuses release while Chrome appears open', t => {
