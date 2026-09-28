@@ -15,12 +15,15 @@ declare const chrome: {
   };
 };
 
-const enrollmentInput = document.querySelector<HTMLInputElement>('#enrollment');
-const connectButton = document.querySelector<HTMLButtonElement>('#connect');
-const statusText = document.querySelector<HTMLElement>('#status');
+function requiredElement<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (!element) throw new Error('Bridge popup markup is invalid.');
+  return element;
+}
 
-if (!enrollmentInput || !connectButton || !statusText)
-  throw new Error('Bridge popup markup is invalid.');
+const enrollmentInput = requiredElement<HTMLInputElement>('#enrollment');
+const connectButton = requiredElement<HTMLButtonElement>('#connect');
+const statusText = requiredElement<HTMLElement>('#status');
 
 function send(value: unknown): Promise<PopupResponse> {
   return new Promise((resolve, reject) => {
