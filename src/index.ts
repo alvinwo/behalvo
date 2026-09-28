@@ -75,6 +75,11 @@ export { NativeHostSecretAccess } from './browser/native-host.js';
 export { NATIVE_HOST_NAME, LIVE_US_VISA_NATIVE_HOST_REGISTRATION,
   createNativeHostManifest } from './browser/native-manifest.js';
 export type { NativeHostManifest } from './browser/native-manifest.js';
+export { stageChromeBridgeInstallation, finalizeChromeBridgeInstallation,
+  doctorChromeBridgeInstallation, removeChromeBridgeInstallation } from './browser/installation.js';
+export type { ChromeBridgeStageInput, ChromeBridgeFinalizeInput, ChromeBridgeDoctorInput,
+  ChromeBridgeRemoveInput, ChromeBridgeInstallation, ChromeBridgeDoctorReport,
+  ChromeBridgeRemovalResult } from './browser/installation.js';
 export { SyntheticPortalState } from './synthetic-portal/state.js';
 export type { SyntheticPortalScenario, SyntheticPortalDurableState,
   SyntheticPortalStateOptions } from './synthetic-portal/state.js';
