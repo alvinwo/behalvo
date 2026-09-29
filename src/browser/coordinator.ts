@@ -267,8 +267,7 @@ export async function runChromeBridgeDiagnostic(
       try { lease?.release(); } catch { cleanupFailed = true; }
     }
     if (onAbort) signal?.removeEventListener('abort', onAbort);
-    if (cleanupFailed && signal?.aborted) throw new ChromeBridgeCleanupPendingError();
-    if (cleanupFailed && primaryError === undefined) diagnosticFail();
+    if (cleanupFailed) throw new ChromeBridgeCleanupPendingError();
   }
 }
 
@@ -293,6 +292,10 @@ async function terminateDiagnosticChrome(chrome: DedicatedChromeProcess): Promis
     ]);
     return true;
   } catch {
+    // Keep custody for explicit recovery, but do not let an unconfirmed owned
+    // process or its diagnostic pipe keep this command alive indefinitely.
+    chrome.child.stderr?.destroy();
+    chrome.child.unref?.();
     return false;
   } finally {
     if (timer) clearTimeout(timer);

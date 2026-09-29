@@ -7,8 +7,11 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inspectPrivateProfileCustody } from '../dist/index.js';
 
-for (const signal of ['SIGINT', 'SIGTERM']) for (const phase of ['enrollment', 'inspected']) {
-  test(`review R8: ${signal} during ${phase} drains CLI and retains custody for still-open synthetic Chrome`,
+const cases = ['SIGINT', 'SIGTERM'].flatMap(signal =>
+  ['enrollment', 'inspected'].map(phase => [signal, phase]));
+cases.push([null, 'failure']);
+for (const [signal, phase] of cases) {
+  test(`review R8: ${signal ?? 'non-signal failure'} during ${phase} drains CLI and retains custody for still-open synthetic Chrome`,
     { skip: process.platform === 'win32', timeout: 12_000 }, async t => {
       const root = mkdtempSync(join(tmpdir(), 'behalvo-signals-'));
       mkdirSync(join(root, 'profile'), { mode: 0o700 });
@@ -36,8 +39,12 @@ for (const signal of ['SIGINT', 'SIGTERM']) for (const phase of ['enrollment', '
         if (Date.now() >= deadline) assert.fail(`fixture did not become ready: ${output}`);
         await delay(10);
       }
-      child.kill(signal);
-      assert.deepEqual(await exited, { code: 1, signal: null });
+      if (signal) child.kill(signal);
+      let timer;
+      const observed = await Promise.race([exited, new Promise(resolve => {
+        timer = setTimeout(() => resolve({ timeout: true }), 7500);
+      })]).finally(() => clearTimeout(timer));
+      assert.deepEqual(observed, { code: 1, signal: null });
       const result = JSON.parse(readFileSync(join(root, 'result.json'), 'utf8'));
       assert.equal(result.keyCleared, true);
       assert.ok(result.events.includes('service.shutdown'));

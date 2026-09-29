@@ -118,3 +118,31 @@ catalog or UI localization framework exists, and no framework was introduced.
 All-fixes full suite: `npm test` passed 1,115 of 1,119 tests, zero failures,
 four skipped. This includes the real-rendezvous cleanup follow-up. Raw log:
 `data/verification/chrome-review/all-fixes-suite.log`.
+
+## Final review round and verification
+
+The clean implementation head `efcaab8ba09819e5a98346324fdf5a30d98e7b1a`
+(tree `01772738c01b102786a4e75056266e2f2199f084`) passed laptop `npm run verify`.
+All six steps exited zero; HEAD and source fingerprint were unchanged and the tree
+was clean. Terminal summary/raw logs:
+`data/verification/2026-09-29T06-52-44.615Z-e514179c-dad6-4355-a462-5fa87bd2faac/`.
+Published with normal Git after remote ancestry check. Hosted PR run
+[36533577896](https://github.com/alvinwo/behalvo/actions/runs/36533577896)
+passed both Node 22.19 and Node 24 at that head. These results do not certify later
+changed code.
+
+Independent full-PR Astra-high review found one P2: ordinary enrollment/channel
+failure can finish coordinator cleanup after five seconds yet keep the CLI alive
+through an unconfirmed owned Chrome process handle/stderr. A subprocess regression
+confirmed no process exit after 7.5 seconds (RED `r8-nonsignal-red.log`). The fix
+destroys the owned stderr pipe and unreferences the owned child after failed exit
+observation; it never releases custody or retries. All incomplete cleanup now
+reports the fixed cleanup-pending result, including non-signal failures. Build and
+24 CLI/coordinator/signal subprocess regressions passed (`r8-nonsignal-green.log`).
+Final verification and focused reviewer confirmation must target the corrected head.
+
+Ruling: retain R2's conservative fail-stop rule. Native-port closure before an
+observed Chrome exit cannot become success merely because Chrome exits later.
+Actual normal Chrome shutdown ordering is an owner-laptop acceptance uncertainty,
+not established by synthetic tests. M2/M3/live readiness and merge permission are
+outside the review's approved M1 scope.

@@ -83,7 +83,7 @@ for (const phase of ['service', 'transport', 'rendezvous']) {
     if (phase === 'service') f.service.shutdown = async () => false;
     else f[phase].close = async () => { throw new Error('synthetic cleanup failure'); };
     const result = runChromeBridgeDiagnostic(f.input, f.dependencies);
-    const rejected = assert.rejects(result, /Chrome bridge diagnostic failed/);
+    const rejected = assert.rejects(result, /Chrome bridge cleanup pending/);
     await f.inspected.promise;
     f.exit.resolve({ code: 0, signal: null });
     await rejected;
@@ -95,6 +95,6 @@ test('review R3: rejected Chrome exit observation is not evidence to release cus
   const f = fixture();
   f.rendezvous.waitForEnrollment = () => new Promise(() => {});
   f.dependencies.launchChrome = () => ({ child: { kill() {} }, exited: Promise.reject(new Error('unknown exit')), stderr: () => '' });
-  await assert.rejects(runChromeBridgeDiagnostic(f.input, f.dependencies), /Chrome bridge diagnostic failed/);
+  await assert.rejects(runChromeBridgeDiagnostic(f.input, f.dependencies), /Chrome bridge cleanup pending/);
   assert.equal(f.events.includes('lease.release'), false);
 });

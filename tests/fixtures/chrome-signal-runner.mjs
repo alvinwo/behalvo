@@ -1,5 +1,6 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { runBrowserCli } from '../../dist/cli/browser-main.js';
 import { runChromeBridgeDiagnostic, launchDedicatedChrome, acquireSyntheticProfileLease,
   SYNTHETIC_PORTAL_ORIGIN } from '../../dist/index.js';
@@ -26,6 +27,11 @@ const dependencies = {
   },
   startRendezvous: async () => ({ enrollmentPath: join(root, 'enrollment.json'),
     waitForEnrollment: async () => {
+      if (phase === 'failure') {
+        while (!existsSync(join(root, 'chrome-ready'))) await delay(10);
+        ready();
+        throw new Error('synthetic enrollment failure');
+      }
       if (phase === 'enrollment') { ready(); return await new Promise(() => {}); }
       return { tabId: 7, transport: {
         completion: new Promise(() => {}),
@@ -48,4 +54,5 @@ writeFileSync(join(root, 'result.json'), JSON.stringify({ code, events,
   keyCleared: key.every(byte => byte === 0) }));
 // Match the executable boundary: a bounded cancellation must not be held by an
 // owned Chrome process that refused termination. The parent test kills that fixture.
-process.exit(code);
+if (phase === 'failure') process.exitCode = code;
+else process.exit(code);
