@@ -20,6 +20,7 @@ import { createSyntheticMonitoringComposition, type SyntheticMonitoringCompositi
 export interface LocalService {
   readonly origin: string;
   readonly bootstrapPath: string;
+  readonly serviceGeneration: string;
   readonly control: ServiceControlService;
   shutdown(): Promise<boolean>;
 }
@@ -170,6 +171,7 @@ export async function startLocalService(input: LocalServiceOptions): Promise<Loc
     return {
       origin: server.origin,
       bootstrapPath: server.bootstrapPath,
+      serviceGeneration,
       control,
       shutdown(): Promise<boolean> {
         shutdownPromise ??= (async () => {
