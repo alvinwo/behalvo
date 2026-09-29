@@ -54,3 +54,15 @@ R1 focused GREEN: build succeeded; 19 installation/CLI/broker/rendezvous tests
 passed with no failures/skips. Log: `data/verification/chrome-review/r1-green.log`.
 The first regression attempt was sandbox-blocked (`listen EPERM`); rerunning with
 local socket permission resolved that environmental restriction.
+
+R6 RED: all three dangling Singleton markers permitted removal before the fix.
+R7 RED: doctor stayed configured after changing an imported compiled helper.
+Logs: `r6-red.log` and `r6-green-r7-red.log` in the same local evidence directory.
+R6/R7 GREEN: 12 installation tests passed, no failures/skips; build passed.
+Ruling: hash the compiled dist JavaScript/JSON bundle plus package module metadata,
+not only the broker entry. The current broker uses local compiled helpers and Node
+built-ins. Legacy metadata without a bundle pin remains readable for explicit
+removal but cannot pass source verification. No signing claim is made.
+
+Task 1 full suite: `npm test` passed 1,098 of 1,102 tests, four skipped,
+zero failures (Node 25.8.1, Darwin). Log: `task1-suite.log`.

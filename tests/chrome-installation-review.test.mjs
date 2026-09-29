@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, lstatSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   doctorChromeBridgeInstallation,
   finalizeChromeBridgeInstallation,
+  removeChromeBridgeInstallation,
   stageChromeBridgeInstallation
 } from '../dist/index.js';
 
@@ -64,4 +65,38 @@ test('review R1: setup rejects an unrelated private registration directory befor
       /Chrome bridge installation operation failed/);
     assert.equal(existsSync(join(input.root, 'chrome-profile')), false);
     assert.equal(existsSync(join(input.root, 'chrome-bridge-installation.json')), false);
+  });
+
+for (const marker of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+  test(`review R6: removal retains installation when ${marker} is a dangling symlink`,
+    { skip: !posix }, t => {
+      const { input } = fixture(t);
+      const staged = stageChromeBridgeInstallation(input);
+      const finalized = finalizeChromeBridgeInstallation({ root: input.root, extensionId: 'a'.repeat(32) });
+      const markerPath = join(staged.profilePath, marker);
+      symlinkSync('absent-chrome-target', markerPath);
+      assert.throws(() => removeChromeBridgeInstallation({ root: input.root }),
+        /Chrome bridge installation operation failed/);
+      assert.equal(lstatSync(markerPath).isSymbolicLink(), true);
+      assert.equal(existsSync(finalized.registrationPath), true);
+      assert.equal(existsSync(staged.metadataPath), true);
+    });
+}
+
+ test('review R7: changed compiled broker dependency invalidates setup and doctor but permits narrow removal',
+  { skip: !posix }, t => {
+    const { input } = fixture(t);
+    const helper = join(input.packageRoot, 'dist', 'browser', 'helper.js');
+    writeFileSync(helper, 'export const value = 1;\n', { mode: 0o600 });
+    writeFileSync(join(input.packageRoot, 'dist', 'browser', 'native-broker.js'),
+      "import { value } from './helper.js'; export { value };\n", { mode: 0o600 });
+    stageChromeBridgeInstallation(input);
+    const finalized = finalizeChromeBridgeInstallation({ root: input.root, extensionId: 'a'.repeat(32) });
+    assert.equal(doctorChromeBridgeInstallation({ root: input.root }).configured, true);
+    writeFileSync(helper, 'export const value = 2;\n', { mode: 0o600 });
+    assert.equal(doctorChromeBridgeInstallation({ root: input.root }).configured, false);
+    assert.throws(() => stageChromeBridgeInstallation(input), /Chrome bridge installation operation failed/);
+    removeChromeBridgeInstallation({ root: input.root });
+    assert.equal(existsSync(finalized.metadataPath), false);
+    assert.equal(existsSync(finalized.profilePath), true);
   });

@@ -72,6 +72,7 @@ export interface ChromeBridgeInstallation {
     chrome: string;
     node: string;
     broker: string;
+    bundle?: string;
     launcher: string;
     extension: Record<ExtensionFile, string>;
     registration: string | null;
@@ -157,6 +158,7 @@ export function stageChromeBridgeInstallation(input: ChromeBridgeStageInput): Ch
         chrome: fileDigest(chromePath),
         node: fileDigest(nodePath),
         broker: fileDigest(brokerPath),
+        bundle: executableBundleDigest(packageRoot),
         launcher: digestBytes(Buffer.from(launcher, 'utf8')),
         extension: sourceHashes,
         registration: null
@@ -340,6 +342,27 @@ function extensionHashes(extensionSource: string): Record<ExtensionFile, string>
   return result;
 }
 
+// Pin the compiled package, including transitive broker helpers and module metadata.
+// A missing legacy bundle pin is readable for explicit removal, never runnable.
+function executableBundleDigest(packageRoot: string): string {
+  const files: Array<[string, string]> = [];
+  const visit = (relative: string): void => {
+    const directory = canonicalDirectory(join(packageRoot, relative), false);
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const child = join(relative, entry.name);
+      if (entry.isDirectory()) visit(child);
+      else if (entry.isSymbolicLink()) fail();
+      else if (entry.name.endsWith('.js') || entry.name.endsWith('.json'))
+        files.push([child, fileDigest(canonicalRegularFile(join(packageRoot, child), false))]);
+    }
+  };
+  visit('dist');
+  const manifest = join(packageRoot, 'package.json');
+  if (lstatSync(manifest, { throwIfNoEntry: false }))
+    files.push(['package.json', fileDigest(canonicalRegularFile(manifest, false))]);
+  return digestBytes(Buffer.from(JSON.stringify(files), 'utf8'));
+}
+
 function fileDigest(path: string): string {
   return digestBytes(readFileSync(path));
 }
@@ -403,7 +426,9 @@ function loadMetadata(path: string, expectedRoot: string): InstallationMetadata 
       item.launcherPath !== paths.launcherPath || item.registrationPath !== paths.registrationPath) fail();
 
   const hashes = item.hashes as Record<string, unknown>;
-  if (Object.keys(hashes).sort().join(',') !== 'broker,chrome,extension,launcher,node,registration' ||
+  if (!['broker,chrome,extension,launcher,node,registration',
+    'broker,bundle,chrome,extension,launcher,node,registration'].includes(Object.keys(hashes).sort().join(',')) ||
+      (hashes.bundle !== undefined && !digestString(hashes.bundle)) ||
       !digestString(hashes.chrome) || !digestString(hashes.node) || !digestString(hashes.broker) ||
       !digestString(hashes.launcher) ||
       (hashes.registration !== null && !digestString(hashes.registration)) ||
@@ -432,7 +457,8 @@ function assertSourceHashes(metadata: InstallationMetadata): void {
       metadata.brokerPath !== join(metadata.packageRoot, 'dist', 'browser', 'native-broker.js') ||
       fileDigest(metadata.chromePath) !== metadata.hashes.chrome ||
       fileDigest(metadata.nodePath) !== metadata.hashes.node ||
-      fileDigest(metadata.brokerPath) !== metadata.hashes.broker) fail();
+      fileDigest(metadata.brokerPath) !== metadata.hashes.broker ||
+      executableBundleDigest(metadata.packageRoot) !== metadata.hashes.bundle) fail();
   const source = extensionHashes(join(metadata.packageRoot, 'extension'));
   for (const relative of EXTENSION_FILES)
     if (source[relative] !== metadata.hashes.extension[relative]) fail();
@@ -471,7 +497,7 @@ function expectedRegistration(metadata: InstallationMetadata): string {
 function assertProfileRetainedAndIdle(metadata: InstallationMetadata): void {
   if (inspectPrivateProfileCustody(metadata.profilePath) !== null) fail();
   for (const marker of ['SingletonLock', 'SingletonCookie', 'SingletonSocket'])
-    if (existsSync(join(metadata.profilePath, marker))) fail();
+    if (lstatSync(join(metadata.profilePath, marker), { throwIfNoEntry: false }) !== undefined) fail();
   const profile = lstatSync(metadata.profilePath, { bigint: true });
   if (!profile.isDirectory() || profile.isSymbolicLink() ||
       String(profile.dev) !== metadata.profileDevice || String(profile.ino) !== metadata.profileInode) fail();
