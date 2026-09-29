@@ -169,6 +169,7 @@ export async function runBrowserCli(
         bootstrapDirectory: join(command.root, 'service-bootstrap'),
         workspaceId: 'synthetic-chrome-diagnostic',
         ownerId: 'owner',
+        storageKeyPath: command.storageKeyPath,
         encryptionKey
       });
       writeOut(JSON.stringify(result) + '\n');

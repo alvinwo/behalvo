@@ -87,6 +87,7 @@ export interface ChromeBridgeDiagnosticInput {
   bootstrapDirectory: string;
   workspaceId: string;
   ownerId: string;
+  storageKeyPath?: string;
   encryptionKey?: Uint8Array;
 }
 
@@ -155,7 +156,8 @@ export async function runChromeBridgeDiagnostic(
       upgradeStorage: false,
       syntheticOperations: false,
       port: 0,
-      ...(checked.encryptionKey ? { encryptionKey: checked.encryptionKey } : {})
+      ...(checked.encryptionKey ? { encryptionKey: checked.encryptionKey } : {}),
+      ...(checked.storageKeyPath ? { storageKeyPath: checked.storageKeyPath } : {})
     });
 
     rendezvous = await startRendezvous({
@@ -222,7 +224,7 @@ export async function runChromeBridgeDiagnostic(
 function validateDiagnosticInput(input: unknown): ChromeBridgeDiagnosticInput {
   if (!input || typeof input !== 'object' || Array.isArray(input)) diagnosticFail();
   const item = input as Record<string, unknown>;
-  const allowed = new Set(['root', 'dbPath', 'bootstrapDirectory', 'workspaceId', 'ownerId', 'encryptionKey']);
+  const allowed = new Set(['root', 'dbPath', 'bootstrapDirectory', 'workspaceId', 'ownerId', 'storageKeyPath', 'encryptionKey']);
   if (Object.keys(item).some(key => !allowed.has(key)) ||
       !['root', 'dbPath', 'bootstrapDirectory', 'workspaceId', 'ownerId'].every(key => key in item) ||
       typeof item.root !== 'string' || !isAbsolute(item.root) ||
@@ -230,6 +232,7 @@ function validateDiagnosticInput(input: unknown): ChromeBridgeDiagnosticInput {
       typeof item.bootstrapDirectory !== 'string' || !isAbsolute(item.bootstrapDirectory) ||
       typeof item.workspaceId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(item.workspaceId) ||
       typeof item.ownerId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(item.ownerId) ||
+      (item.storageKeyPath !== undefined && (typeof item.storageKeyPath !== 'string' || !isAbsolute(item.storageKeyPath))) ||
       (item.encryptionKey !== undefined && !(item.encryptionKey instanceof Uint8Array))) diagnosticFail();
   return {
     root: item.root,
@@ -237,6 +240,7 @@ function validateDiagnosticInput(input: unknown): ChromeBridgeDiagnosticInput {
     bootstrapDirectory: item.bootstrapDirectory,
     workspaceId: item.workspaceId,
     ownerId: item.ownerId,
+    ...(typeof item.storageKeyPath === 'string' ? { storageKeyPath: item.storageKeyPath } : {}),
     ...(item.encryptionKey instanceof Uint8Array ? { encryptionKey: item.encryptionKey } : {})
   };
 }
