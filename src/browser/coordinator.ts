@@ -136,6 +136,7 @@ export async function runChromeBridgeDiagnostic(
   let transport: Awaited<ReturnType<ChromeBridgeRendezvous['waitForEnrollment']>>['transport'] | undefined;
   let chrome: DedicatedChromeProcess | undefined;
   let chromeExitedCleanly = false;
+  let chromeExitObserved = false;
   let primaryError: unknown;
 
   try {
@@ -193,6 +194,7 @@ export async function runChromeBridgeDiagnostic(
         response.snapshot.state !== 'login') diagnosticFail();
 
     const exit = await chrome.exited;
+    chromeExitObserved = true;
     chromeExitedCleanly = exit.code === 0 && exit.signal === null;
     if (!chromeExitedCleanly || chrome.stderr() !== '') diagnosticFail();
 
@@ -208,16 +210,38 @@ export async function runChromeBridgeDiagnostic(
     throw error instanceof Error && error.message === DIAGNOSTIC_ERROR ? error : new Error(DIAGNOSTIC_ERROR);
   } finally {
     let cleanupFailed = false;
+    if (primaryError !== undefined && chrome && !chromeExitObserved) {
+      chromeExitObserved = await terminateDiagnosticChrome(chrome);
+      if (!chromeExitObserved) cleanupFailed = true;
+    }
     try { await transport?.close(); } catch { cleanupFailed = true; }
     try {
       if (service && !await service.shutdown()) cleanupFailed = true;
     } catch { cleanupFailed = true; }
     try { await rendezvous?.close(); } catch { cleanupFailed = true; }
     try { await portal?.close(); } catch { cleanupFailed = true; }
-    if (chromeExitedCleanly) {
+    if (chromeExitObserved) {
       try { lease?.release(); } catch { cleanupFailed = true; }
     }
     if (cleanupFailed && primaryError === undefined) diagnosticFail();
+  }
+}
+
+async function terminateDiagnosticChrome(chrome: DedicatedChromeProcess): Promise<boolean> {
+  try { chrome.child.kill('SIGTERM'); } catch { /* exit observation still decides custody release */ }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      chrome.exited,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(DIAGNOSTIC_ERROR)), CHROME_CLEANUP_TIMEOUT_MS);
+      })
+    ]);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
