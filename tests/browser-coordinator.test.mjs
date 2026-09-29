@@ -213,12 +213,13 @@ test('diagnostic coordinator starts one service and performs one read-only inspe
     expectedPageState: 'login',
     command: undefined
   });
-  assert.deepEqual(events.filter(item => typeof item === 'string').slice(-5), [
+  assert.deepEqual(events.filter(item => typeof item === 'string').slice(-6), [
     'rendezvous.enrolled',
     'transport.close',
     'service.shutdown',
     'rendezvous.close',
-    'portal.close'
+    'portal.close',
+    'lease.release'
   ]);
   assert.equal(events.at(-1), 'lease.release');
 });
