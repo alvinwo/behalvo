@@ -83,6 +83,9 @@ export type { BridgeEnrollmentExpected, BridgeEnrollmentAccepted,
   BridgeFrameEnvelope } from './browser/bridge-ipc.js';
 export { createBridgeBrowserTransport } from './browser/bridge-transport.js';
 export type { BridgeBrowserTransport, BridgeBrowserTransportOptions } from './browser/bridge-transport.js';
+export { startChromeBridgeRendezvous } from './browser/rendezvous.js';
+export type { ChromeBridgeRendezvousOptions, ChromeBridgeEnrollment,
+  ChromeBridgeRendezvous } from './browser/rendezvous.js';
 export { stageChromeBridgeInstallation, finalizeChromeBridgeInstallation,
   doctorChromeBridgeInstallation, removeChromeBridgeInstallation } from './browser/installation.js';
 export type { ChromeBridgeStageInput, ChromeBridgeFinalizeInput, ChromeBridgeDoctorInput,
