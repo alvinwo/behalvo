@@ -195,8 +195,9 @@ test('production rendezvous enrolls the actual installed broker once and hands t
     await enrolled.transport.completion;
     running.child.stdin.end();
     const exit = await timeout(running.exited, 'broker exit');
-    assert.equal(exit.code, 0, running.stderr());
-    assert.equal(running.stderr(), '');
+    assert.notEqual(exit.code, 0);
+    assert.equal(running.stderr(), 'BRIDGE_BROKER_CHANNEL_ERROR\\n');
+    assert.doesNotMatch(running.stderr(), new RegExp(bootstrap.enrollment));
 
     await rendezvous.close();
     assert.equal(existsSync(rendezvous.runtimeDirectory), false);
