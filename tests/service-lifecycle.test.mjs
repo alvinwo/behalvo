@@ -43,6 +43,8 @@ async function pair(service) {
 test('one composition owns one store and lock, starts ready, shuts down, and restarts with sessions revoked', async t => {
   const setup = options(t);
   const first = await startLocalService(setup.value);
+  assert.match(first.serviceGeneration,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   const token = await pair(first);
   assert.equal((await requestControl(first.origin, 'GET', '/api/service', token)).status, 200);
   await assert.rejects(() => startLocalService(setup.value), /lock|already|service|unavailable/i);
@@ -52,6 +54,9 @@ test('one composition owns one store and lock, starts ready, shuts down, and res
 
   const restarted = await startLocalService({ ...setup.value, upgradeStorage: false });
   t.after(() => restarted.shutdown());
+  assert.match(restarted.serviceGeneration,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.notEqual(restarted.serviceGeneration, first.serviceGeneration);
   assert.equal((await requestControl(restarted.origin, 'GET', '/api/service', token)).status, 401);
   assert.equal((await requestControl(restarted.origin, 'GET', '/api/service', await pair(restarted))).status, 200);
 });
