@@ -43,12 +43,13 @@ Hosted Node 22.19/24 evidence is tracked separately below.
   directories. Correction binds stage/load metadata to the exact dedicated profile
   location, creates the registration directory after profile creation, and migrates
   installation callers' synthetic fixtures.
-- R2–R8: pending implementation and verification.
+- R2–R8: implemented and independently reviewed; see final gate evidence below.
 
 ## Reviews and final gates
 
-Independent task/final reviews, final local verification, exact-head hosted CI,
-and installed Chrome acceptance are pending. No acceptance is inferred from tests.
+This section records initial pending gates. Current results are in the final gate
+record below; installed Chrome acceptance remains pending. No acceptance is inferred
+from synthetic tests.
 
 R1 focused GREEN: build succeeded; 19 installation/CLI/broker/rendezvous tests
 passed with no failures/skips. Log: `data/verification/chrome-review/r1-green.log`.
@@ -167,3 +168,60 @@ missed metadata/launcher/extension symlinks, allowing partial setup writes befor
 failure. All three cases reproduced that mutation before the fix. Setup preflight
 now detects entries without following links. Logs: `r1-conflicts-red.log` and
 `r1-conflicts-green.log`; build and 16 installation tests passed.
+
+## Reviewed final code and laptop gate
+
+Final code head: `0d554eb3afce1af2ae1c93962693881f0ad42aa6`.
+Tree: `422e45d658b595064fa557eae1557f08ccff0373`.
+Review base: `09b99e6b9464b0765a7fa1bc517c34ea47cce405`.
+
+Both independent required full-PR review contexts cleared all supported findings
+through this code head after focused re-review:
+
+| Role/context | Model | Effort | Result |
+| --- | --- | --- | --- |
+| Focused Tasks 1–3, `installation_review` | gpt-6-sol | high | Manifest symlink and suppressed runtime cleanup findings reproduced and corrected; final pair reviewed the later result. This task seat used a newer Sol model rather than the configured gpt-5.6-sol default. |
+| Independent final, `final_sol_review` | gpt-5.6-sol | high | Three P2 findings reproduced and corrected; no outstanding supported defects through `0d554eb`. |
+| Independent final, `final_astra_review` | gpt-6-astra | high | One P2 finding reproduced and corrected; later Sol corrections also cleared in focused re-review through `0d554eb`. |
+| Sole implementation writer | Primary session; exact model/effort not exposed in session metadata | Unchanged | Local implementation, test execution, Git/gh publication; no implementer self-certification. |
+
+No reviewer rebuilt or edited the shared checkout. They inspected full PR source,
+focused corrections, and recorded raw RED/GREEN verification. Astra also reproduced
+the retained child-handle failure with an independent synthetic subprocess. Review
+retries: zero unsuccessful fix attempts; follow-ups were focused re-reviews of
+supported changed findings. No paid/provider fallback or new runtime agent added.
+
+Laptop `npm run verify` on this exact clean head **passed**: **1,124 tests,
+1,120 passed, zero failed, four skipped**. Check, demo, operations-demo,
+owner-control-demo, service-demo and git-diff-check each exited zero. HEAD, clean
+status and source fingerprint were unchanged across the run.
+
+- Terminal summary and raw logs:
+  `data/verification/2026-09-29T07-02-38.538Z-153cbb4d-2778-4ce0-ab93-1690bc4ed52c/`.
+- Combined output: `data/verification/chrome-review/verify-0d554eb.log`.
+- Runtime: Node 25.8.1, npm 11.11.0, Darwin, canonical `/private/tmp` fixtures.
+- Normal Git publication confirmed the exact remote branch head `0d554eb` after
+  verifying the previous remote head was `efcaab8`. No reset, force-push or merge.
+
+The subsequent handoff checkpoint changes documentation only. Its GitHub checks
+and laptop terminal summary identify that documentation commit separately; it does
+not change the reviewed executable code. Use the exact current PR SHA and terminal
+`summary.json` status when resuming, not an inferred pass from configured CI.
+
+Hosted final-code PR run
+[36534553233](https://github.com/alvinwo/behalvo/actions/runs/36534553233)
+completed **successfully** on exact head
+`0d554eb3afce1af2ae1c93962693881f0ad42aa6`. Both `check (22.19.0)` and
+`check (24.x)` passed their `npm run verify` gates. Observed Node 22.19 summary:
+1,124 tests, 1,120 passed, zero failures, four skipped. Raw hosted log retained at
+`data/verification/chrome-review/ci-0d554eb.log`; GitHub also retains per-lane
+verification artifacts. PR #12 remains draft; no merge occurred.
+
+## Remaining gates and next action
+
+Installed owner-laptop Chrome acceptance is **not performed**. No everyday profile
+or live account was opened. Real native messaging invocation, enrollment, normal
+Chrome shutdown ordering and clean custody release require supervised acceptance
+in the exact dedicated synthetic profile. The explicit no-reconnect/no-live-authority
+scope remains. Merge requires separate owner authorization. See `RESUME.md` for
+continuation; do not restart exhausted historical object recovery.

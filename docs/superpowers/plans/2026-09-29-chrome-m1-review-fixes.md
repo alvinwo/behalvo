@@ -37,7 +37,7 @@ Keep `stageChromeBridgeInstallation`, `finalizeChromeBridgeInstallation`, `docto
 - [x] Derive/check the dedicated registration location, create it after the private profile, and migrate synthetic fixtures to that layout. Doctor must not report an unrelated registration as healthy.
 - [x] Add and observe R6 failures for dangling `SingletonLock`, `SingletonCookie`, and `SingletonSocket`; use no-follow entry detection before removal.
 - [x] Add and observe R7 failures for an imported compiled helper changing while the broker entry stays unchanged; pin the executable dependency bundle and keep explicit stale-install removal possible.
-- [ ] Verify and publish each meaningful correction, retaining exact CI evidence.
+- [x] Verify and publish each meaningful correction, retaining exact CI evidence.
 
 ## Task 2 — coordinator lifecycle (R2, R3)
 
@@ -46,7 +46,7 @@ Files: `src/browser/coordinator.ts`, `tests/browser-coordinator.test.mjs`.
 - [x] Reproduce transport failure after successful inspection, pre-Chrome startup failure, and unsuccessful service/bridge cleanup.
 - [x] Observe transport completion throughout enrollment and the enrolled wait. Stop admission and enter cleanup on channel failure.
 - [x] Distinguish Chrome-never-launched from Chrome-exit-unconfirmed. Require service/bridge shutdown and idle-profile evidence before custody release.
-- [ ] Verify focused regressions and publish a verified correction.
+- [x] Verify focused regressions and publish a verified correction.
 
 ## Task 3 — bounded owned I/O teardown (R4, R5)
 
@@ -55,7 +55,7 @@ Files: `src/browser/native-broker.ts`, `src/browser/rendezvous.ts`, and correspo
 - [x] Add subprocess regressions for incomplete native input and an uncooperative pre-enrollment socket; observe expected bounded-exit failures.
 - [x] Cancel/destroy owned pending reads on broker failure. Track and close all accepted rendezvous sockets, including unauthenticated clients.
 - [x] Preserve one physical reader, bounded framing, one-use enrollment, fixed errors, and no reconnect.
-- [ ] Verify and publish the corrections.
+- [x] Verify and publish the corrections.
 
 ## Task 4 — signal cleanup and final evidence (R8)
 
@@ -64,5 +64,17 @@ Files: `src/cli/browser-main.ts`, `src/browser/coordinator.ts`, relevant CLI/coo
 - [x] Reproduce SIGINT/SIGTERM during enrollment and after inspection with a still-open synthetic Chrome process.
 - [x] Route signals through one idempotent bounded shutdown path. Retain custody if Chrome exit remains unconfirmed and report a fixed cleanup-pending outcome.
 - [x] Verify storage-key cleanup and no secret-value output on cancellation paths.
-- [ ] Require `npm run verify` on exact final head in hosted Node 22.19 and Node 24; inspect terminal results and retained logs.
-- [ ] Update handoff with exact head/tree, observed evidence, remaining gates, and next action. Leave final independent review and real-Chrome acceptance pending unless actually performed.
+- [x] Require `npm run verify` on exact final head in hosted Node 22.19 and Node 24; inspect terminal results and retained logs.
+- [x] Update handoff with exact head/tree, observed evidence, remaining gates, and next action. Leave final independent review and real-Chrome acceptance pending unless actually performed.
+
+
+## Completion evidence — 2026-09-29
+
+R1–R8 and all supported independent review follow-ups are implemented through
+`0d554eb3afce1af2ae1c93962693881f0ad42aa6`. Laptop `npm run verify` passed
+1,124 tests (1,120 passed, four skipped, no failures) and every required demo.
+Hosted PR run [36534553233](https://github.com/alvinwo/behalvo/actions/runs/36534553233)
+passed Node 22.19/24 on that exact code head. Required independent Sol-high and
+Astra-high full-PR reviews and focused re-reviews cleared all supported findings.
+See [the laptop record](../../verification/2026-09-29-chrome-review-laptop.md).
+Installed Chrome acceptance remains unperformed; PR #12 stays draft and unmerged.
