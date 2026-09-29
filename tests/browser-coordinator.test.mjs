@@ -125,7 +125,8 @@ test('diagnostic coordinator starts one service and performs one read-only inspe
     dbPath: '/private/data/service.db',
     bootstrapDirectory: '/private/data/bootstrap',
     workspaceId: 'diagnostic-workspace',
-    ownerId: 'owner'
+    ownerId: 'owner',
+    storageKeyPath: '/private/storage.key'
   }, {
     doctor() {
       events.push('doctor');
@@ -155,7 +156,8 @@ test('diagnostic coordinator starts one service and performs one read-only inspe
         workspaceId: options.workspaceId,
         ownerId: options.ownerId,
         syntheticOperations: options.syntheticOperations,
-        hasSyntheticMonitoring: options.syntheticMonitoring !== undefined
+        hasSyntheticMonitoring: options.syntheticMonitoring !== undefined,
+        storageKeyPath: options.storageKeyPath
       }]);
       return {
         origin: 'http://127.0.0.1:45555',
@@ -190,6 +192,13 @@ test('diagnostic coordinator starts one service and performs one read-only inspe
   });
 
   assert.equal(serviceStarts, 1);
+  assert.deepEqual(events.find(item => Array.isArray(item) && item[0] === 'service.start')[1], {
+    workspaceId: 'diagnostic-workspace',
+    ownerId: 'owner',
+    syntheticOperations: false,
+    hasSyntheticMonitoring: false,
+    storageKeyPath: '/private/storage.key'
+  });
   assert.deepEqual(result, {
     serviceOrigin: 'http://127.0.0.1:45555',
     bootstrapPath: '/private/data/bootstrap/service.json',
