@@ -7,8 +7,7 @@ import {
   removeChromeBridgeInstallation,
   stageChromeBridgeInstallation
 } from '../browser/installation.js';
-import { runChromeBridgeDiagnostic, type ChromeBridgeDiagnosticInput,
-  type ChromeBridgeDiagnosticResult } from '../browser/coordinator.js';
+import type { ChromeBridgeDiagnosticInput, ChromeBridgeDiagnosticResult } from '../browser/coordinator.js';
 import { loadStorageKeyFile } from '../storage/key-file.js';
 
 const FAILURE = 'Chrome bridge command failed.\n';
@@ -162,7 +161,9 @@ export async function runBrowserCli(
       const enrollmentPath = join(command.root, 'runtime', 'bridge-enrollment.json');
       writeOut(`Chrome bridge enrollment file: ${JSON.stringify(enrollmentPath)}\n`);
       writeOut('Open the extension popup and connect the synthetic tab. Close the dedicated Chrome window after enrollment to finish the diagnostic.\n');
-      const result = await (dependencies.diagnostic ?? runChromeBridgeDiagnostic)({
+      const diagnostic = dependencies.diagnostic ??
+        (await import('../browser/coordinator.js')).runChromeBridgeDiagnostic;
+      const result = await diagnostic({
         root: command.root,
         dbPath: join(command.root, 'synthetic-service.db'),
         bootstrapDirectory: join(command.root, 'service-bootstrap'),
