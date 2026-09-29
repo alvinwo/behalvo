@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { stderr, stdout } from 'node:process';
 import { pathToFileURL } from 'node:url';
 import {
@@ -7,6 +7,9 @@ import {
   removeChromeBridgeInstallation,
   stageChromeBridgeInstallation
 } from '../browser/installation.js';
+import { runChromeBridgeDiagnostic, type ChromeBridgeDiagnosticInput,
+  type ChromeBridgeDiagnosticResult } from '../browser/coordinator.js';
+import { loadStorageKeyFile } from '../storage/key-file.js';
 
 const FAILURE = 'Chrome bridge command failed.\n';
 
@@ -14,9 +17,17 @@ type BrowserCommand =
   | { kind: 'stage'; root: string; chromePath: string; registrationDirectory: string }
   | { kind: 'finalize'; root: string; extensionId: string }
   | { kind: 'doctor'; root: string }
-  | { kind: 'remove'; root: string };
+  | { kind: 'remove'; root: string }
+  | { kind: 'run'; root: string; storageKeyPath: string };
 
 class BrowserArgumentError extends Error {}
+
+export interface BrowserCliDependencies {
+  writeStdout?: (text: string) => void;
+  writeStderr?: (text: string) => void;
+  loadStorageKey?: (path: string) => Uint8Array;
+  diagnostic?: (input: ChromeBridgeDiagnosticInput) => Promise<ChromeBridgeDiagnosticResult>;
+}
 
 function options(argv: readonly string[], allowed: readonly string[]): Map<string, string> {
   if (argv.length % 2 !== 0) throw new BrowserArgumentError();
@@ -68,13 +79,26 @@ export function parseBrowserArgs(argv: readonly string[]): BrowserCommand {
     return { kind: verb, root: absolute(root) };
   }
 
+  if (verb === 'run') {
+    const values = options(rest, ['--root', '--storage-key-file']);
+    const root = values.get('--root');
+    const storageKeyPath = values.get('--storage-key-file');
+    if (!root || !storageKeyPath || values.size !== 2) throw new BrowserArgumentError();
+    return { kind: 'run', root: absolute(root), storageKeyPath: absolute(storageKeyPath) };
+  }
+
   throw new BrowserArgumentError();
 }
 
-export async function runBrowserCli(argv: readonly string[]): Promise<number> {
+export async function runBrowserCli(
+  argv: readonly string[],
+  dependencies: BrowserCliDependencies = {}
+): Promise<number> {
+  const writeOut = dependencies.writeStdout ?? (text => writeOut(text));
+  const writeErr = dependencies.writeStderr ?? (text => writeErr(text));
   let command: BrowserCommand;
   try { command = parseBrowserArgs(argv); }
-  catch { stderr.write(FAILURE); return 2; }
+  catch { writeErr(FAILURE); return 2; }
 
   try {
     if (command.kind === 'stage') {
@@ -85,7 +109,7 @@ export async function runBrowserCli(argv: readonly string[]): Promise<number> {
         nodePath: process.execPath,
         registrationDirectory: command.registrationDirectory
       });
-      stdout.write(JSON.stringify({
+      writeOut(JSON.stringify({
         status: 'staged',
         root: installation.root,
         profilePath: installation.profilePath,
@@ -100,7 +124,7 @@ export async function runBrowserCli(argv: readonly string[]): Promise<number> {
         root: command.root,
         extensionId: command.extensionId
       });
-      stdout.write(JSON.stringify({
+      writeOut(JSON.stringify({
         status: 'configured',
         root: installation.root,
         extensionId: installation.extensionId,
@@ -111,7 +135,7 @@ export async function runBrowserCli(argv: readonly string[]): Promise<number> {
 
     if (command.kind === 'doctor') {
       const report = doctorChromeBridgeInstallation({ root: command.root });
-      stdout.write(JSON.stringify({
+      writeOut(JSON.stringify({
         configured: report.configured,
         registered: report.registered,
         handshakeObserved: report.handshakeObserved,
@@ -124,11 +148,35 @@ export async function runBrowserCli(argv: readonly string[]): Promise<number> {
       return 0;
     }
 
-    const result = removeChromeBridgeInstallation({ root: command.root });
-    stdout.write(JSON.stringify({ status: 'removed', retainedPaths: result.retainedPaths }) + '\n');
-    return 0;
+    if (command.kind === 'remove') {
+      const result = removeChromeBridgeInstallation({ root: command.root });
+      writeOut(JSON.stringify({ status: 'removed', retainedPaths: result.retainedPaths }) + '\n');
+      return 0;
+    }
+
+    let encryptionKey: Uint8Array | undefined;
+    try {
+      encryptionKey = (dependencies.loadStorageKey ?? loadStorageKeyFile)(command.storageKeyPath);
+      if (!(encryptionKey instanceof Uint8Array) || encryptionKey.byteLength !== 32)
+        throw new Error(FAILURE);
+      const enrollmentPath = join(command.root, 'runtime', 'bridge-enrollment.json');
+      writeOut(`Chrome bridge enrollment file: ${JSON.stringify(enrollmentPath)}\n`);
+      writeOut('Open the extension popup and connect the synthetic tab. Close the dedicated Chrome window after enrollment to finish the diagnostic.\n');
+      const result = await (dependencies.diagnostic ?? runChromeBridgeDiagnostic)({
+        root: command.root,
+        dbPath: join(command.root, 'synthetic-service.db'),
+        bootstrapDirectory: join(command.root, 'service-bootstrap'),
+        workspaceId: 'synthetic-chrome-diagnostic',
+        ownerId: 'owner',
+        encryptionKey
+      });
+      writeOut(JSON.stringify(result) + '\n');
+      return 0;
+    } finally {
+      encryptionKey?.fill(0);
+    }
   } catch {
-    stderr.write(FAILURE);
+    writeErr(FAILURE);
     return 1;
   }
 }
