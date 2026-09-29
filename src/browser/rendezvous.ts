@@ -17,7 +17,6 @@ import {
   type BridgeBrowserTransport
 } from './bridge-transport.js';
 import { doctorChromeBridgeInstallation } from './installation.js';
-import { SYNTHETIC_PORTAL_ORIGIN } from './types.js';
 import { publishPrivateFile } from '../storage/private-files.js';
 
 const RENDEZVOUS_ERROR = 'Chrome bridge rendezvous failed.';
