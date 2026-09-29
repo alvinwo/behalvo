@@ -249,3 +249,23 @@ test('rejected enrollment does not consume the rendezvous and a later exact brok
     good.child.stdin.end();
     await timeout(good.exited, 'good broker exit');
   });
+
+test('review R5: rendezvous close terminates a stalled pre-enrollment subprocess socket',
+  { skip: !posix }, async t => {
+    const installation = configuredInstallation(t);
+    const rendezvous = await startChromeBridgeRendezvous({ root: installation.root,
+      serviceGeneration: 'review-stalled-client' });
+    const socketPath = join(rendezvous.runtimeDirectory, 'bridge.sock');
+    const client = spawn(process.execPath, ['--input-type=module', '-e', `
+      import { createConnection } from 'node:net';
+      const socket = createConnection({ path: process.argv[1], allowHalfOpen: true });
+      socket.on('connect', () => process.stdout.write('ready'));
+      socket.on('error', () => {});
+    `, socketPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+    t.after(() => { client.kill('SIGKILL'); void rendezvous.close().catch(() => {}); });
+    await timeout(new Promise(resolve => client.stdout.once('data', resolve)), 'client connect');
+    await timeout(rendezvous.close(), 'rendezvous owned socket shutdown', 750);
+    assert.equal(existsSync(rendezvous.descriptorPath), false);
+    assert.equal(existsSync(rendezvous.enrollmentPath), false);
+    assert.equal(existsSync(socketPath), false);
+  });

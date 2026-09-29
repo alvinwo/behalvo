@@ -246,3 +246,19 @@ test('wrong enrolled channel from the service fails stop and is never forwarded 
     socket.destroy();
     runtime.server.close();
   });
+
+for (const partial of [false, true]) {
+  test(`review R4: broker handshake timeout exits with ${partial ? 'partial' : 'no'} native input while Chrome keeps stdin open`,
+    { skip: !posix }, async t => {
+      const { installation } = configuredInstallation(t);
+      const runtime = await runtimeFixture(t, installation);
+      const running = launch(installation);
+      t.after(() => running.child.kill('SIGKILL'));
+      const socket = await timeout(runtime.socketPromise, 'broker connect');
+      t.after(() => socket.destroy());
+      if (partial) running.child.stdin.write(Buffer.from([20, 0]));
+      const exit = await timeout(running.exited, 'broker owned input teardown', 6_500);
+      assert.deepEqual(exit, { code: 1, signal: null });
+      assert.equal(running.stderr(), 'BRIDGE_BROKER_ENROLLMENT_ERROR\n');
+    });
+}

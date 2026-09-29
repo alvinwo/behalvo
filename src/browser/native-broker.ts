@@ -116,6 +116,7 @@ export async function runChromeNativeBroker(argv: readonly string[], io: BrokerI
     fail('BRIDGE_BROKER_CHANNEL_ERROR');
   } finally {
     socket?.destroy();
+    io.input.destroy();
   }
 }
 

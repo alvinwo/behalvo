@@ -96,6 +96,9 @@ export async function startChromeBridgeRendezvous(
   let enrolled: ChromeBridgeEnrollment | undefined;
   let closing: Promise<void> | undefined;
   let settled = false;
+  let stopped = false;
+  const clients = new Set<Socket>();
+  const handlers = new Set<Promise<void>>();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const rejectOnce = (): void => {
@@ -134,7 +137,7 @@ export async function startChromeBridgeRendezvous(
       const raw = await deadline(reader.read(), HANDSHAKE_TIMEOUT_MS);
       if (raw === undefined) throw new Error(RENDEZVOUS_ERROR);
       const accepted = gate.accept(raw);
-      if (settled || enrolled) throw new Error(RENDEZVOUS_ERROR);
+      if (stopped || settled || enrolled) throw new Error(RENDEZVOUS_ERROR);
 
       removePrivateFile(descriptorPath);
       removePrivateFile(enrollmentPath);
@@ -152,12 +155,15 @@ export async function startChromeBridgeRendezvous(
         channelId: accepted.channelId,
         closeChannel: () => socket.destroy()
       });
+      if (stopped) { await transport.close(); return; }
       enrolled = { transport, tabId: accepted.tabId };
+      for (const client of clients) if (client !== socket) closeClient(client);
       settled = true;
       if (timer) clearTimeout(timer);
       stopListening();
       resolveEnrollment(enrolled);
     } catch {
+      if (stopped) { closeClient(socket); return; }
       if (gate.consumed) {
         closeClient(socket);
         failRun();
@@ -178,10 +184,15 @@ export async function startChromeBridgeRendezvous(
 
   try {
     server = createServer(socket => {
-      void handleClient(socket).catch(() => {
+      if (stopped) { closeClient(socket); return; }
+      clients.add(socket);
+      socket.once('close', () => clients.delete(socket));
+      const handling = handleClient(socket).catch(() => {
         closeClient(socket);
         if (gate.consumed) failRun();
       });
+      handlers.add(handling);
+      void handling.finally(() => handlers.delete(handling));
     });
     server.on('error', () => failRun());
     await new Promise<void>((resolve, reject) => {
@@ -244,10 +255,13 @@ export async function startChromeBridgeRendezvous(
 
   async function closeRuntime(): Promise<void> {
     if (closing) return closing;
+    stopped = true;
     closing = (async () => {
       if (timer) clearTimeout(timer);
       gate.close();
       if (!settled) rejectOnce();
+      for (const socket of clients) closeClient(socket);
+      await Promise.allSettled([...handlers]);
       try { await enrolled?.transport.close(); } catch { /* fixed local cleanup surface */ }
       await closeServer();
       try { removePrivateFile(descriptorPath); } catch { /* preserve unknown/mismatched artifact */ }
