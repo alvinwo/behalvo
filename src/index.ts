@@ -81,6 +81,8 @@ export { BridgeEnrollmentGate, BridgeIpcReader, encodeBridgeIpcMessage,
   MAX_BRIDGE_PENDING_BYTES } from './browser/bridge-ipc.js';
 export type { BridgeEnrollmentExpected, BridgeEnrollmentAccepted,
   BridgeFrameEnvelope } from './browser/bridge-ipc.js';
+export { createBridgeBrowserTransport } from './browser/bridge-transport.js';
+export type { BridgeBrowserTransport, BridgeBrowserTransportOptions } from './browser/bridge-transport.js';
 export { stageChromeBridgeInstallation, finalizeChromeBridgeInstallation,
   doctorChromeBridgeInstallation, removeChromeBridgeInstallation } from './browser/installation.js';
 export type { ChromeBridgeStageInput, ChromeBridgeFinalizeInput, ChromeBridgeDoctorInput,
