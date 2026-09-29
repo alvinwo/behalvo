@@ -171,7 +171,18 @@ export async function runChromeBridgeDiagnostic(
       profilePath: installation.profilePath
     });
 
-    const enrolled = await rendezvous.waitForEnrollment();
+    const enrollmentRace = await Promise.race([
+      rendezvous.waitForEnrollment().then(enrollment => ({ kind: 'enrolled' as const, enrollment })),
+      chrome.exited.then(
+        exit => ({ kind: 'exited' as const, exit }),
+        () => ({ kind: 'exited' as const, exit: undefined })
+      )
+    ]);
+    if (enrollmentRace.kind === 'exited') {
+      chromeExitObserved = true;
+      diagnosticFail();
+    }
+    const enrolled = enrollmentRace.enrollment;
     transport = enrolled.transport;
     const request = {
       protocolVersion: 1 as const,
