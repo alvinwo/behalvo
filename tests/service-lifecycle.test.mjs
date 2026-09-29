@@ -43,6 +43,7 @@ async function pair(service) {
 test('one composition owns one store and lock, starts ready, shuts down, and restarts with sessions revoked', async t => {
   const setup = options(t);
   const first = await startLocalService(setup.value);
+  t.after(() => first.shutdown());
   assert.match(first.serviceGeneration,
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   const token = await pair(first);
