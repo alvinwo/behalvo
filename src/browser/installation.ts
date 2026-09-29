@@ -122,6 +122,7 @@ export function stageChromeBridgeInstallation(input: ChromeBridgeStageInput): Ch
     const profileDevice = lease.profileDevice;
     const profileInode = lease.profileInode;
     lease.release();
+    mkdirOwned(checked.registrationDirectory);
 
     mkdirOwned(paths.extensionPath);
     mkdirOwned(join(paths.extensionPath, 'dist'));
@@ -283,12 +284,15 @@ function parseStageInput(input: unknown): ChromeBridgeStageInput {
       'chromePath,nodePath,packageRoot,registrationDirectory,root') fail();
   for (const key of ['root', 'packageRoot', 'chromePath', 'nodePath', 'registrationDirectory'])
     if (typeof item[key] !== 'string' || (item[key] as string).length === 0) fail();
+  const root = canonicalDirectory(item.root as string, true);
+  const registrationDirectory = join(root, PROFILE_NAME, 'NativeMessagingHosts');
+  if (item.registrationDirectory !== registrationDirectory) fail();
   return {
-    root: canonicalDirectory(item.root as string, true),
+    root,
     packageRoot: canonicalDirectory(item.packageRoot as string, false),
     chromePath: canonicalRegularFile(item.chromePath as string, true),
     nodePath: canonicalRegularFile(item.nodePath as string, true),
-    registrationDirectory: canonicalDirectory(item.registrationDirectory as string, true)
+    registrationDirectory
   };
 }
 
@@ -393,6 +397,7 @@ function loadMetadata(path: string, expectedRoot: string): InstallationMetadata 
       typeof item.profileInode !== 'string' || !/^\d+$/.test(item.profileInode) ||
       !item.hashes || typeof item.hashes !== 'object' || Array.isArray(item.hashes)) fail();
 
+  if (item.registrationDirectory !== join(expectedRoot, PROFILE_NAME, 'NativeMessagingHosts')) fail();
   const paths = installationPaths(expectedRoot, item.registrationDirectory as string);
   if (item.profilePath !== paths.profilePath || item.extensionPath !== paths.extensionPath ||
       item.launcherPath !== paths.launcherPath || item.registrationPath !== paths.registrationPath) fail();
@@ -435,6 +440,7 @@ function assertSourceHashes(metadata: InstallationMetadata): void {
 
 function assertOwnedArtifacts(metadata: InstallationMetadata, forRemoval: boolean): void {
   const root = canonicalDirectory(metadata.root, true);
+  if (canonicalDirectory(metadata.registrationDirectory, true) !== metadata.registrationDirectory) fail();
   if (root !== metadata.root || canonicalDirectory(metadata.profilePath, true) !== metadata.profilePath ||
       canonicalDirectory(metadata.extensionPath, true) !== metadata.extensionPath ||
       canonicalRegularFile(metadata.launcherPath, true) !== metadata.launcherPath ||

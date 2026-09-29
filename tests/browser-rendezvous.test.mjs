@@ -38,7 +38,7 @@ function configuredInstallation(t) {
   chmodSync(temp, 0o700);
   t.after(() => rmSync(temp, { recursive: true, force: true }));
   const root = privateDir(temp, 'install');
-  const registrationDirectory = privateDir(temp, 'registration');
+  const registrationDirectory = join(root, 'chrome-profile', 'NativeMessagingHosts');
   const chromePath = join(temp, 'chrome');
   writeFileSync(chromePath, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
   chmodSync(chromePath, 0o700);

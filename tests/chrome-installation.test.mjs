@@ -67,7 +67,7 @@ function fixture(t, options = {}) {
   chmodSync(chromePath, 0o700);
 
   const root = privateDir(temp, options.quoted ? "install root 'quoted'" : 'install');
-  const registrationDirectory = privateDir(temp, 'native-host-registration');
+  const registrationDirectory = join(root, 'chrome-profile', 'NativeMessagingHosts');
   return { temp, packageRoot, brokerPath, chromePath, root, registrationDirectory, sourceFiles };
 }
 
