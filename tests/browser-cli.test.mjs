@@ -180,13 +180,15 @@ test('browser CLI run loads and wipes the storage key and invokes diagnostic onc
       dbPath: calls[0].dbPath,
       bootstrapDirectory: calls[0].bootstrapDirectory,
       workspaceId: calls[0].workspaceId,
-      ownerId: calls[0].ownerId
+      ownerId: calls[0].ownerId,
+      storageKeyPath: calls[0].storageKeyPath
     }, {
       root: '/private/install',
       dbPath: '/private/install/synthetic-service.db',
       bootstrapDirectory: '/private/install/service-bootstrap',
       workspaceId: 'synthetic-chrome-diagnostic',
-      ownerId: 'owner'
+      ownerId: 'owner',
+      storageKeyPath: '/private/storage.key'
     });
     assert.deepEqual(Array.from(key), Array(32).fill(0));
     assert.match(output.join(''), /bridge-enrollment\.json/);
