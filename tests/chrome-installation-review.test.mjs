@@ -100,3 +100,20 @@ for (const marker of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
     assert.equal(existsSync(finalized.metadataPath), false);
     assert.equal(existsSync(finalized.profilePath), true);
   });
+
+test('review R1 follow-up: exact-content registration symlink is never configured',
+  { skip: !posix }, t => {
+    const { input, temp } = fixture(t);
+    stageChromeBridgeInstallation(input);
+    const finalized = finalizeChromeBridgeInstallation({ root: input.root, extensionId: 'a'.repeat(32) });
+    const other = join(temp, 'unrelated-manifest.json');
+    writeFileSync(other, readFileSync(finalized.registrationPath), { mode: 0o600 });
+    rmSync(finalized.registrationPath);
+    symlinkSync(other, finalized.registrationPath);
+    assert.equal(doctorChromeBridgeInstallation({ root: input.root }).configured, false);
+    assert.throws(() => finalizeChromeBridgeInstallation({ root: input.root, extensionId: 'a'.repeat(32) }),
+      /Chrome bridge installation operation failed/);
+    assert.throws(() => removeChromeBridgeInstallation({ root: input.root }),
+      /Chrome bridge installation operation failed/);
+    assert.equal(existsSync(other), true);
+  });

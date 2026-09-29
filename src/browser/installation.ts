@@ -193,6 +193,7 @@ export function finalizeChromeBridgeInstallation(input: ChromeBridgeFinalizeInpu
     }), null, 2) + '\n';
 
     if (existsSync(metadata.registrationPath)) {
+      assertRegistrationFile(metadata.registrationPath);
       if (readFileSync(metadata.registrationPath, 'utf8') !== manifest) fail();
     } else {
       writeFileSync(metadata.registrationPath, manifest, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
@@ -225,6 +226,7 @@ export function doctorChromeBridgeInstallation(input: ChromeBridgeDoctorInput): 
     if (metadata.extensionId !== null && metadata.hashes.registration !== null) {
       try {
         canonicalDirectory(metadata.registrationDirectory, true);
+        assertRegistrationFile(metadata.registrationPath);
         const expected = expectedRegistration(metadata);
         registered = existsSync(metadata.registrationPath) &&
           readFileSync(metadata.registrationPath, 'utf8') === expected &&
@@ -258,6 +260,7 @@ export function removeChromeBridgeInstallation(input: ChromeBridgeRemoveInput): 
     assertOwnedArtifacts(metadata, true);
     assertProfileRetainedAndIdle(metadata);
     if (metadata.extensionId !== null) {
+      assertRegistrationFile(metadata.registrationPath);
       const expected = expectedRegistration(metadata);
       if (!existsSync(metadata.registrationPath) ||
           readFileSync(metadata.registrationPath, 'utf8') !== expected ||
@@ -479,11 +482,19 @@ function assertOwnedArtifacts(metadata: InstallationMetadata, forRemoval: boolea
     if ((stat.mode & 0o077) !== 0 || fileDigest(path) !== metadata.hashes.extension[relative]) fail();
   }
   if (!forRemoval && metadata.extensionId !== null && metadata.hashes.registration !== null) {
+    assertRegistrationFile(metadata.registrationPath);
     const expected = expectedRegistration(metadata);
     if (!existsSync(metadata.registrationPath) ||
         readFileSync(metadata.registrationPath, 'utf8') !== expected ||
         fileDigest(metadata.registrationPath) !== metadata.hashes.registration) fail();
   }
+}
+
+function assertRegistrationFile(path: string): void {
+  canonicalRegularFile(path, false);
+  const stat = lstatSync(path);
+  if (typeof process.geteuid !== 'function' || stat.uid !== process.geteuid() ||
+      (stat.mode & 0o077) !== 0) fail();
 }
 
 function expectedRegistration(metadata: InstallationMetadata): string {

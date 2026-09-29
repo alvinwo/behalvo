@@ -81,3 +81,18 @@ fulfilled exit observation. Existing lease release performs the idle-profile che
 The prior success fixture incorrectly used an already-completed channel; corrected
 to a pending channel for the active session. Build and all 14 coordinator tests
 passed. Logs: `r2-r3-red.log`, `r2-r3-green.log`.
+
+Task 1 independent review found an exact-content native manifest symlink could
+still pass finalization/doctor. Confirmed with a RED behavior test; now validate
+the manifest as a canonical, single-link, owner-only regular file for finalization,
+doctor and removal. The target is preserved on rejection.
+
+Task 3 R4/R5: both no-input and partial-input broker children exceeded 6.5 seconds
+instead of exiting after their handshake deadline; rendezvous close exceeded
+750 ms with a stalled pre-enrollment subprocess. Logs: `r4-r5-red.log`.
+The broker now destroys native input on handshake teardown as well as relay exit.
+Rendezvous tracks all accepted sockets/handlers, destroys them on shutdown, and
+closes other pending sockets when one channel enrolls. No reconnect is introduced.
+Build plus 36 installation/coordinator/broker/rendezvous tests passed, including
+all new subprocess regressions and the manifest-symlink regression. Log:
+`task3-green.log`.
