@@ -66,3 +66,18 @@ removal but cannot pass source verification. No signing claim is made.
 
 Task 1 full suite: `npm test` passed 1,098 of 1,102 tests, four skipped,
 zero failures (Node 25.8.1, Darwin). Log: `task1-suite.log`.
+
+Task 1 published via authenticated Git with preserved ancestry; remote confirmed
+`47afbb9706c743099a56d62eee635b0fb7be5a54` after a pre-push head check.
+Focused task review requested in an independent Sol-high context (actual tool
+selection `gpt-6-sol`, high; policy default is `gpt-5.6-sol`; no effort downgrade).
+
+Task 2 R2/R3: eight new coordinator regressions failed before changes, including
+channel loss followed by normal Chrome exit, all three pre-launch startup failures,
+failed transport/service/rendezvous shutdown, and rejected exit observation.
+Correction observes transport completion during inspection and the Chrome wait;
+releases custody only after complete cleanup and either no launched Chrome or a
+fulfilled exit observation. Existing lease release performs the idle-profile check.
+The prior success fixture incorrectly used an already-completed channel; corrected
+to a pending channel for the active session. Build and all 14 coordinator tests
+passed. Logs: `r2-r3-red.log`, `r2-r3-green.log`.

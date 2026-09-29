@@ -174,16 +174,20 @@ export async function runChromeBridgeDiagnostic(
     const enrollmentRace = await Promise.race([
       rendezvous.waitForEnrollment().then(enrollment => ({ kind: 'enrolled' as const, enrollment })),
       chrome.exited.then(
-        exit => ({ kind: 'exited' as const, exit }),
+        exit => { chromeExitObserved = true; return { kind: 'exited' as const, exit }; },
         () => ({ kind: 'exited' as const, exit: undefined })
       )
     ]);
     if (enrollmentRace.kind === 'exited') {
-      chromeExitObserved = true;
       diagnosticFail();
     }
     const enrolled = enrollmentRace.enrollment;
     transport = enrolled.transport;
+    const channelClosed = transport.completion.then(
+      () => diagnosticFail(),
+      () => diagnosticFail()
+    );
+    void channelClosed.catch(() => {});
     const request = {
       protocolVersion: 1 as const,
       kind: 'inspect' as const,
@@ -197,7 +201,7 @@ export async function runChromeBridgeDiagnostic(
       sequence: 1,
       expectedPageState: 'login' as const
     };
-    const response = parseBrowserResponse(await transport.inspect(request));
+    const response = parseBrowserResponse(await Promise.race([transport.inspect(request), channelClosed]));
     if (response.requestId !== request.requestId || response.profileId !== request.profileId ||
         response.connectionGeneration !== request.connectionGeneration ||
         response.epoch !== request.epoch || response.serviceGeneration !== request.serviceGeneration ||
@@ -205,7 +209,7 @@ export async function runChromeBridgeDiagnostic(
         response.sequence !== request.sequence || response.pageState !== 'login' ||
         response.snapshot.state !== 'login') diagnosticFail();
 
-    const exit = await chrome.exited;
+    const exit = await Promise.race([chrome.exited, channelClosed]);
     chromeExitObserved = true;
     chromeExitedCleanly = exit.code === 0 && exit.signal === null;
     if (!chromeExitedCleanly || chrome.stderr() !== '') diagnosticFail();
@@ -232,7 +236,7 @@ export async function runChromeBridgeDiagnostic(
     } catch { cleanupFailed = true; }
     try { await rendezvous?.close(); } catch { cleanupFailed = true; }
     try { await portal?.close(); } catch { cleanupFailed = true; }
-    if (chromeExitObserved) {
+    if ((!chrome || chromeExitObserved) && !cleanupFailed) {
       try { lease?.release(); } catch { cleanupFailed = true; }
     }
     if (cleanupFailed && primaryError === undefined) diagnosticFail();

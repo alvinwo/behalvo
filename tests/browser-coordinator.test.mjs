@@ -117,7 +117,7 @@ test('diagnostic coordinator starts one service and performs one read-only inspe
     async revoke() { events.push('revoke'); },
     async reconcileRevocation() { throw new Error('diagnostic must not reconcile'); },
     async close() { events.push('transport.close'); },
-    completion: Promise.resolve()
+    completion: new Promise(() => {})
   };
 
   const result = await runChromeBridgeDiagnostic({
