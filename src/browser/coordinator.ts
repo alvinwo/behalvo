@@ -12,6 +12,7 @@ import { parseBrowserResponse, SYNTHETIC_PORTAL_ORIGIN } from './types.js';
 
 const LAUNCH_ERROR = 'Chrome bridge launch failed.';
 const MAXIMUM_STDERR_BYTES = 16 * 1024;
+const CHROME_CLEANUP_TIMEOUT_MS = 5_000;
 
 export interface DedicatedChromeLaunchOptions {
   chromePath: string;
