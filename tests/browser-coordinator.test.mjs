@@ -240,3 +240,103 @@ test('diagnostic coordinator starts one service and performs one read-only inspe
   ]);
   assert.equal(events.at(-1), 'lease.release');
 });
+
+
+test('diagnostic coordinator terminates launched Chrome and observes exit before releasing custody on failure',
+  async () => {
+    const events = [];
+    let releaseChromeExit;
+    const chromeExited = new Promise(resolve => { releaseChromeExit = resolve; });
+    const installation = {
+      version: 1,
+      installationId: 'installation-failure',
+      root: '/private/install',
+      packageRoot: '/private/package',
+      chromePath: '/private/chrome',
+      nodePath: '/private/node',
+      brokerPath: '/private/broker',
+      profilePath: '/private/install/chrome-profile',
+      extensionPath: '/private/install/extension',
+      launcherPath: '/private/install/native-host',
+      metadataPath: '/private/install/chrome-bridge-installation.json',
+      registrationDirectory: '/private/native-hosts',
+      registrationPath: '/private/native-hosts/com.behalvo.browser.json',
+      extensionId: 'a'.repeat(32),
+      profileDevice: '1',
+      profileInode: '2',
+      hashes: { chrome: 'x', node: 'x', broker: 'x', launcher: 'x', extension: {}, registration: 'x' }
+    };
+
+    await assert.rejects(runChromeBridgeDiagnostic({
+      root: '/private/install',
+      dbPath: '/private/data/service.db',
+      bootstrapDirectory: '/private/data/bootstrap',
+      workspaceId: 'diagnostic-workspace',
+      ownerId: 'owner',
+      storageKeyPath: '/private/storage.key'
+    }, {
+      doctor() {
+        return { configured: true, registered: true, handshakeObserved: false, issues: [], installation };
+      },
+      acquireProfileLease() {
+        return {
+          custodyId: 'custody-failure',
+          profilePath: installation.profilePath,
+          profileDevice: '1',
+          profileInode: '2',
+          release() { events.push('lease.release'); }
+        };
+      },
+      async startPortal() {
+        return {
+          origin: SYNTHETIC_PORTAL_ORIGIN,
+          state: {},
+          async close() { events.push('portal.close'); }
+        };
+      },
+      async startService() {
+        return {
+          origin: 'http://127.0.0.1:45555',
+          bootstrapPath: '/private/data/bootstrap/service.json',
+          serviceGeneration: 'service-generation-failure',
+          control: {},
+          async shutdown() { events.push('service.shutdown'); return true; }
+        };
+      },
+      async startRendezvous() {
+        return {
+          runtimeDirectory: '/private/install/runtime',
+          descriptorPath: '/private/install/runtime/bridge-run.json',
+          enrollmentPath: '/private/install/runtime/bridge-enrollment.json',
+          async waitForEnrollment() {
+            events.push('rendezvous.failed');
+            throw new Error('synthetic enrollment failure');
+          },
+          async close() { events.push('rendezvous.close'); }
+        };
+      },
+      launchChrome() {
+        return {
+          child: {
+            kill(signal) {
+              events.push(['chrome.kill', signal]);
+              releaseChromeExit({ code: null, signal: 'SIGTERM' });
+              return true;
+            }
+          },
+          exited: chromeExited,
+          stderr() { return ''; }
+        };
+      },
+      assets: { html: '<!doctype html>', javascript: '', css: '' }
+    }), /Chrome bridge diagnostic failed\./);
+
+    assert.deepEqual(events, [
+      'rendezvous.failed',
+      ['chrome.kill', 'SIGTERM'],
+      'service.shutdown',
+      'rendezvous.close',
+      'portal.close',
+      'lease.release'
+    ]);
+  });
