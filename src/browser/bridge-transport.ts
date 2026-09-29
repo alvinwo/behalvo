@@ -64,25 +64,25 @@ class EnrolledBridgeBrowserTransport implements BridgeBrowserTransport {
     void this.#pumpOutbound();
   }
 
-  inspect(request: BrowserRequest): Promise<unknown> {
+  async inspect(request: BrowserRequest): Promise<unknown> {
     this.#assertAvailable();
-    return this.#native.inspect(request);
+    return await this.#native.inspect(request);
   }
 
-  gesture(request: BrowserRequest, authorize: () => Promise<() => void>,
+  async gesture(request: BrowserRequest, authorize: () => Promise<() => void>,
     authority: { deadline: number; signal: AbortSignal }): Promise<unknown> {
     this.#assertAvailable();
-    return this.#native.gesture(request, authorize, authority);
+    return await this.#native.gesture(request, authorize, authority);
   }
 
-  revoke(epoch: BrowserEpoch, tabId: number): Promise<void> {
+  async revoke(epoch: BrowserEpoch, tabId: number): Promise<void> {
     this.#assertAvailable();
-    return this.#native.revoke(epoch, tabId);
+    await this.#native.revoke(epoch, tabId);
   }
 
-  reconcileRevocation(epoch: BrowserEpoch, tabId: number): Promise<void> {
+  async reconcileRevocation(epoch: BrowserEpoch, tabId: number): Promise<void> {
     this.#assertAvailable();
-    return this.#native.reconcileRevocation(epoch, tabId);
+    await this.#native.reconcileRevocation(epoch, tabId);
   }
 
   async close(): Promise<void> {
