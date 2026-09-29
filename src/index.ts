@@ -86,6 +86,8 @@ export type { BridgeBrowserTransport, BridgeBrowserTransportOptions } from './br
 export { startChromeBridgeRendezvous } from './browser/rendezvous.js';
 export type { ChromeBridgeRendezvousOptions, ChromeBridgeEnrollment,
   ChromeBridgeRendezvous } from './browser/rendezvous.js';
+export { launchDedicatedChrome } from './browser/coordinator.js';
+export type { DedicatedChromeLaunchOptions, DedicatedChromeProcess } from './browser/coordinator.js';
 export { stageChromeBridgeInstallation, finalizeChromeBridgeInstallation,
   doctorChromeBridgeInstallation, removeChromeBridgeInstallation } from './browser/installation.js';
 export type { ChromeBridgeStageInput, ChromeBridgeFinalizeInput, ChromeBridgeDoctorInput,
