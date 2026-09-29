@@ -47,9 +47,20 @@ export function launchDedicatedChrome(input: DedicatedChromeLaunchOptions): Dedi
     errorBytes += kept.byteLength;
   });
 
-  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => {
-    child.once('exit', (code, signal) => resolve({ code, signal }));
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    let settled = false;
+    child.once('error', () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(LAUNCH_ERROR));
+    });
+    child.once('exit', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      resolve({ code, signal });
+    });
   });
+  void exited.catch(() => {});
 
   return {
     child,
