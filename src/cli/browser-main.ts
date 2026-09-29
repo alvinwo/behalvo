@@ -94,8 +94,8 @@ export async function runBrowserCli(
   argv: readonly string[],
   dependencies: BrowserCliDependencies = {}
 ): Promise<number> {
-  const writeOut = dependencies.writeStdout ?? (text => writeOut(text));
-  const writeErr = dependencies.writeStderr ?? (text => writeErr(text));
+  const writeOut = dependencies.writeStdout ?? (text => stdout.write(text));
+  const writeErr = dependencies.writeStderr ?? (text => stderr.write(text));
   let command: BrowserCommand;
   try { command = parseBrowserArgs(argv); }
   catch { writeErr(FAILURE); return 2; }
