@@ -82,6 +82,10 @@ export function launchDedicatedChrome(input: DedicatedChromeLaunchOptions): Dedi
 
 const DIAGNOSTIC_ERROR = 'Chrome bridge diagnostic failed.';
 
+export class ChromeBridgeCleanupPendingError extends Error {
+  constructor() { super('Chrome bridge cleanup pending.'); }
+}
+
 export interface ChromeBridgeDiagnosticInput {
   root: string;
   dbPath: string;
@@ -101,6 +105,7 @@ export interface ChromeBridgeDiagnosticResult {
 }
 
 export interface ChromeBridgeDiagnosticDependencies {
+  signal?: AbortSignal;
   doctor?: (input: { root: string }) => ChromeBridgeDoctorReport;
   acquireProfileLease?: (input: {
     installationId: string;
@@ -139,14 +144,25 @@ export async function runChromeBridgeDiagnostic(
   let chromeExitedCleanly = false;
   let chromeExitObserved = false;
   let primaryError: unknown;
+  const signal = dependencies.signal;
+  let onAbort: (() => void) | undefined;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new Error(DIAGNOSTIC_ERROR));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+  void cancelled.catch(() => {});
+  const assertActive = (): void => { if (signal?.aborted) diagnosticFail(); };
 
   try {
+    assertActive();
     lease = acquireProfileLease({
       installationId: installation.installationId,
       profileId: 'synthetic-chrome',
       profilePath: installation.profilePath
     });
     portal = await startPortal();
+    assertActive();
     if (portal.origin !== SYNTHETIC_PORTAL_ORIGIN) diagnosticFail();
 
     service = await startService({
@@ -162,16 +178,19 @@ export async function runChromeBridgeDiagnostic(
       ...(checked.storageKeyPath ? { storageKeyPath: checked.storageKeyPath } : {})
     });
 
+    assertActive();
     rendezvous = await startRendezvous({
       root: installation.root,
       serviceGeneration: service.serviceGeneration
     });
+    assertActive();
     chrome = launchChrome({
       chromePath: installation.chromePath,
       profilePath: installation.profilePath
     });
 
     const enrollmentRace = await Promise.race([
+      cancelled,
       rendezvous.waitForEnrollment().then(enrollment => ({ kind: 'enrolled' as const, enrollment })),
       chrome.exited.then(
         exit => { chromeExitObserved = true; return { kind: 'exited' as const, exit }; },
@@ -201,7 +220,7 @@ export async function runChromeBridgeDiagnostic(
       sequence: 1,
       expectedPageState: 'login' as const
     };
-    const response = parseBrowserResponse(await Promise.race([transport.inspect(request), channelClosed]));
+    const response = parseBrowserResponse(await Promise.race([transport.inspect(request), channelClosed, cancelled]));
     if (response.requestId !== request.requestId || response.profileId !== request.profileId ||
         response.connectionGeneration !== request.connectionGeneration ||
         response.epoch !== request.epoch || response.serviceGeneration !== request.serviceGeneration ||
@@ -209,7 +228,7 @@ export async function runChromeBridgeDiagnostic(
         response.sequence !== request.sequence || response.pageState !== 'login' ||
         response.snapshot.state !== 'login') diagnosticFail();
 
-    const exit = await Promise.race([chrome.exited, channelClosed]);
+    const exit = await Promise.race([chrome.exited, channelClosed, cancelled]);
     chromeExitObserved = true;
     chromeExitedCleanly = exit.code === 0 && exit.signal === null;
     if (!chromeExitedCleanly || chrome.stderr() !== '') diagnosticFail();
@@ -226,21 +245,40 @@ export async function runChromeBridgeDiagnostic(
     throw error instanceof Error && error.message === DIAGNOSTIC_ERROR ? error : new Error(DIAGNOSTIC_ERROR);
   } finally {
     let cleanupFailed = false;
+    const cleanupDeadline = Date.now() + CHROME_CLEANUP_TIMEOUT_MS;
+    const cleanup = (async () => {
+      try { await boundedCleanup(Promise.resolve().then(() => transport?.close()), cleanupDeadline); }
+      catch { cleanupFailed = true; }
+      try {
+        if (service && !await boundedCleanup(Promise.resolve().then(() => service!.shutdown()), cleanupDeadline))
+          cleanupFailed = true;
+      } catch { cleanupFailed = true; }
+      try { await boundedCleanup(Promise.resolve().then(() => rendezvous?.close()), cleanupDeadline); }
+      catch { cleanupFailed = true; }
+      try { await boundedCleanup(Promise.resolve().then(() => portal?.close()), cleanupDeadline); }
+      catch { cleanupFailed = true; }
+    })();
     if (primaryError !== undefined && chrome && !chromeExitObserved) {
       chromeExitObserved = await terminateDiagnosticChrome(chrome);
       if (!chromeExitObserved) cleanupFailed = true;
     }
-    try { await transport?.close(); } catch { cleanupFailed = true; }
-    try {
-      if (service && !await service.shutdown()) cleanupFailed = true;
-    } catch { cleanupFailed = true; }
-    try { await rendezvous?.close(); } catch { cleanupFailed = true; }
-    try { await portal?.close(); } catch { cleanupFailed = true; }
+    await cleanup;
     if ((!chrome || chromeExitObserved) && !cleanupFailed) {
       try { lease?.release(); } catch { cleanupFailed = true; }
     }
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+    if (cleanupFailed && signal?.aborted) throw new ChromeBridgeCleanupPendingError();
     if (cleanupFailed && primaryError === undefined) diagnosticFail();
   }
+}
+
+async function boundedCleanup<T>(operation: Promise<T>, deadline: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([operation, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(DIAGNOSTIC_ERROR)), Math.max(0, deadline - Date.now()));
+    })]);
+  } finally { if (timer) clearTimeout(timer); }
 }
 
 async function terminateDiagnosticChrome(chrome: DedicatedChromeProcess): Promise<boolean> {

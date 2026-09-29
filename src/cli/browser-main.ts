@@ -7,10 +7,11 @@ import {
   removeChromeBridgeInstallation,
   stageChromeBridgeInstallation
 } from '../browser/installation.js';
-import type { ChromeBridgeDiagnosticInput, ChromeBridgeDiagnosticResult } from '../browser/coordinator.js';
+import type { ChromeBridgeDiagnosticInput, ChromeBridgeDiagnosticResult, ChromeBridgeDiagnosticDependencies } from '../browser/coordinator.js';
 import { loadStorageKeyFile } from '../storage/key-file.js';
 
 const FAILURE = 'Chrome bridge command failed.\n';
+const CLEANUP_PENDING = 'Chrome bridge cleanup pending.\n';
 
 type BrowserCommand =
   | { kind: 'stage'; root: string; chromePath: string; registrationDirectory: string }
@@ -25,7 +26,7 @@ export interface BrowserCliDependencies {
   writeStdout?: (text: string) => void;
   writeStderr?: (text: string) => void;
   loadStorageKey?: (path: string) => Uint8Array;
-  diagnostic?: (input: ChromeBridgeDiagnosticInput) => Promise<ChromeBridgeDiagnosticResult>;
+  diagnostic?: (input: ChromeBridgeDiagnosticInput, options?: ChromeBridgeDiagnosticDependencies) => Promise<ChromeBridgeDiagnosticResult>;
 }
 
 function options(argv: readonly string[], allowed: readonly string[]): Map<string, string> {
@@ -154,6 +155,10 @@ export async function runBrowserCli(
     }
 
     let encryptionKey: Uint8Array | undefined;
+    const cancellation = new AbortController();
+    const cancel = (): void => { cancellation.abort(); };
+    process.on('SIGINT', cancel);
+    process.on('SIGTERM', cancel);
     try {
       encryptionKey = (dependencies.loadStorageKey ?? loadStorageKeyFile)(command.storageKeyPath);
       if (!(encryptionKey instanceof Uint8Array) || encryptionKey.byteLength !== 32)
@@ -171,18 +176,31 @@ export async function runBrowserCli(
         ownerId: 'owner',
         storageKeyPath: command.storageKeyPath,
         encryptionKey
-      });
+      }, { signal: cancellation.signal });
       writeOut(JSON.stringify(result) + '\n');
       return 0;
     } finally {
       encryptionKey?.fill(0);
+      process.off('SIGINT', cancel);
+      process.off('SIGTERM', cancel);
     }
-  } catch {
-    writeErr(FAILURE);
+  } catch (error) {
+    writeErr(error instanceof Error && error.message === CLEANUP_PENDING.trimEnd() ? CLEANUP_PENDING : FAILURE);
     return 1;
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runBrowserCli(process.argv.slice(2)).then(code => { process.exitCode = code; });
+  let interrupted = false;
+  const rememberSignal = (): void => { interrupted = true; };
+  process.on('SIGINT', rememberSignal);
+  process.on('SIGTERM', rememberSignal);
+  runBrowserCli(process.argv.slice(2)).then(code => {
+    process.off('SIGINT', rememberSignal);
+    process.off('SIGTERM', rememberSignal);
+    process.exitCode = code;
+    // Cleanup has completed or reached its bound; retained custody records any
+    // unconfirmed child/resource shutdown. Do not wait forever on that handle.
+    if (interrupted) process.exit(code);
+  });
 }

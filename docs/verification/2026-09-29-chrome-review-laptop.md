@@ -96,3 +96,25 @@ closes other pending sockets when one channel enrolls. No reconnect is introduce
 Build plus 36 installation/coordinator/broker/rendezvous tests passed, including
 all new subprocess regressions and the manifest-symlink regression. Log:
 `task3-green.log`.
+
+Independent Task 2/3 review (same gpt-6-sol high context) confirmed the manifest
+fix and identified suppressed rendezvous cleanup errors. A new real-rendezvous
+regression reproduced success with an unknown runtime artifact retained. The fix
+preserves it and rejects close, so coordinator custody remains held. RED log:
+`r3-runtime-red.log`.
+
+Task 4 R8: after correcting a fixture import typo (not counted as RED), all four
+SIGINT/SIGTERM × enrollment/inspected subprocess tests observed abrupt signal exit
+before production edits. The correction installs/removes CLI signal handlers,
+passes cancellation to the coordinator, races enrollment/inspect/Chrome wait,
+bounds resource cleanup and owned Chrome termination, and reports a fixed cleanup
+pending error when shutdown evidence is incomplete. Signal subprocess tests use an
+actual separate synthetic Chrome process that ignores SIGTERM, plus real profile
+custody. They confirm key bytes are cleared and custody retained. Build and all
+23 CLI/coordinator/signal tests passed; logs `r8-red.log`, `r8-green.log`.
+CLI diagnostic codes follow the existing English fixed-error pattern; no locale
+catalog or UI localization framework exists, and no framework was introduced.
+
+All-fixes full suite: `npm test` passed 1,115 of 1,119 tests, zero failures,
+four skipped. This includes the real-rendezvous cleanup follow-up. Raw log:
+`data/verification/chrome-review/all-fixes-suite.log`.

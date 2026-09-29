@@ -17,7 +17,7 @@
 - Synthetic data and one read-only diagnostic only. No live portal, secrets, booking, automatic reconnect, or M3 recovery.
 - Observe an expected failing behavior test before each production correction; verify focused and full regressions afterward.
 - Keep PR #12 draft. Separate Sol-high/Astra-high final reviews and owner-laptop acceptance remain required.
-- This runtime has no checkout and direct network access failed. Use connected source reads and existing hosted CI for RED/GREEN evidence; do not claim a local full-suite run. An attempted scratch-workspace workflow write was blocked and that approach was abandoned; no snapshot workflow was published.
+- Historical planning used a remote-only runtime. The 2026-09-29 continuation now executes directly on the owner's Mac with local Git/gh, observed RED/GREEN tests, and retained verification logs. See `docs/verification/2026-09-29-chrome-review-laptop.md`.
 
 ## Review focus
 
@@ -33,36 +33,36 @@ Files: `src/browser/installation.ts`, existing installation callers/fixtures in 
 
 Keep `stageChromeBridgeInstallation`, `finalizeChromeBridgeInstallation`, `doctorChromeBridgeInstallation`, and `removeChromeBridgeInstallation` as the public operations.
 
-- [ ] Add and observe R1 failures for a fresh nested `chrome-profile/NativeMessagingHosts` location and rejection of an unrelated directory.
-- [ ] Derive/check the dedicated registration location, create it after the private profile, and migrate synthetic fixtures to that layout. Doctor must not report an unrelated registration as healthy.
-- [ ] Add and observe R6 failures for dangling `SingletonLock`, `SingletonCookie`, and `SingletonSocket`; use no-follow entry detection before removal.
-- [ ] Add and observe R7 failures for an imported compiled helper changing while the broker entry stays unchanged; pin the executable dependency bundle and keep explicit stale-install removal possible.
+- [x] Add and observe R1 failures for a fresh nested `chrome-profile/NativeMessagingHosts` location and rejection of an unrelated directory.
+- [x] Derive/check the dedicated registration location, create it after the private profile, and migrate synthetic fixtures to that layout. Doctor must not report an unrelated registration as healthy.
+- [x] Add and observe R6 failures for dangling `SingletonLock`, `SingletonCookie`, and `SingletonSocket`; use no-follow entry detection before removal.
+- [x] Add and observe R7 failures for an imported compiled helper changing while the broker entry stays unchanged; pin the executable dependency bundle and keep explicit stale-install removal possible.
 - [ ] Verify and publish each meaningful correction, retaining exact CI evidence.
 
 ## Task 2 — coordinator lifecycle (R2, R3)
 
 Files: `src/browser/coordinator.ts`, `tests/browser-coordinator.test.mjs`.
 
-- [ ] Reproduce transport failure after successful inspection, pre-Chrome startup failure, and unsuccessful service/bridge cleanup.
-- [ ] Observe transport completion throughout enrollment and the enrolled wait. Stop admission and enter cleanup on channel failure.
-- [ ] Distinguish Chrome-never-launched from Chrome-exit-unconfirmed. Require service/bridge shutdown and idle-profile evidence before custody release.
+- [x] Reproduce transport failure after successful inspection, pre-Chrome startup failure, and unsuccessful service/bridge cleanup.
+- [x] Observe transport completion throughout enrollment and the enrolled wait. Stop admission and enter cleanup on channel failure.
+- [x] Distinguish Chrome-never-launched from Chrome-exit-unconfirmed. Require service/bridge shutdown and idle-profile evidence before custody release.
 - [ ] Verify focused regressions and publish a verified correction.
 
 ## Task 3 — bounded owned I/O teardown (R4, R5)
 
 Files: `src/browser/native-broker.ts`, `src/browser/rendezvous.ts`, and corresponding broker/rendezvous tests.
 
-- [ ] Add subprocess regressions for incomplete native input and an uncooperative pre-enrollment socket; observe expected bounded-exit failures.
-- [ ] Cancel/destroy owned pending reads on broker failure. Track and close all accepted rendezvous sockets, including unauthenticated clients.
-- [ ] Preserve one physical reader, bounded framing, one-use enrollment, fixed errors, and no reconnect.
+- [x] Add subprocess regressions for incomplete native input and an uncooperative pre-enrollment socket; observe expected bounded-exit failures.
+- [x] Cancel/destroy owned pending reads on broker failure. Track and close all accepted rendezvous sockets, including unauthenticated clients.
+- [x] Preserve one physical reader, bounded framing, one-use enrollment, fixed errors, and no reconnect.
 - [ ] Verify and publish the corrections.
 
 ## Task 4 — signal cleanup and final evidence (R8)
 
 Files: `src/cli/browser-main.ts`, `src/browser/coordinator.ts`, relevant CLI/coordinator tests, `RESUME.md`, and a verification record.
 
-- [ ] Reproduce SIGINT/SIGTERM during enrollment and after inspection with a still-open synthetic Chrome process.
-- [ ] Route signals through one idempotent bounded shutdown path. Retain custody if Chrome exit remains unconfirmed and report a fixed cleanup-pending outcome.
-- [ ] Verify storage-key cleanup and no secret-value output on cancellation paths.
+- [x] Reproduce SIGINT/SIGTERM during enrollment and after inspection with a still-open synthetic Chrome process.
+- [x] Route signals through one idempotent bounded shutdown path. Retain custody if Chrome exit remains unconfirmed and report a fixed cleanup-pending outcome.
+- [x] Verify storage-key cleanup and no secret-value output on cancellation paths.
 - [ ] Require `npm run verify` on exact final head in hosted Node 22.19 and Node 24; inspect terminal results and retained logs.
 - [ ] Update handoff with exact head/tree, observed evidence, remaining gates, and next action. Leave final independent review and real-Chrome acceptance pending unless actually performed.
