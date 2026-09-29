@@ -1,4 +1,4 @@
-# Behalvo laptop handoff — 2026-09-27
+# Behalvo laptop handoff — 2026-09-28
 
 ## Start here
 
@@ -7,13 +7,12 @@ Read this file before relying on older checkpoints. This is project navigation a
 recovery evidence, not a live booking grant. Do not copy cloud scratch paths into
 laptop commands.
 
-**Recovery gap:** the filesystem available to the synchronization session stopped
-at `d0b1ec4`, although the supplied archived conversation reported later commits.
-The later objects were absent from both available Behalvo object databases; the
-installer SHA was also unavailable from GitHub. The remote branch did not yet
-exist. The cause of the discrepancy is unverified. This handoff publishes the
-surviving code/design plus these explicit recovery notes; it does not recreate
-missing implementation or certify its reported tests.
+**Recovery history:** the original archived implementation objects `8146aca`,
+`2ef4802`, `4fb957b`, and `76f15b2` were not recoverable from the synchronized
+checkout, GitHub, or accessible project artifacts. The approved decisions were
+therefore reconstructed explicitly, then Tasks 1-3 were rebuilt test-first on this
+branch. The missing historical commit IDs remain evidence gaps; the current rebuilt
+tree and its new verification are the source of truth for continuation.
 
 ## Goal and owner direction
 
@@ -31,18 +30,23 @@ missing implementation or certify its reported tests.
   separate from synthetic development authorization. Never infer a live grant
   from this summary; consult the approved domain policy and owner controls.
 
-## Available versus reported progress
+## Current implementation and verification
+
+Current implementation head before this handoff update:
+`474b859101632e8d9dbb465354982736c55b5c63` on
+`feat/installed-chrome-bridge`. Draft PR #12 is open against `master`.
 
 | Item | Evidence and status |
 | --- | --- |
-| Monitored action service / synthetic visa acceptance | PR #11 merged as `09b99e6b9464b0765a7fa1bc517c34ea47cce405`; code available locally and on GitHub. |
-| PR #11 verification | Existing tracked evidence records independent Sol/Astra passes and Node 22.19 / 24 CI before and after merge, 1,049 passed and zero failed per hosted job. Not rerun during this docs-only sync. |
-| Initial Chrome bridge design | Available in commit `9491587`; postmerge checkpoint available in `d0b1ec4`. |
-| Revised design and three-task M1 plan | Archived conversation reports `8146aca`. Object and plan file unavailable in this checkout. |
-| Task 1: explicit extension enrollment | Reported `2ef4802`, 41 focused passes, full verify 1,055 passes; subsequent strict status-field type fix `4fb957b`, eight enrollment tests, review completed. Code/review artifacts unavailable here: reported, not verified. |
-| Task 2: installer and synthetic profile custody | Reported `76f15b2`, six installer tests and combined regressions passed; unknown empty directory removal regression fixed. Independent review was pending when the prior work stopped. Code/review artifacts unavailable here. |
-| Task 3: native broker and diagnostic command | No completion reported. Pending. |
-| Actual Chrome / live visa acceptance | Pending. Fake Chrome and synthetic tests are not laptop or live-portal evidence. |
+| Monitored action service / synthetic visa acceptance | PR #11 merged as `09b99e6b9464b0765a7fa1bc517c34ea47cce405`. |
+| Reconstructed M1 plan | Available at [`docs/superpowers/plans/2026-09-27-installed-chrome-bridge-m1.md`](docs/superpowers/plans/2026-09-27-installed-chrome-bridge-m1.md), first published as `74b6610`. It is explicitly marked reconstructed and does not impersonate missing `8146aca`. |
+| Task 1: explicit extension enrollment | Rebuilt and present. Background startup does not connect the native host; exact popup enrollment, explicit states, one allowed non-incognito synthetic tab, strict messages, and fail-stop invalidation are behavior-tested. |
+| Task 2: installer and synthetic profile custody | Rebuilt and present. Dedicated profile staging/finalization, read-only doctor, narrow removal preserving unknown files/directories, current-user native host registration, private-profile custody, and separate-process launcher behavior are tested. |
+| Task 3: broker, rendezvous, diagnostic coordinator, and CLI | Rebuilt and present. Private IPC/enrollment, bounded broker relay, enrolled transport, dedicated Chrome launcher, one read-only `inspect` diagnostic, storage-key path separation, bounded failure cleanup, early-Chrome-exit failure, and `browser run` are tested. M1 still grants no booking/page-mutation authority. |
+| Final hosted implementation verification | On `474b859`, GitHub Actions Node 22.19 and Node 24 both ran `npm run verify`: **1,096 tests, 1,092 passed, 0 failed, 4 skipped**. |
+| Independent high-risk PR review | **Pending.** Repository policy requires independent Sol-high and Astra-high review contexts. They were not available in the implementation runtime, so the implementer did not self-certify or merge PR #12. |
+| Owner-laptop installed Chrome acceptance | **Pending.** Hosted/fake-process tests are not evidence that the owner's installed Chrome loaded the staged extension, invoked the registered native host, enrolled through the popup, and completed the real diagnostic round trip. |
+| Live US visa portal / booking acceptance | **Pending and outside M1.** No real account, credential, challenge, payment, or appointment mutation was used. |
 
 ## Accepted design direction to preserve
 
@@ -116,38 +120,52 @@ For a fresh clone:
 git clone --branch feat/installed-chrome-bridge https://github.com/alvinwo/behalvo.git
 cd behalvo
 git status --short --branch
-git log -5 --oneline
+git log -8 --oneline
 ```
 
 For an existing checkout, first inspect status and preserve local changes. Fetch
-the branch, then create a separate worktree from its remote tip if another branch
-or local changes are active. Do not reset or overwrite a newer local branch.
+the branch and do not reset or overwrite a newer local branch.
 
-**First next action: recover missing work before reimplementation.** Check the
-laptop/archived session for `8146aca`, `2ef4802`, `4fb957b`, and `76f15b2`, the M1
-plan, tests, and reviewer report. If present, compare trees and preserve both
-histories before integrating. Continue Task 2 independent review, then Task 3.
-Do not repeat completed reviews when their exact source and evidence are available.
+**Do not restart recovery of the missing historical commits.** That recovery was
+exhausted and the approved fallback has now been implemented. Start from the
+published branch head and inspect PR #12.
 
-If those objects/artifacts are absent everywhere accessible, reconstruct the
-approved revised design and M1 plan from the decisions above, explicitly marking
-them as reconstructed. Reimplement missing tasks with fresh behavior tests and
-independent review; do not manufacture original commit IDs or test evidence.
+Exact next gates:
 
-Node 22.19+ is required. After recovery, use `npm ci`, `npm run build`, and the
-plan's focused tests; run full verification at the final implementation gate.
-Do not invent bridge CLI commands before Task 3 provides them. Laptop acceptance
-must separately prove installed Chrome, extension loading, native host invocation,
-and diagnostic enrollment/round trip before claiming M1 complete.
+1. Run the required independent high-risk PR reviews (Sol high and Astra high)
+   against the complete PR diff. Fix only supported findings, re-run affected
+   focused tests, commit/push each meaningful verified correction, and re-review.
+2. Re-run/confirm final `npm run verify` and hosted Node 22.19 / Node 24 CI on the
+   exact reviewed head. Do not merge if either reviewer or CI gate is missing.
+3. On the owner's laptop, perform M1 acceptance with installed Chrome and the
+   dedicated profile: stage setup, determine/finalize the exact extension ID,
+   confirm read-only doctor, run the diagnostic, use the extension popup to enroll,
+   verify native-host invocation and one `login` inspect round trip, then close
+   Chrome and confirm cleanup/custody release.
+4. Only after reviewed code is merged and laptop M1 acceptance passes, continue to
+   M2 synthetic booking with human pause/resume, then M3 restart/failure recovery.
+   Supervised live-portal discovery and any real scheduling authority remain later,
+   separately gated work.
 
-Then continue M2/M3, supervised read-only live discovery, real adapter evidence,
-Keychain/signing gates as required, and exact owner activation. Do not treat the
-synthetic milestone as real visa scheduling support.
+Current synthetic CLI surfaces exist; use the implementation/help/tests as source
+of truth rather than inventing flags from older chat summaries. Credentials remain
+local and must not be committed.
 
 ## Synchronization evidence
 
-This sync inspected local branch/status/reflog/object availability and remote
-branches. It made documentation-only changes and used link/diff checks, not a new
-runtime verification or independent implementation review. No subagents or live
-browser/account actions were used. Publication must be checked by matching the
-remote commit tree to the local checkpoint tree before reporting sync complete.
+The rebuilt Chrome-bridge work was published incrementally with test-first RED
+checkpoints and separate implementation/fix commits. The final pre-documentation
+implementation head `474b859101632e8d9dbb465354982736c55b5c63` completed hosted
+`npm run verify` successfully on Node 22.19 and Node 24 with 1,096 tests, 1,092
+passed, zero failed, and four skipped on each lane.
+
+The full branch diff was audited across extension enrollment, installation/profile
+custody, rendezvous, broker/framing, enrolled transport, diagnostic coordinator,
+and CLI. That audit produced additional verified fixes for storage-key path
+separation, bounded Chrome cleanup on enrollment failure, and prompt failure when
+Chrome exits before enrollment.
+
+No independent Sol-high/Astra-high final review was available in this runtime, so
+that gate remains explicitly pending. No owner-laptop Chrome acceptance and no live
+visa portal/account action was performed. This handoff update is documentation-only
+on top of the verified implementation head.
