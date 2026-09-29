@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { NATIVE_HOST_NAME } from '../dist/index.js';
+import { parseBrowserArgs, runBrowserCli } from '../dist/cli/browser-main.js';
 
 const posix = process.platform !== 'win32' && typeof process.geteuid === 'function';
 const cliPath = resolve('dist/cli/browser-main.js');
@@ -118,4 +119,77 @@ test('browser CLI rejects ambiguous setup forms and emits one fixed error withou
       assert.equal(result.stderr, 'Chrome bridge command failed.\n');
       assert.doesNotMatch(result.stderr, /private-input|browser-cli|extension-id|unknown/);
     }
+  });
+
+
+test('browser CLI run accepts only an install root and private storage key path', () => {
+  assert.deepEqual(parseBrowserArgs([
+    'run',
+    '--root', '/private/install',
+    '--storage-key-file', '/private/storage.key'
+  ]), {
+    kind: 'run',
+    root: '/private/install',
+    storageKeyPath: '/private/storage.key'
+  });
+  for (const args of [
+    ['run', '--root', '/private/install'],
+    ['run', '--storage-key-file', '/private/storage.key'],
+    ['run', '--root', '/private/install', '--storage-key-file', '/private/storage.key', '--db', '/tmp/db'],
+    ['run', '--root', 'relative', '--storage-key-file', '/private/storage.key']
+  ]) {
+    assert.throws(() => parseBrowserArgs(args), /BrowserArgumentError|browser/i);
+  }
+});
+
+test('browser CLI run loads and wipes the storage key and invokes diagnostic once with fixed synthetic paths',
+  async () => {
+    const output = [];
+    const errors = [];
+    const calls = [];
+    const key = new Uint8Array(32).fill(7);
+    const code = await runBrowserCli([
+      'run',
+      '--root', '/private/install',
+      '--storage-key-file', '/private/storage.key'
+    ], {
+      writeStdout(text) { output.push(text); },
+      writeStderr(text) { errors.push(text); },
+      loadStorageKey(path) {
+        assert.equal(path, '/private/storage.key');
+        return key;
+      },
+      async diagnostic(input) {
+        calls.push(structuredClone(input));
+        assert.deepEqual(Array.from(input.encryptionKey), Array(32).fill(7));
+        return {
+          serviceOrigin: 'http://127.0.0.1:45555',
+          bootstrapPath: '/private/install/service-bootstrap/bootstrap.json',
+          enrollmentPath: '/private/install/runtime/bridge-enrollment.json',
+          tabId: 7,
+          pageState: 'login'
+        };
+      }
+    });
+
+    assert.equal(code, 0);
+    assert.deepEqual(errors, []);
+    assert.equal(calls.length, 1);
+    assert.deepEqual({
+      root: calls[0].root,
+      dbPath: calls[0].dbPath,
+      bootstrapDirectory: calls[0].bootstrapDirectory,
+      workspaceId: calls[0].workspaceId,
+      ownerId: calls[0].ownerId
+    }, {
+      root: '/private/install',
+      dbPath: '/private/install/synthetic-service.db',
+      bootstrapDirectory: '/private/install/service-bootstrap',
+      workspaceId: 'synthetic-chrome-diagnostic',
+      ownerId: 'owner'
+    });
+    assert.deepEqual(Array.from(key), Array(32).fill(0));
+    assert.match(output.join(''), /bridge-enrollment\.json/);
+    assert.match(output.join(''), /extension popup/i);
+    assert.match(output.join(''), /"pageState":"login"/);
   });
