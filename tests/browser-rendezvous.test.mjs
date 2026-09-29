@@ -269,3 +269,16 @@ test('review R5: rendezvous close terminates a stalled pre-enrollment subprocess
     assert.equal(existsSync(rendezvous.enrollmentPath), false);
     assert.equal(existsSync(socketPath), false);
   });
+
+test('review R3 follow-up: rendezvous preserves unknown runtime artifacts and reports incomplete cleanup',
+  { skip: !posix }, async t => {
+    const installation = configuredInstallation(t);
+    const rendezvous = await startChromeBridgeRendezvous({ root: installation.root,
+      serviceGeneration: 'review-cleanup-evidence' });
+    const foreign = join(rendezvous.runtimeDirectory, 'unknown-artifact');
+    writeFileSync(foreign, 'preserve synthetic evidence', { mode: 0o600 });
+    await assert.rejects(rendezvous.close(), /Chrome bridge rendezvous failed/);
+    assert.equal(readFileSync(foreign, 'utf8'), 'preserve synthetic evidence');
+    assert.equal(existsSync(rendezvous.descriptorPath), false);
+    assert.equal(existsSync(rendezvous.enrollmentPath), false);
+  });

@@ -250,7 +250,8 @@ export async function startChromeBridgeRendezvous(
   function removeRuntimeDirectoryIfEmpty(): void {
     if (!existsSync(runtimeDirectory)) return;
     validateOwnedDirectory(runtimeDirectory);
-    if (readdirSync(runtimeDirectory).length === 0) rmdirSync(runtimeDirectory);
+    if (readdirSync(runtimeDirectory).length !== 0) fail();
+    rmdirSync(runtimeDirectory);
   }
 
   async function closeRuntime(): Promise<void> {
@@ -262,12 +263,14 @@ export async function startChromeBridgeRendezvous(
       if (!settled) rejectOnce();
       for (const socket of clients) closeClient(socket);
       await Promise.allSettled([...handlers]);
-      try { await enrolled?.transport.close(); } catch { /* fixed local cleanup surface */ }
-      await closeServer();
-      try { removePrivateFile(descriptorPath); } catch { /* preserve unknown/mismatched artifact */ }
-      try { removePrivateFile(enrollmentPath); } catch { /* preserve unknown/mismatched artifact */ }
-      try { removeSocketIfOwned(); } catch { /* preserve unknown/mismatched artifact */ }
-      try { removeRuntimeDirectoryIfEmpty(); } catch { /* preserve unknown artifacts */ }
+      let incomplete = false;
+      try { await enrolled?.transport.close(); } catch { incomplete = true; }
+      try { await closeServer(); } catch { incomplete = true; }
+      try { removePrivateFile(descriptorPath); } catch { incomplete = true; }
+      try { removePrivateFile(enrollmentPath); } catch { incomplete = true; }
+      try { removeSocketIfOwned(); } catch { incomplete = true; }
+      try { removeRuntimeDirectoryIfEmpty(); } catch { incomplete = true; }
+      if (incomplete) fail();
     })();
     return closing;
   }
