@@ -98,8 +98,16 @@ test('diagnostic coordinator starts one service and performs one read-only inspe
       events.push(['inspect', structuredClone(request)]);
       releaseChromeExit({ code: 0, signal: null });
       return {
-        ...request,
+        protocolVersion: request.protocolVersion,
         kind: 'result',
+        requestId: request.requestId,
+        profileId: request.profileId,
+        connectionGeneration: request.connectionGeneration,
+        epoch: request.epoch,
+        serviceGeneration: request.serviceGeneration,
+        origin: request.origin,
+        tabId: request.tabId,
+        sequence: request.sequence,
         documentId: 'document-a',
         pageState: 'login',
         snapshot: { state: 'login' }
