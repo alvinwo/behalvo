@@ -42,3 +42,28 @@ test('dedicated Chrome launcher rejects non-absolute or mismatched inputs before
     assert.throws(() => launchDedicatedChrome(input), /Chrome bridge launch failed\./);
   }
 });
+
+
+test('dedicated Chrome launcher reports asynchronous spawn failure with one fixed bounded error',
+  { skip: !posix }, async t => {
+    const temp = mkdtempSync(join(tmpdir(), 'behalvo-chrome-launch-missing-'));
+    chmodSync(temp, 0o700);
+    t.after(() => rmSync(temp, { recursive: true, force: true }));
+    const missingChrome = join(temp, 'missing chrome private marker');
+    const profilePath = join(temp, 'profile');
+
+    const launched = launchDedicatedChrome({ chromePath: missingChrome, profilePath });
+    let timer;
+    const bounded = Promise.race([
+      launched.exited,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('launcher did not settle')), 750);
+      })
+    ]).finally(() => clearTimeout(timer));
+
+    await assert.rejects(bounded, error => {
+      assert.equal(error.message, 'Chrome bridge launch failed.');
+      assert.doesNotMatch(error.message, /missing chrome private marker|ENOENT/);
+      return true;
+    });
+  });
