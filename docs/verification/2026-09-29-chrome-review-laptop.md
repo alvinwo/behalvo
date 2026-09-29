@@ -146,3 +146,17 @@ observed Chrome exit cannot become success merely because Chrome exits later.
 Actual normal Chrome shutdown ordering is an owner-laptop acceptance uncertainty,
 not established by synthetic tests. M2/M3/live readiness and merge permission are
 outside the review's approved M1 scope.
+
+Astra's focused re-review cleared the non-signal shutdown finding at `8587bd5`.
+That clean head independently passed all six laptop `npm run verify` steps;
+summary: `data/verification/2026-09-29T06-58-18.618Z-925cfe90-fd08-41ee-ac5b-8a37216b8d8e/summary.json`.
+
+Sol's full-PR review independently confirmed the same shutdown issue and found a
+second R3 edge case: a confirmed OS spawn failure was treated as an unconfirmed
+running Chrome process. A missing-executable test with real profile custody
+reproduced the stranded lease (RED `r3-spawn-red.log`). The launcher now records
+whether the OS emitted `spawn`; an error before that event is explicit
+never-launched evidence. Only that known outcome permits release after complete
+cleanup and the existing idle-profile check. Unknown rejected exit observations
+remain fail-closed. Build and all 15 coordinator regressions passed
+(`r3-spawn-green.log`).

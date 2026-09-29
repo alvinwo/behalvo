@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runChromeBridgeDiagnostic, SYNTHETIC_PORTAL_ORIGIN } from '../dist/index.js';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { launchDedicatedChrome, acquireSyntheticProfileLease, inspectPrivateProfileCustody, runChromeBridgeDiagnostic, SYNTHETIC_PORTAL_ORIGIN } from '../dist/index.js';
 
 function deferred() {
   let resolve, reject;
@@ -98,3 +101,26 @@ test('review R3: rejected Chrome exit observation is not evidence to release cus
   await assert.rejects(runChromeBridgeDiagnostic(f.input, f.dependencies), /Chrome bridge cleanup pending/);
   assert.equal(f.events.includes('lease.release'), false);
 });
+
+
+test('review R3 follow-up: confirmed OS spawn failure releases stopped real profile custody',
+  { skip: process.platform === 'win32' }, async t => {
+    const root = mkdtempSync(join(tmpdir(), 'behalvo-never-spawned-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const profilePath = join(root, 'profile');
+    mkdirSync(profilePath, { mode: 0o700 });
+    const f = fixture();
+    const report = f.dependencies.doctor();
+    report.installation.profilePath = profilePath;
+    report.installation.chromePath = join(root, 'missing-synthetic-chrome');
+    f.dependencies.doctor = () => report;
+    f.dependencies.acquireProfileLease = acquireSyntheticProfileLease;
+    f.dependencies.launchChrome = launchDedicatedChrome;
+    f.rendezvous.waitForEnrollment = () => new Promise(() => {});
+    await assert.rejects(runChromeBridgeDiagnostic(f.input, f.dependencies));
+    assert.equal(inspectPrivateProfileCustody(profilePath), null);
+    const lease = acquireSyntheticProfileLease({ installationId: 'review-install',
+      profileId: 'synthetic-chrome', profilePath });
+    lease.release();
+    assert.deepEqual(f.events, ['service.shutdown', 'rendezvous.close', 'portal.close']);
+  });

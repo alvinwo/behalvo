@@ -21,6 +21,7 @@ export interface DedicatedChromeLaunchOptions {
 
 export interface DedicatedChromeProcess {
   readonly child: ChildProcess;
+  readonly launchFailed: boolean;
   readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   stderr(): string;
 }
@@ -57,9 +58,13 @@ export function launchDedicatedChrome(input: DedicatedChromeLaunchOptions): Dedi
     errorBytes += kept.byteLength;
   });
 
+  let spawned = false;
+  let launchFailed = false;
+  child.once('spawn', () => { spawned = true; });
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
     let settled = false;
     child.once('error', () => {
+      if (!spawned) launchFailed = true;
       if (settled) return;
       settled = true;
       reject(new Error(LAUNCH_ERROR));
@@ -74,6 +79,7 @@ export function launchDedicatedChrome(input: DedicatedChromeLaunchOptions): Dedi
 
   return {
     child,
+    get launchFailed(): boolean { return launchFailed; },
     exited,
     stderr(): string { return errorText; }
   };
@@ -258,12 +264,12 @@ export async function runChromeBridgeDiagnostic(
       try { await boundedCleanup(Promise.resolve().then(() => portal?.close()), cleanupDeadline); }
       catch { cleanupFailed = true; }
     })();
-    if (primaryError !== undefined && chrome && !chromeExitObserved) {
+    if (primaryError !== undefined && chrome && !chrome.launchFailed && !chromeExitObserved) {
       chromeExitObserved = await terminateDiagnosticChrome(chrome);
       if (!chromeExitObserved) cleanupFailed = true;
     }
     await cleanup;
-    if ((!chrome || chromeExitObserved) && !cleanupFailed) {
+    if ((!chrome || chrome.launchFailed || chromeExitObserved) && !cleanupFailed) {
       try { lease?.release(); } catch { cleanupFailed = true; }
     }
     if (onAbort) signal?.removeEventListener('abort', onAbort);
