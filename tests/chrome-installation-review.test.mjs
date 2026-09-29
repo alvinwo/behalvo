@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, lstatSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, lstatSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -117,3 +117,16 @@ test('review R1 follow-up: exact-content registration symlink is never configure
       /Chrome bridge installation operation failed/);
     assert.equal(existsSync(other), true);
   });
+
+for (const entry of ['chrome-bridge-installation.json', 'chrome-bridge-native-host', 'extension']) {
+  test(`review R1 follow-up: dangling ${entry} conflict leaves the installation tree untouched`,
+    { skip: !posix }, t => {
+      const { input } = fixture(t);
+      const path = join(input.root, entry);
+      symlinkSync('missing-synthetic-target', path);
+      const before = readdirSync(input.root);
+      assert.throws(() => stageChromeBridgeInstallation(input), /Chrome bridge installation operation failed/);
+      assert.equal(lstatSync(path).isSymbolicLink(), true);
+      assert.deepEqual(readdirSync(input.root), before);
+    });
+}

@@ -95,7 +95,7 @@ export function stageChromeBridgeInstallation(input: ChromeBridgeStageInput): Ch
   try {
     const checked = parseStageInput(input);
     const paths = installationPaths(checked.root, checked.registrationDirectory);
-    if (existsSync(paths.metadataPath)) {
+    if (lstatSync(paths.metadataPath, { throwIfNoEntry: false })) {
       const metadata = loadMetadata(paths.metadataPath, checked.root);
       assertStageInputMatches(metadata, checked);
       assertSourceHashes(metadata);
@@ -104,7 +104,7 @@ export function stageChromeBridgeInstallation(input: ChromeBridgeStageInput): Ch
     }
 
     for (const path of [paths.launcherPath, paths.profilePath, paths.extensionPath, paths.registrationPath])
-      if (existsSync(path)) fail();
+      if (lstatSync(path, { throwIfNoEntry: false })) fail();
 
     const packageRoot = canonicalDirectory(checked.packageRoot, false);
     const chromePath = canonicalRegularFile(checked.chromePath, true);

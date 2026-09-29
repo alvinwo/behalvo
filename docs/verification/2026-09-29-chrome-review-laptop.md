@@ -160,3 +160,10 @@ never-launched evidence. Only that known outcome permits release after complete
 cleanup and the existing idle-profile check. Unknown rejected exit observations
 remain fail-closed. Build and all 15 coordinator regressions passed
 (`r3-spawn-green.log`).
+
+Sol completed the full PR review and cleared both lifecycle corrections through
+`e38ef38`. Its remaining P2 was dangling generated-artifact conflicts: `existsSync`
+missed metadata/launcher/extension symlinks, allowing partial setup writes before
+failure. All three cases reproduced that mutation before the fix. Setup preflight
+now detects entries without following links. Logs: `r1-conflicts-red.log` and
+`r1-conflicts-green.log`; build and 16 installation tests passed.
