@@ -107,7 +107,7 @@ export function stageChromeBridgeInstallation(input: ChromeBridgeStageInput): Ch
       if (lstatSync(path, { throwIfNoEntry: false })) fail();
 
     const packageRoot = canonicalDirectory(checked.packageRoot, false);
-    const chromePath = canonicalRegularFile(checked.chromePath, true);
+    const chromePath = canonicalChromeExecutable(checked.chromePath);
     const nodePath = canonicalRegularFile(checked.nodePath, true);
     const brokerPath = canonicalRegularFile(join(packageRoot, 'dist', 'browser', 'native-broker.js'), false);
     const extensionSource = join(packageRoot, 'extension');
@@ -295,7 +295,7 @@ function parseStageInput(input: unknown): ChromeBridgeStageInput {
   return {
     root,
     packageRoot: canonicalDirectory(item.packageRoot as string, false),
-    chromePath: canonicalRegularFile(item.chromePath as string, true),
+    chromePath: canonicalChromeExecutable(item.chromePath as string),
     nodePath: canonicalRegularFile(item.nodePath as string, true),
     registrationDirectory
   };
@@ -324,10 +324,17 @@ function canonicalDirectory(path: string, owned: boolean): string {
   return canonical;
 }
 
-function canonicalRegularFile(path: string, executable: boolean): string {
+// macOS Chrome creates code-sign clones with hard-linked main executables.
+// Only that external executable may have aliases; its canonical path and content
+// digest remain pinned. Generated artifacts and other sources stay single-link.
+function canonicalChromeExecutable(path: string): string {
+  return canonicalRegularFile(path, true, process.platform === 'darwin');
+}
+
+function canonicalRegularFile(path: string, executable: boolean, allowHardLinks = false): string {
   if (typeof path !== 'string' || path.length === 0 || resolve(path) !== path || realpathSync(path) !== path) fail();
   const stat = lstatSync(path);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || (executable && (stat.mode & 0o111) === 0)) fail();
+  if (!stat.isFile() || stat.isSymbolicLink() || (!allowHardLinks && stat.nlink !== 1) || (executable && (stat.mode & 0o111) === 0)) fail();
   return path;
 }
 
@@ -454,7 +461,7 @@ function assertStageInputMatches(metadata: InstallationMetadata, input: ChromeBr
 
 function assertSourceHashes(metadata: InstallationMetadata): void {
   if (canonicalDirectory(metadata.packageRoot, false) !== metadata.packageRoot ||
-      canonicalRegularFile(metadata.chromePath, true) !== metadata.chromePath ||
+      canonicalChromeExecutable(metadata.chromePath) !== metadata.chromePath ||
       canonicalRegularFile(metadata.nodePath, true) !== metadata.nodePath ||
       canonicalRegularFile(metadata.brokerPath, false) !== metadata.brokerPath ||
       metadata.brokerPath !== join(metadata.packageRoot, 'dist', 'browser', 'native-broker.js') ||

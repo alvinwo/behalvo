@@ -225,3 +225,42 @@ Chrome shutdown ordering and clean custody release require supervised acceptance
 in the exact dedicated synthetic profile. The explicit no-reconnect/no-live-authority
 scope remains. Merge requires separate owner authorization. See `RESUME.md` for
 continuation; do not restart exhausted historical object recovery.
+
+### Installed Chrome acceptance: macOS executable hard links
+
+The owner loaded Behalvo 0.1.0 in the confirmed dedicated profile at
+`/private/tmp/bhv-m1-JLCCz9/chrome-profile/Default`, extension ID
+`eebhopmlaeboggggaidmnbdbfjakmgbn`. Registration did not complete and no diagnostic
+ran. Doctor rejected Chrome's link count despite matching source, bundle, and
+extension hashes. The executable inode was found in Chrome's own
+`com.google.Chrome.code_sign_clone` directories. Chromium's
+[code-sign clone implementation](https://raw.githubusercontent.com/chromium/chromium/main/chrome/browser/mac/code_sign_clone_manager.h)
+explains why the browser deliberately hard-links its main executable on macOS.
+
+The correction permits hard links only for the configured Chrome executable on
+macOS. Canonical-path, regular-file, executable-bit, and content-hash checks remain.
+Node, broker sources, and all generated artifacts still require a single link.
+This is compatibility with the existing local trust boundary, not code-signature
+verification or protection against compromised same-UID code.
+
+Two synthetic behavior tests failed before the change (links before staging and
+links after staging). All 19 installation tests then passed, including changed
+executable bytes through an alias and a hard-linked generated launcher. Logs:
+`data/verification/chrome-review/chrome-hardlink-{red,green}.log`.
+The changed compiled bundle requires a fresh staged installation; do not manually
+repin the previous metadata. Installed-Chrome acceptance remains pending.
+
+Independent focused re-reviews: existing gpt-5.6-sol/high and gpt-6-astra/high
+review contexts both cleared this correction, with zero retries and no findings.
+No new full-PR review pair was created. Local `npm run verify` passed all six gates:
+1,127 tests, 1,123 passed, four skipped, zero failures. Summary:
+`data/verification/2026-09-30T05-49-22.674Z-60ead093-fefa-4756-9b69-82a03d3be517/summary.json`.
+That run covered the implementation on the dirty tree atop `d58629b`, with a stable
+source fingerprint throughout; this evidence paragraph was added afterward.
+
+Fresh installation staged at `/private/tmp/bhv-m1-iiseyz`; doctor reports only
+`extension_not_finalized`. The previous test Chrome process was closed by exact
+PID/argument validation. The previous profile was retained. Next: load the freshly
+staged extension in this new dedicated profile, finalize its new ID, close setup
+Chrome, and perform explicit enrollment for the one read-only diagnostic. Hosted
+CI and exact committed-head evidence must be checked after publication.

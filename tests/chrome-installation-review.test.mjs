@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, lstatSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, lstatSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -130,3 +130,28 @@ for (const entry of ['chrome-bridge-installation.json', 'chrome-bridge-native-ho
       assert.deepEqual(readdirSync(input.root), before);
     });
 }
+
+for (const timing of ['before staging', 'after staging']) {
+  test(`macOS Chrome code-sign clone hard link ${timing} preserves pinned installation`,
+    { skip: process.platform !== 'darwin' }, t => {
+      const { input, temp } = fixture(t);
+      const clone = join(temp, 'code-sign-clone');
+      if (timing === 'before staging') linkSync(input.chromePath, clone);
+      stageChromeBridgeInstallation(input);
+      if (timing === 'after staging') linkSync(input.chromePath, clone);
+      finalizeChromeBridgeInstallation({ root: input.root, extensionId: 'a'.repeat(32) });
+      assert.equal(doctorChromeBridgeInstallation({ root: input.root }).configured, true);
+      // A hard link does not authorize changed executable bytes.
+      writeFileSync(clone, '#!/bin/sh\nexit 1\n');
+      assert.equal(doctorChromeBridgeInstallation({ root: input.root }).configured, false);
+      assert.throws(() => finalizeChromeBridgeInstallation({ root: input.root, extensionId: 'a'.repeat(32) }));
+    });
+}
+
+test('Chrome clone allowance does not permit hard-linked generated launcher', { skip: !posix }, t => {
+  const { input, temp } = fixture(t);
+  const staged = stageChromeBridgeInstallation(input);
+  linkSync(staged.launcherPath, join(temp, 'launcher-alias'));
+  assert.equal(doctorChromeBridgeInstallation({ root: input.root }).configured, false);
+  assert.throws(() => finalizeChromeBridgeInstallation({ root: input.root, extensionId: 'a'.repeat(32) }));
+});

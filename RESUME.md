@@ -117,3 +117,12 @@ objects `8146aca`, `2ef4802`, `4fb957b`, and `76f15b2` were unrecoverable; that 
 was exhausted. Tasks 1–3 were rebuilt test-first from preserved approved decisions.
 The rebuilt branch, present tests, current reviews and verification are the source
 of truth; summaries and old green results are navigation, not completion evidence.
+
+## Installed-Chrome acceptance follow-up
+
+The owner confirmed loading Behalvo in the dedicated test profile. Registration
+then exposed macOS Chrome's normal code-sign-clone hard links, rejected by our
+single-link executable check. A narrow compatibility correction and regression
+tests are described in the laptop verification record. Fresh setup is required
+for the changed compiled bundle; do not manually update old integrity pins.
+No installed-Chrome handshake or diagnostic success has yet been observed.
