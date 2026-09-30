@@ -23,7 +23,8 @@
     "service": "npm run build && node dist/cli/service-main.js",
     "service:demo": "npm run build && node dist/service-demo.js",
     "owner-control:demo": "npm run build && node dist/control-demo.js",
-    "verify": "node scripts/verify.mjs"
+    "verify": "node scripts/verify.mjs",
+    "browser": "npm run build && node dist/cli/browser-main.js"
   },
   "devDependencies": {
     "@types/node": "22.19.7",

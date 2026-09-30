@@ -3,17 +3,28 @@
   "name": "Behalvo Synthetic Browser Boundary",
   "version": "0.1.0",
   "description": "Typed local-only browser boundary for the Behalvo synthetic scheduling portal.",
-  "permissions": ["nativeMessaging"],
-  "host_permissions": ["http://127.0.0.1:43117/*"],
+  "permissions": [
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:43117/*"
+  ],
   "background": {
     "service_worker": "dist/background.js",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["http://127.0.0.1:43117/*"],
-      "js": ["dist/content.js"],
+      "matches": [
+        "http://127.0.0.1:43117/*"
+      ],
+      "js": [
+        "dist/content.js"
+      ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
 }

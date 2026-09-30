@@ -62,6 +62,25 @@ export interface PrivateProfileCustodyInspection {
   profileInode: string;
 }
 
+export interface SyntheticProfileLeaseInput {
+  installationId: string;
+  profileId: string;
+  profilePath: string;
+}
+
+export interface SyntheticProfileLease {
+  custodyId: string;
+  profilePath: string;
+  profileDevice: string;
+  profileInode: string;
+  release(): void;
+}
+
+export interface SyntheticProfileLeaseRecoveryOptions {
+  expectedCustodyId: string;
+  confirmPreviousRunExited: true;
+}
+
 interface StoredConnection extends PrivateConnectionRegistration {
   state: PrivateConnectionSummary['state'];
   profileIdentity: ProfileIdentity;
@@ -101,6 +120,96 @@ export interface PrivateConnectionControl {
 }
 
 function fail(): never { throw new Error(CONNECTION_ERROR); }
+
+const SYNTHETIC_PROFILE_LEASE_ERROR = 'Synthetic profile lease operation failed.';
+const SYNTHETIC_PROFILE_LEASE_FORMAT = 'behalvo.synthetic-profile-lease.v1';
+
+export function acquireSyntheticProfileLease(input: SyntheticProfileLeaseInput): SyntheticProfileLease {
+  try {
+    const checked = parseSyntheticProfileLeaseInput(input);
+    const profile = validateProfile(checked.profilePath);
+    const digest = syntheticProfileLeaseDigest(checked, profile);
+    const custody = acquireProfileCustody(profile.path, profile, secretOwnerToken(), digest);
+    return syntheticProfileLease(checked, profile, custody);
+  } catch {
+    throw new Error(SYNTHETIC_PROFILE_LEASE_ERROR);
+  }
+}
+
+export function recoverSyntheticProfileLease(input: SyntheticProfileLeaseInput,
+  options: SyntheticProfileLeaseRecoveryOptions): SyntheticProfileLease {
+  try {
+    const checked = parseSyntheticProfileLeaseInput(input);
+    const recovery = parseSyntheticProfileLeaseRecovery(options);
+    const profile = validateProfile(checked.profilePath);
+    const digest = syntheticProfileLeaseDigest(checked, profile);
+    const observed = readCustody(profile.path);
+    if (observed.events.length !== 0) throw new Error(SYNTHETIC_PROFILE_LEASE_ERROR);
+    const recovered = recoverProfileCustody(profile.path, profile, recovery.expectedCustodyId, digest);
+    if (recovered.progress.deletePurposes !== undefined || recovered.progress.connectionRevoked ||
+        recovered.progress.browserRevoked || recovered.progress.brokersRevoked ||
+        recovered.progress.monitorsStopped || recovered.progress.deletedPurposes.size !== 0 ||
+        recovered.progress.completed)
+      throw new Error(SYNTHETIC_PROFILE_LEASE_ERROR);
+    return syntheticProfileLease(checked, profile, recovered.custody);
+  } catch {
+    throw new Error(SYNTHETIC_PROFILE_LEASE_ERROR);
+  }
+}
+
+function parseSyntheticProfileLeaseInput(input: unknown): SyntheticProfileLeaseInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    throw new Error(SYNTHETIC_PROFILE_LEASE_ERROR);
+  const item = input as Record<string, unknown>;
+  if (Object.keys(item).sort().join(',') !== 'installationId,profileId,profilePath' ||
+      typeof item.profilePath !== 'string')
+    throw new Error(SYNTHETIC_PROFILE_LEASE_ERROR);
+  return {
+    installationId: secretIdentifier(item.installationId),
+    profileId: secretIdentifier(item.profileId),
+    profilePath: item.profilePath
+  };
+}
+
+function parseSyntheticProfileLeaseRecovery(options: unknown): SyntheticProfileLeaseRecoveryOptions {
+  if (!options || typeof options !== 'object' || Array.isArray(options))
+    throw new Error(SYNTHETIC_PROFILE_LEASE_ERROR);
+  const item = options as Record<string, unknown>;
+  if (Object.keys(item).sort().join(',') !== 'confirmPreviousRunExited,expectedCustodyId' ||
+      item.confirmPreviousRunExited !== true)
+    throw new Error(SYNTHETIC_PROFILE_LEASE_ERROR);
+  return { expectedCustodyId: secretIdentifier(item.expectedCustodyId), confirmPreviousRunExited: true };
+}
+
+function syntheticProfileLeaseDigest(input: Pick<SyntheticProfileLeaseInput, 'installationId' | 'profileId'>,
+  profile: ProfileIdentity): string {
+  return createHash('sha256').update(JSON.stringify({
+    format: SYNTHETIC_PROFILE_LEASE_FORMAT,
+    installationId: input.installationId,
+    profileId: input.profileId,
+    profile
+  })).digest('hex');
+}
+
+function syntheticProfileLease(input: SyntheticProfileLeaseInput, profile: ProfileIdentity,
+  custody: ProfileCustody): SyntheticProfileLease {
+  return {
+    custodyId: custody.custodyId,
+    profilePath: profile.path,
+    profileDevice: profile.device,
+    profileInode: profile.inode,
+    release(): void {
+      try {
+        const current = validateProfile(input.profilePath);
+        if (current.path !== profile.path || current.device !== profile.device || current.inode !== profile.inode)
+          throw new Error(SYNTHETIC_PROFILE_LEASE_ERROR);
+        custody.release();
+      } catch {
+        throw new Error(SYNTHETIC_PROFILE_LEASE_ERROR);
+      }
+    }
+  };
+}
 
 export class PrivateConnectionManager implements PrivateConnectionControl {
   readonly #provider: SecretProvider;

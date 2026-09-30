@@ -3,12 +3,39 @@ import { EXTENSION_ALLOWED_ORIGIN, EXTENSION_NATIVE_HOST, validateExtensionReque
   validateExtensionSnapshot, type ExtensionGestureCommit, type ExtensionRequest,
   type ExtensionGestureCancel, type ExtensionSessionControl } from './protocol.js';
 
-interface MessageSender { origin?: string; tab?: { id?: number; url?: string } }
+interface MessageSender {
+  id?: string;
+  url?: string;
+  origin?: string;
+  tab?: { id?: number; url?: string };
+}
 interface NativePort {
   postMessage(value: unknown): void;
   disconnect(): void;
   onMessage: { addListener(callback: (value: unknown) => void): void };
+  onDisconnect: { addListener(callback: () => void): void };
 }
+interface ChromeTab { id?: number; url?: string; incognito?: boolean }
+interface ChromeApi {
+  runtime: {
+    id: string;
+    getURL(path: string): string;
+    connectNative(name: string): NativePort;
+    lastError?: unknown;
+    onMessage: {
+      addListener(callback: (value: unknown, sender: MessageSender,
+        sendResponse: (response: unknown) => void) => boolean | void): void;
+    };
+  };
+  tabs: {
+    query(queryInfo: { url: string }, callback: (tabs: ChromeTab[]) => void): void;
+    sendMessage(tabId: number, value: unknown, callback: (response: unknown) => void): void;
+  };
+}
+
+export type ExtensionEnrollmentStatus =
+  { state: 'disconnected' | 'enrolling' | 'invalidated' } |
+  { state: 'enrolled'; tabId: number; origin: string };
 
 class SupersededNativeMessageError extends Error {
   constructor() { super('Browser request was superseded.'); this.name = 'SupersededNativeMessageError'; }
@@ -346,21 +373,170 @@ function validateResponseBinding(request: ReturnType<typeof validateExtensionReq
     if (response[key] !== request[key as keyof typeof request]) throw new Error('Browser response binding is invalid.');
 }
 
-declare const chrome: undefined | {
-  runtime: {
-    connectNative(name: string): NativePort;
-    lastError?: unknown;
-  };
-  tabs: { sendMessage(tabId: number, value: unknown, callback: (response: unknown) => void): void };
-};
+interface EnrollmentRequest {
+  kind: 'bridge.enroll.request';
+  enrollment: string;
+}
 
-if (typeof chrome !== 'undefined') {
-  const port = chrome.runtime.connectNative(EXTENSION_NATIVE_HOST);
+interface EnrollmentAccepted {
+  bridgeVersion: 1;
+  kind: 'bridge.enrollment.accepted';
+  tabId: number;
+  origin: string;
+}
+
+interface EnrollmentRejected {
+  bridgeVersion: 1;
+  kind: 'bridge.enrollment.rejected';
+  code: 'enrollment_rejected';
+}
+
+export function createExtensionEnrollmentController(chromeApi: ChromeApi) {
+  let state: ExtensionEnrollmentStatus = { state: 'disconnected' };
   const boundary = createNativeRequestBoundary((tabId, request) => new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, request, response => chrome.runtime.lastError
+    chromeApi.tabs.sendMessage(tabId, request, response => chromeApi.runtime.lastError
       ? reject(new Error('Browser content boundary is unavailable.')) : resolve(response));
   }));
-  port.onMessage.addListener(value => {
-    void dispatchNativePortMessage(boundary, port, value);
+
+  const status = (): ExtensionEnrollmentStatus => structuredClone(state);
+
+  const handlePopupMessage = (value: unknown, sender: MessageSender): Promise<ExtensionEnrollmentStatus> => {
+    try {
+      assertPopupSender(chromeApi, sender);
+      if (isStatusRequest(value)) return Promise.resolve(status());
+      const request = validateEnrollmentRequest(value);
+      if (state.state === 'invalidated')
+        return Promise.reject(new Error('Browser enrollment is invalidated for this run.'));
+      if (state.state !== 'disconnected')
+        return Promise.reject(new Error('Browser enrollment is already in progress or complete.'));
+      state = { state: 'enrolling' };
+      return new Promise((resolve, reject) => {
+        chromeApi.tabs.query({ url: `${EXTENSION_ALLOWED_ORIGIN}/*` }, tabs => {
+          if (chromeApi.runtime.lastError) {
+            state = { state: 'disconnected' };
+            reject(new Error('Browser synthetic tab selection failed.'));
+            return;
+          }
+          const candidates = tabs.filter(tab => !tab.incognito && positiveTabId(tab.id) &&
+            tab.url === `${EXTENSION_ALLOWED_ORIGIN}/`);
+          if (candidates.length !== 1) {
+            state = { state: 'disconnected' };
+            reject(new Error('Browser enrollment requires exactly one synthetic tab.'));
+            return;
+          }
+          const tabId = candidates[0]!.id!;
+          const port = chromeApi.runtime.connectNative(EXTENSION_NATIVE_HOST);
+          let enrollmentSettled = false;
+          const failEnrollment = (message: string): void => {
+            if (enrollmentSettled) return;
+            enrollmentSettled = true;
+            state = { state: 'invalidated' };
+            try { port.disconnect(); } catch { /* native channel is already unavailable */ }
+            reject(new Error(message));
+          };
+          port.onDisconnect.addListener(() => {
+            if (state.state === 'enrolling' || state.state === 'enrolled') state = { state: 'invalidated' };
+            if (!enrollmentSettled) {
+              enrollmentSettled = true;
+              reject(new Error('Browser native enrollment disconnected.'));
+            }
+          });
+          port.onMessage.addListener(value => {
+            if (!enrollmentSettled) {
+              let response: EnrollmentAccepted | EnrollmentRejected;
+              try { response = validateEnrollmentResponse(value, tabId); }
+              catch { failEnrollment('Browser native enrollment protocol is invalid.'); return; }
+              if (response.kind === 'bridge.enrollment.rejected') {
+                failEnrollment('Browser native enrollment was rejected.');
+                return;
+              }
+              enrollmentSettled = true;
+              state = { state: 'enrolled', tabId, origin: EXTENSION_ALLOWED_ORIGIN };
+              resolve(status());
+              return;
+            }
+            if (state.state === 'enrolled') void dispatchNativePortMessage(boundary, port, value);
+          });
+          try {
+            port.postMessage({ bridgeVersion: 1, kind: 'bridge.enroll', enrollment: request.enrollment,
+              tabId, origin: EXTENSION_ALLOWED_ORIGIN });
+          } catch {
+            failEnrollment('Browser native enrollment failed.');
+          }
+        });
+      });
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error('Browser enrollment message is invalid.'));
+    }
+  };
+
+  return { status, handlePopupMessage };
+}
+
+function validateEnrollmentRequest(value: unknown): EnrollmentRequest {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Browser enrollment message is invalid.');
+  const item = value as Record<string, unknown>;
+  if (Object.keys(item).sort().join('\0') !== ['enrollment', 'kind'].sort().join('\0') ||
+      item.kind !== 'bridge.enroll.request' || typeof item.enrollment !== 'string' ||
+      !/^[A-Za-z0-9._:-]{16,256}$/.test(item.enrollment))
+    throw new Error('Browser enrollment message is invalid.');
+  return { kind: 'bridge.enroll.request', enrollment: item.enrollment };
+}
+
+function validateEnrollmentResponse(value: unknown, expectedTabId: number): EnrollmentAccepted | EnrollmentRejected {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Browser native enrollment protocol is invalid.');
+  const item = value as Record<string, unknown>;
+  if (item.kind === 'bridge.enrollment.accepted') {
+    const keys = ['bridgeVersion', 'kind', 'tabId', 'origin'].sort();
+    if (Object.keys(item).sort().join('\0') !== keys.join('\0') || item.bridgeVersion !== 1 ||
+        item.tabId !== expectedTabId || item.origin !== EXTENSION_ALLOWED_ORIGIN)
+      throw new Error('Browser native enrollment protocol is invalid.');
+    return { bridgeVersion: 1, kind: 'bridge.enrollment.accepted',
+      tabId: expectedTabId, origin: EXTENSION_ALLOWED_ORIGIN };
+  }
+  if (item.kind === 'bridge.enrollment.rejected') {
+    const keys = ['bridgeVersion', 'kind', 'code'].sort();
+    if (Object.keys(item).sort().join('\0') !== keys.join('\0') || item.bridgeVersion !== 1 ||
+        item.code !== 'enrollment_rejected')
+      throw new Error('Browser native enrollment protocol is invalid.');
+    return { bridgeVersion: 1, kind: 'bridge.enrollment.rejected', code: 'enrollment_rejected' };
+  }
+  throw new Error('Browser native enrollment protocol is invalid.');
+}
+
+function assertPopupSender(chromeApi: ChromeApi, sender: MessageSender): void {
+  if (sender.id !== chromeApi.runtime.id || sender.url !== chromeApi.runtime.getURL('popup.html') || sender.tab)
+    throw new Error('Browser enrollment sender is not the extension popup.');
+}
+
+function isStatusRequest(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return Object.keys(item).length === 1 && item.kind === 'bridge.status.request';
+}
+
+function positiveTabId(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 1_000_000;
+}
+
+function isEnrollmentRuntimeMessage(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const kind = (value as Record<string, unknown>).kind;
+  return kind === 'bridge.enroll.request' || kind === 'bridge.status.request';
+}
+
+declare const chrome: undefined | ChromeApi;
+
+if (typeof chrome !== 'undefined') {
+  const controller = createExtensionEnrollmentController(chrome);
+  chrome.runtime.onMessage.addListener((value, sender, sendResponse) => {
+    if (!isEnrollmentRuntimeMessage(value)) return false;
+    void controller.handlePopupMessage(value, sender).then(
+      status => sendResponse({ ok: true, status }),
+      () => sendResponse({ ok: false, error: 'bridge_enrollment_failed', status: controller.status() })
+    );
+    return true;
   });
 }

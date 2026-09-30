@@ -75,6 +75,25 @@ export { NativeHostSecretAccess } from './browser/native-host.js';
 export { NATIVE_HOST_NAME, LIVE_US_VISA_NATIVE_HOST_REGISTRATION,
   createNativeHostManifest } from './browser/native-manifest.js';
 export type { NativeHostManifest } from './browser/native-manifest.js';
+export { runChromeNativeBroker } from './browser/native-broker.js';
+export { BridgeEnrollmentGate, BridgeIpcReader, encodeBridgeIpcMessage,
+  writeBridgeIpcMessage, parseBridgeFrameEnvelope, MAX_BRIDGE_IPC_BYTES,
+  MAX_BRIDGE_PENDING_BYTES } from './browser/bridge-ipc.js';
+export type { BridgeEnrollmentExpected, BridgeEnrollmentAccepted,
+  BridgeFrameEnvelope } from './browser/bridge-ipc.js';
+export { createBridgeBrowserTransport } from './browser/bridge-transport.js';
+export type { BridgeBrowserTransport, BridgeBrowserTransportOptions } from './browser/bridge-transport.js';
+export { startChromeBridgeRendezvous } from './browser/rendezvous.js';
+export type { ChromeBridgeRendezvousOptions, ChromeBridgeEnrollment,
+  ChromeBridgeRendezvous } from './browser/rendezvous.js';
+export { launchDedicatedChrome, runChromeBridgeDiagnostic } from './browser/coordinator.js';
+export type { DedicatedChromeLaunchOptions, DedicatedChromeProcess, ChromeBridgeDiagnosticInput,
+  ChromeBridgeDiagnosticResult, ChromeBridgeDiagnosticDependencies } from './browser/coordinator.js';
+export { stageChromeBridgeInstallation, finalizeChromeBridgeInstallation,
+  doctorChromeBridgeInstallation, removeChromeBridgeInstallation } from './browser/installation.js';
+export type { ChromeBridgeStageInput, ChromeBridgeFinalizeInput, ChromeBridgeDoctorInput,
+  ChromeBridgeRemoveInput, ChromeBridgeInstallation, ChromeBridgeDoctorReport,
+  ChromeBridgeRemovalResult } from './browser/installation.js';
 export { SyntheticPortalState } from './synthetic-portal/state.js';
 export type { SyntheticPortalScenario, SyntheticPortalDurableState,
   SyntheticPortalStateOptions } from './synthetic-portal/state.js';
@@ -85,10 +104,12 @@ export { SyntheticSecretProvider } from './secrets/synthetic.js';
 export { KeychainSecretProvider, NativeKeychainHelperTransport } from './secrets/keychain.js';
 export type { KeychainHelperRequest, KeychainHelperResponse, KeychainHelperTransport,
   NativeHelperLaunch, NativeHelperLaunchResult, NativeKeychainHelperTransportOptions } from './secrets/keychain.js';
-export { PrivateConnectionManager, inspectPrivateProfileCustody } from './connections/private-connection.js';
+export { PrivateConnectionManager, inspectPrivateProfileCustody,
+  acquireSyntheticProfileLease, recoverSyntheticProfileLease } from './connections/private-connection.js';
 export type { PrivateConnectionRegistration, PrivateConnectionSummary, PrivateConnectionDisconnectResult,
   PrivateConnectionManagerOptions, PrivateConnectionControl, PrivateConnectionAuthority,
-  PrivateProfileCustodyInspection } from './connections/private-connection.js';
+  PrivateProfileCustodyInspection, SyntheticProfileLeaseInput, SyntheticProfileLease,
+  SyntheticProfileLeaseRecoveryOptions } from './connections/private-connection.js';
 export { US_VISA_CHINA_ADAPTER_ID, US_VISA_CHINA_ADAPTER_VERSION, US_VISA_CHINA_CONTRACT_VERSION,
   US_VISA_CHINA_STATE_IDS } from './adapters/us-visa-china/types.js';
 export type * from './adapters/us-visa-china/types.js';
