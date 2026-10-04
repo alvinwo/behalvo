@@ -23,13 +23,15 @@
     "service": "npm run build && node dist/cli/service-main.js",
     "service:demo": "npm run build && node dist/service-demo.js",
     "owner-control:demo": "npm run build && node dist/control-demo.js",
-    "verify": "node scripts/verify.mjs"
+    "verify": "node scripts/verify.mjs",
+    "browser:playwright": "npm run build && node dist/cli/playwright-main.js"
   },
   "devDependencies": {
     "@types/node": "22.19.7",
     "typescript": "5.8.3"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.85.1"
+    "@earendil-works/pi-ai": "0.85.1",
+    "playwright": "1.63.0"
   }
 }

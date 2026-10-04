@@ -199,3 +199,21 @@ production loop monitoring and independent security review are required.
 Do not put real messages, tokens, OTPs, financial data, addresses or customer
 records in public issues. A private vulnerability reporting route must be
 configured on the GitHub repository before broader public distribution.
+
+## Read-only Playwright P1
+
+The explicitly invoked Playwright diagnostic opens one fresh visible matched
+Chromium browser and observes only the fixed loopback synthetic login page. It
+owns no domain worker, grant, credentials or model run. Context routing denies
+non-GET, non-root and foreign-frame requests before dispatch; all gestures reject.
+A loopback ephemeral BrowserServer endpoint remains private to the owning process.
+Ambient browser/remote/debug overrides are refused. This API boundary is not an
+OS network sandbox and does not protect against trusted same-UID code.
+
+Success requires exact owned process exit, server closure and temporary profile
+absence. Unconfirmed shutdown retains a private operational receipt and fails;
+no retries or broad process/profile cleanup follow. Launch failure before a handle
+returns can leave unidentified resources and is explicitly cleanup-pending.
+Bounded CLI exit ends reliable late cleanup; exit hooks are best effort.
+The [browser guide](docs/PLAYWRIGHT_BROWSER.md) describes installation, failure
+handling and the limits of synthetic-only macOS acceptance.

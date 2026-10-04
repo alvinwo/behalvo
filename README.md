@@ -107,6 +107,9 @@ Use `npm run agent -- --synthetic-operations` for an isolated simulated account.
 
 See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, security boundaries, and current limitations.
 
+For the visible, read-only synthetic browser diagnostic without extension enrollment,
+see the [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md).
+
 ## What exists in this revision
 
 | Implemented | Not implemented |
@@ -131,6 +134,7 @@ See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, sec
 | Callback-scoped synthetic secrets, fail-closed native Keychain-helper transport, interprocess private-profile custody, and durable retryable disconnect controls | Installed signed Keychain helper, arbitrary sync/backup-root detection, live credential collection, or live private connection validation |
 | Disabled-by-default China visa policy, owner-bound authenticated discovery fixtures, durable current-authority checks, exact compiled-page evidence, encrypted synthetic intent transport, and bounded strict booking/readback | Live visa registration, owner-laptop discovery, portal credentials, browser installation, live polling, or real booking |
 | Paired synthetic monitored-action setup/review/arm, foreground polling across restart and handoff, one verified booking, stopped recurrence, and effect-free rebuild | Installed Chrome/native host, signed Keychain helper, current live terms/group verification, owner activation, or OS-supervised service |
+| Visible isolated Playwright/Chromium read-only synthetic login diagnostic with typed BrowserSession observations and bounded cleanup | Playwright actions, live browsing, persistent authenticated profiles or unattended monitoring |
 
 ## Mental model
 
@@ -176,7 +180,7 @@ src/
   service-demo.ts  paired restart/handoff/race/booking/rebuild acceptance scenario
 ```
 
-One package, not a forest of empty packages. Pi is the sole pinned runtime integration dependency and remains outside the kernel. No event
+One package, not a forest of empty packages. Pi and the synthetic-only Playwright browser adapter are pinned integration dependencies and remain outside the kernel. No event
 broker, distributed workflow engine, graph database or multi-agent orchestration.
 
 ## Safety boundary
