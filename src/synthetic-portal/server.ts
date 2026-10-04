@@ -9,14 +9,17 @@ export interface SyntheticPortalServer {
   close(): Promise<void>;
 }
 
-export async function startSyntheticPortal(input: { state?: SyntheticPortalState; port?: number } = {}):
+export async function startSyntheticPortal(input: { state?: SyntheticPortalState; port?: number;
+  formResponse?: 'redirect' | 'document' } = {}):
   Promise<SyntheticPortalServer> {
+  const formResponse = input.formResponse ?? 'redirect';
+  if (formResponse !== 'redirect' && formResponse !== 'document') throw new Error('Invalid synthetic form response.');
   const state = input.state ?? new SyntheticPortalState();
   const port = input.port ?? 43117;
   if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) throw new Error('Invalid synthetic portal port.');
   let exactOrigin = '';
   const server = createServer((request, response) => {
-    void handle(request, response, state, exactOrigin).catch(() => safeError(response, 400));
+    void handle(request, response, state, exactOrigin, formResponse).catch(() => safeError(response, 400));
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -31,7 +34,7 @@ export async function startSyntheticPortal(input: { state?: SyntheticPortalState
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse, state: SyntheticPortalState,
-  origin: string): Promise<void> {
+  origin: string, formResponse: 'redirect' | 'document'): Promise<void> {
   response.setHeader('connection', 'close');
   response.setHeader('cache-control', 'no-store');
   response.setHeader('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'");
@@ -59,17 +62,22 @@ async function handle(request: IncomingMessage, response: ServerResponse, state:
   if (request.method === 'POST' && path === '/gesture') {
     if (request.headers.origin !== origin || request.headers['content-type'] !== 'application/x-www-form-urlencoded')
       return safeError(response, 403);
-    state.gesture(parseFormGesture(await readBody(request, 8 * 1024)));
+    state.gesture(parseFormGesture(await readBody(request, 8 * 1024), formResponse));
+    if (formResponse === 'document') return documentResponse(response, state);
     response.writeHead(303, { location: '/', 'content-length': 0 }); response.end(); return;
   }
   if (request.method === 'GET' && path === '/') {
-    const snapshot = state.inspect();
-    const status = snapshot.state === 'forbidden' ? 403 : snapshot.state === 'rate_limited' ? 429 : 200;
-    const encoded = Buffer.from(render(snapshot, state.exportDurableState().durableIntent), 'utf8');
-    response.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'content-length': encoded.length });
-    response.end(encoded); return;
+    return documentResponse(response, state);
   }
   safeError(response, 404);
+}
+
+function documentResponse(response: ServerResponse, state: SyntheticPortalState): void {
+  const snapshot = state.inspect();
+  const status = snapshot.state === 'forbidden' ? 403 : snapshot.state === 'rate_limited' ? 429 : 200;
+  const encoded = Buffer.from(render(snapshot, state.exportDurableState().durableIntent), 'utf8');
+  response.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'content-length': encoded.length });
+  response.end(encoded);
 }
 
 function render(snapshot: BrowserPageSnapshot, intent: { intentId: string; slotId: string } | null): string {
@@ -165,12 +173,17 @@ function attribute(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
-function parseFormGesture(body: string): BrowserGestureCommand {
+function parseFormGesture(body: string, formResponse: 'redirect' | 'document'): BrowserGestureCommand {
   const fields = new URLSearchParams(body);
   const entries = [...fields.entries()];
   if (entries.some(([key], index) => entries.findIndex(([candidate]) => candidate === key) !== index))
     throw new Error('Invalid synthetic gesture.');
-  return parseBrowserGesture(Object.fromEntries(entries));
+  if (formResponse === 'document') {
+    if (!/^[a-f0-9]{64}$/.test(fields.get('_behalvo_dispatch') ?? ''))
+      throw new Error('Invalid synthetic dispatch.');
+    fields.delete('_behalvo_dispatch');
+  }
+  return parseBrowserGesture(Object.fromEntries(fields));
 }
 
 async function readBody(request: IncomingMessage, maximum: number): Promise<string> {
