@@ -17,7 +17,9 @@ Terminal summary:
 `data/verification/2026-10-04T03-48-59.504Z-fd117740-665f-46a7-a35f-c2383f5b8cde/summary.json`.
 The dirty working-tree source fingerprint was unchanged across this run:
 `abd9a94fa1b7c7201da115cffaa564d59ada0d901519c0b7bb81942679455524`.
-This verification record is a subsequent documentation-only addition.
+Subsequent documentation-only edits added this record and its browser-guide
+link, then clarified that pending portal/service startup may have no per-browser
+receipt. No executable source changed after the final local run.
 
 The combined P1/P2 visible suite passed 57/57, zero skipped, running files
 serially. It covered P1 regression, redirect-free mechanism, all typed page states

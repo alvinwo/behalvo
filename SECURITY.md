@@ -233,5 +233,6 @@ resubmits. Missing or mismatched evidence leaves the action unknown. Same-run id
 handoff supports fresh resume; active-operation retirement fails closed. Final
 session destruction can confirm full owned-resource cleanup independently of
 handoff retirement, without granting a reusable epoch. The run is bounded to
-180 seconds plus 5 seconds cleanup; pending resources retain receipts and forbid
-automatic restart. No personal profile, credentials, live account or model is used.
+180 seconds plus 5 seconds cleanup; pending browser ownership attempts retain per-owner receipts and forbid
+automatic restart. Pending portal/service startup also exits 3 but may have no
+browser receipt if no owner was created. No personal profile, credentials, live account or model is used.

@@ -40,9 +40,11 @@ without attaching to the existing listener. Ambient Selenium/Playwright routing,
 browser location/platform overrides and debug settings are refused; remove those
 settings from this command's environment before running it.
 
-Failures retain a private `receipt.json` in a generated temporary directory. It
-contains only a run ID, fixed phase/status/code, and owned process/profile identity
-when available. Exit code 0 means success; 1 means failed with cleanup confirmed;
+Failed browser ownership attempts retain a private `receipt.json` per owner in
+generated temporary directories. Each contains only a run ID, fixed
+phase/status/code, and owned process/profile identity when available. P2 may
+retain several browser receipts. Pending portal/service startup still exits 3
+but may have no browser receipt when no owner was created. Exit code 0 means success; 1 means failed with cleanup confirmed;
 2 means invalid arguments; 3 means cleanup is unconfirmed. Internal unexpected
 failures are reported conservatively without raw upstream exception messages.
 
