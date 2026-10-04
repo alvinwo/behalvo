@@ -461,6 +461,7 @@ export class MonitoringService {
         await fence.assertCurrent();
         if (controller.signal.aborted) throw new OperationStoppedError();
       },
+      ...(fence.reportDispatchFailure ? { reportDispatchFailure: (error: unknown) => fence.reportDispatchFailure!(error) } : {}),
       ...(fence.assertDispatchCurrent ? { assertDispatchCurrent: () => {
         if (controller.signal.aborted) throw new OperationStoppedError();
         fence.assertDispatchCurrent!();
@@ -506,6 +507,7 @@ export class MonitoringService {
         await fence.assertCurrent();
         if (controller.signal.aborted) throw new OperationStoppedError();
       },
+      ...(fence.reportDispatchFailure ? { reportDispatchFailure: (error: unknown) => fence.reportDispatchFailure!(error) } : {}),
       ...(fence.assertDispatchCurrent ? { assertDispatchCurrent: () => {
         if (controller.signal.aborted) throw new OperationStoppedError();
         fence.assertDispatchCurrent!();
@@ -665,6 +667,7 @@ export class MonitoringService {
     };
     return { serviceGeneration: lifecycle.serviceGeneration, deadline: lifecycle.deadline,
       signal: lifecycle.signal, assertCurrent,
+      ...(lifecycle.reportDispatchFailure ? { reportDispatchFailure: (error: unknown) => lifecycle.reportDispatchFailure!(error) } : {}),
       ...(lifecycle.assertDispatchCurrent ? { assertDispatchCurrent: () => {
         lifecycle.assertDispatchCurrent!(); assertDomainCurrent(true);
         lifecycle.assertDispatchCurrent!();
@@ -716,6 +719,7 @@ export class MonitoringService {
     };
     const observationFence: TrustedExecutionFence = { ...fence,
       assertCurrent: async () => { await fence.assertCurrent(); assertObservationCurrent(); await fence.assertCurrent(); },
+      ...(fence.reportDispatchFailure ? { reportDispatchFailure: (error: unknown) => fence.reportDispatchFailure!(error) } : {}),
       ...(fence.assertDispatchCurrent ? { assertDispatchCurrent: () => {
         fence.assertDispatchCurrent!(); assertObservationCurrent(); fence.assertDispatchCurrent!();
       } } : {}) };

@@ -59,6 +59,7 @@ export async function capturePlaywrightSource(page: Page): Promise<{
 }
 
 export interface PreparedPlaywrightForm {
+  root: ElementHandle<HTMLElement>;
   form: ElementHandle<HTMLFormElement>;
   button: ElementHandle<HTMLButtonElement>;
 }
@@ -77,16 +78,19 @@ export async function preparePlaywrightForm(root: ElementHandle<HTMLElement>, in
     const handle = await button.evaluateHandle(button => button.form);
     const form = handle.asElement() as ElementHandle<HTMLFormElement> | null;
     if (!form) { await handle.dispose(); throw new PlaywrightDiagnosticError('page_rejected'); }
-    return { form, button };
+    return { root, form, button };
   } catch { await button.dispose().catch(() => {}); throw new PlaywrightDiagnosticError('page_rejected'); }
 }
 
 /** Fixed code only; the exact browser request still requires a separate route permit. */
 export async function activatePlaywrightForm(prepared: PreparedPlaywrightForm, command: BrowserGestureCommand,
   dispatchToken: string): Promise<void> {
-  await prepared.form.evaluate((form, { button, command, dispatchToken }) => {
+  await prepared.form.evaluate((form, { root, button, command, dispatchToken }) => {
     const fail = (): never => { throw new Error('page_rejected'); };
-    if (!form.isConnected || form.ownerDocument !== document || button.form !== form || !button.isConnected ||
+    if (!root.isConnected || root.ownerDocument !== document ||
+        document.querySelectorAll('[data-behalvo-page-state]').length !== 1 ||
+        document.querySelector('main[data-behalvo-page-state]') !== root ||
+        !root.contains(form) || !root.contains(button) || !form.isConnected || form.ownerDocument !== document || button.form !== form || !button.isConnected ||
         form.method !== 'post' || form.action !== 'http://127.0.0.1:43117/gesture' ||
         form.enctype !== 'application/x-www-form-urlencoded' || !['', '_self'].includes(form.target) ||
         button.type !== 'submit' || button.disabled || ['formaction', 'formmethod', 'formtarget', 'formenctype']
@@ -103,5 +107,5 @@ export async function activatePlaywrightForm(prepared: PreparedPlaywrightForm, c
     const token = document.createElement('input'); token.type = 'hidden';
     token.name = '_behalvo_dispatch'; token.value = dispatchToken; form.append(token);
     form.requestSubmit(button);
-  }, { button: prepared.button, command, dispatchToken });
+  }, { root: prepared.root, button: prepared.button, command, dispatchToken });
 }

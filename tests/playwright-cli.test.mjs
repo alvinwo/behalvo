@@ -44,3 +44,14 @@ test('piped cleanup-pending output delivers the failure and receipt before force
   assert.equal(child.status, 3); assert.match(child.stderr, /cleanup is unconfirmed/);
   assert.match(child.stderr, /\/private\/tmp\/behalvo-playwright-ABC123\/receipt.json/);
 });
+test('synthetic-actions CLI validates all workflow evidence and suppresses raw fields', async () => {
+  const success = { ok: true, synthetic: true, cleanup: 'confirmed', playwrightVersion: '1.63.0', browserVersion: '153.0.8010.12',
+    emptyPoll: true, cleanRestart: true, handoffResume: true, candidateRace: true, singleBooking: true,
+    authoritativeReadback: true, replayNoEffects: true, secret: 'CANARY' };
+  for (const valid of [true, false]) {
+    let output = '', calls = 0;
+    const code = await module.runPlaywrightCli(['synthetic-actions'], { writeStdout: s => { output += s; }, writeStderr: s => { output += s; },
+      actions: async () => { calls++; return { ...success, singleBooking: valid }; } });
+    assert.equal(calls, 1); assert.equal(code, valid ? 0 : 1); assert.equal(output.includes('CANARY'), false);
+  }
+});

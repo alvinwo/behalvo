@@ -210,11 +210,14 @@ export class ServiceRuntime {
         if (controller.signal.aborted || Date.now() >= deadline || this.#activeJobId !== job.id ||
             this.options.serviceGeneration !== fence.serviceGeneration) throw new OperationStoppedError();
       },
+      reportDispatchFailure: error => { this.#rethrowIfFatal(error); },
       assertDispatchCurrent: () => {
         if (this.#fatalError !== undefined) throw this.#fatalError;
         if (controller.signal.aborted || Date.now() >= deadline || this.#activeJobId !== job.id ||
             this.options.serviceGeneration !== fence.serviceGeneration) throw new OperationStoppedError();
-        const current = this.store.serviceJob(this.options.workspaceId, job.id);
+        let current: ServiceJob;
+        try { current = this.store.serviceJob(this.options.workspaceId, job.id); }
+        catch (error) { this.#rethrowIfFatal(error); throw error; }
         if (current.status !== 'running' || !current.claim || !job.claim ||
             current.claim.claimId !== job.claim.claimId || current.claim.instanceId !== job.claim.instanceId)
           throw new OperationStoppedError();

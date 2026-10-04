@@ -9,7 +9,7 @@ import { performance } from 'node:perf_hooks';
 import vm from 'node:vm';
 import {
   BrowserEpochRegistry, BrowserSession, MonitoringRegistry, MonitoringService, NativeMessageReader,
-  NativeMessagingTransport, OperationRegistry, OperationService, Operator, ServiceRuntime, SqliteStore,
+  NativeMessagingTransport, OperationRegistry, OperationService, Operator, ServiceRuntime, ServiceStorageError, SqliteStore,
   SyntheticPortalState, createSyntheticUsVisaChinaExecutionAdapter, startSyntheticPortal, writeNativeMessage
 } from '../dist/index.js';
 import { createNativeRequestBoundary } from '../extension/dist/background.js';
@@ -179,7 +179,8 @@ function session(portal, options = {}) {
           await options.readbackGate.promise;
         }
         const final = await authorize();
-        options.beforeFinalAuthorize?.(request.command.kind); final();
+        options.beforeFinalAuthorize?.(request.command.kind);
+        try { final(); } catch (error) { if (options.sanitizeDispatchError) throw new Error('page_rejected'); throw error; }
         const sourceDocument = currentDocument();
         if (request.command.kind === 'booking.submit') {
           submits++;
@@ -968,4 +969,25 @@ test('observation pagination rejects work drift after async authority without di
   assert.equal(changed, true);
   assert.equal(paginationPosts, 0);
   assert.equal(portal.mutationCount, 0);
+});
+
+for (const readMethod of ['serviceJob', 'state', 'monitorInstallation']) test(`fatal final dispatch ${readMethod} read faults runtime before transport sanitizes the error`, async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'visa-fatal-dispatch-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const portal = new SyntheticPortalState({ scenario: 'calendar_match' }); portal.gesture({ kind: 'calendar.next_page' });
+  let f;
+  f = build(join(directory, 'store.db'), randomBytes(32), portal, { sanitizeDispatchError: true,
+    beforeFinalAuthorize(kind) {
+      if (kind !== 'booking.submit') return;
+      const read = f.store[readMethod].bind(f.store);
+      f.store[readMethod] = () => { f.store[readMethod] = read; throw new ServiceStorageError('integrity', 'CANARY-FATAL'); };
+    }
+  });
+  t.after(async () => { await f.runtime.shutdown(); f.store.close(); });
+  const action = reserve(f);
+  f.runtime.admitAction({ requestId: 'fatal-final', kind: 'execute', actionId: action.id, digest: action.digest });
+  await f.runtime.drain().catch(() => {});
+  assert.equal(f.submits(), 0); assert.equal(portal.mutationCount, 0);
+  assert.equal(f.runtime.snapshot().faulted, true); assert.equal(f.runtime.snapshot().accepting, false);
+  assert.throws(() => f.runtime.admitAction({ requestId: 'after-fatal', kind: 'execute', actionId: action.id, digest: action.digest }));
 });

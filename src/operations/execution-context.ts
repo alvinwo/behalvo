@@ -17,6 +17,8 @@ export interface TrustedExecutionFence {
     assertCurrent(): Promise<void>;
     /** Fresh synchronous authority read immediately before external dispatch. */
     assertDispatchCurrent?(): void;
+    /** Trusted runtime fault notification before a transport sanitizes a dispatch error. */
+    reportDispatchFailure?(error: unknown): void;
     /** Allows only a fixed application stop receipt after cancellation/deadline. */
     assertSettlementCurrent?(): void;
 }

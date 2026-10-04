@@ -64,3 +64,26 @@ for (const [name, options] of [['redirect', { status: 303, headers: { location: 
   test(`unexpected ${name} never becomes a trusted document`, async () => {
     await assert.rejects(actionsFixture(options));
   });
+test('final shutdown confirms terminal destruction but rejects unknown cleanup', async () => {
+  for (const pending of [false, true]) {
+    const f = await actionsFixture({ afterDispatch: async () => { throw new Error('lost'); },
+      close: async () => { if (pending) throw new Error('cleanup_pending'); } });
+    const request = f.request();
+    const epoch = { profileId: request.profileId, connectionGeneration: request.connectionGeneration,
+      serviceGeneration: request.serviceGeneration, epoch: request.epoch, allowedOrigin: request.origin };
+    // The helper's request builder advances its counter; restore the next admitted sequence explicitly.
+    await assert.rejects(f.transport.gesture({ ...request, kind: 'gesture', expectedPageState: 'calendar', command: { kind: 'calendar.first_page' } },
+      async () => () => {}, { signal: f.signal.signal, deadline: Date.now() + 1000 }));
+    if (pending) await assert.rejects(f.transport.shutdown(epoch, 1));
+    else await f.transport.shutdown(epoch, 1);
+    assert.equal(f.closeCount(), 1);
+    await assert.rejects(f.transport.revoke(epoch, 1));
+  }
+});
+for (const [status, state] of [[403, 'forbidden'], [429, 'rate_limited']])
+  test(`HTTP ${status} source drift never dispatches an actionable form`, async t => {
+    let drift = false;
+    const f = await actionsFixture({ status, snapshot: value => drift ? value : { state } });
+    t.after(() => f.transport.close()); drift = true;
+    await assert.rejects(f.gesture()); assert.deepEqual(f.posts, []);
+  });

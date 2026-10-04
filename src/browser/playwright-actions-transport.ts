@@ -23,6 +23,7 @@ interface Permit {
 export class PlaywrightActionsTransport implements BrowserSessionTransport {
   #epoch: string | undefined;
   #sequence = 0;
+  #responseStatus = 200;
   #document = random();
   #phase: 'unbound' | 'active' | 'human' | 'terminal' = 'unbound';
   #retired = new Set<string>();
@@ -74,6 +75,7 @@ export class PlaywrightActionsTransport implements BrowserSessionTransport {
       const document = this.#document;
       source = await this.#wait(capturePlaywrightSource(this.options.page), deadline);
       this.#assert(document);
+      this.#assertStatus(source.snapshot);
       if (request.kind === 'inspect' && source.snapshot.state !== request.expectedPageState)
         throw new PlaywrightDiagnosticError('page_rejected');
       return this.#response(request, source.snapshot, document);
@@ -93,6 +95,7 @@ export class PlaywrightActionsTransport implements BrowserSessionTransport {
       this.#assert(); if (signal.aborted || Date.now() >= deadline) throw new PlaywrightDiagnosticError('cancelled');
       const document = this.#document;
       source = await this.#wait(capturePlaywrightSource(this.options.page), deadline, signal); this.#assert(document);
+      this.#assertStatus(source.snapshot);
       if (source.snapshot.state !== request.expectedPageState) throw new PlaywrightDiagnosticError('page_rejected');
       prepared = await this.#wait(preparePlaywrightForm(source.root, request.command), deadline, signal); this.#assert(document);
       const permit: Permit = { request, document, token: random(), deadline, signal, authorize,
@@ -104,6 +107,7 @@ export class PlaywrightActionsTransport implements BrowserSessionTransport {
       await this.#wait(Promise.all([permit.done.promise, navigation]), deadline, signal);
       this.#assert();
       if (permit.phase !== 'fulfilled' || this.#document === document) throw new PlaywrightDiagnosticError('page_rejected');
+      await this.#validateDestination(deadline, signal);
       this.#permit = undefined;
       return this.#response(request, source.snapshot, document);
     } catch { this.#fail(); throw new PlaywrightDiagnosticError('page_rejected'); }
@@ -136,6 +140,13 @@ export class PlaywrightActionsTransport implements BrowserSessionTransport {
     if (!this.#matches(epoch) || epoch.allowedOrigin !== SYNTHETIC_PORTAL_ORIGIN || tabId !== 1 || !this.#retired.has(epoch.epoch))
       throw new PlaywrightDiagnosticError('protocol_rejected');
   }
+  async shutdown(epoch: BrowserEpoch, tabId: number): Promise<void> {
+    if (!this.#matches(epoch) || epoch.allowedOrigin !== SYNTHETIC_PORTAL_ORIGIN || tabId !== 1 ||
+        !/^[a-f0-9]{64}$/.test(epoch.epoch) || (this.#epoch !== undefined && epoch.epoch !== this.#epoch)) {
+      this.#fail(); throw new PlaywrightDiagnosticError('protocol_rejected');
+    }
+    await this.close();
+  }
   close(): Promise<void> {
     this.#fail();
     this.#closePromise ??= Promise.resolve().then(async () => {
@@ -148,6 +159,7 @@ export class PlaywrightActionsTransport implements BrowserSessionTransport {
     try {
       await this.#wait(this.options.page.goto(rootUrl, { waitUntil: 'domcontentloaded', timeout: Math.max(1, deadline - Date.now()) }), deadline);
       this.#assert();
+      await this.#validateDestination(deadline);
     } finally { this.#load = undefined; }
   }
   async #route(route: Route): Promise<void> {
@@ -187,12 +199,25 @@ export class PlaywrightActionsTransport implements BrowserSessionTransport {
       if (response.url() !== expected || headers.location !== undefined || ![200, 403, 429].includes(status) ||
           !/^text\/html(?:;\s*charset=utf-8)?$/i.test(headers['content-type'] ?? '')) throw new PlaywrightDiagnosticError('page_rejected');
       const body = await this.#wait(response.body(), deadline, signal);
-      if (body.byteLength > 262_144 || (status !== 200 && !body.includes(`data-behalvo-page-state="${status === 403 ? 'forbidden' : 'rate_limited'}"`)))
+      if (body.byteLength > 262_144)
         throw new PlaywrightDiagnosticError('page_rejected');
       this.#assert(); if (signal.aborted || Date.now() >= deadline) throw new PlaywrightDiagnosticError('cancelled');
+      this.#responseStatus = status;
       await this.#wait(route.fulfill({ response, body }), deadline, signal);
       if (expected === formUrl && permit) { permit.phase = 'fulfilled'; permit.done.resolve(); }
     } finally { await response.dispose().catch(() => {}); }
+  }
+  #assertStatus(snapshot: BrowserPageSnapshot): void {
+    if ((this.#responseStatus === 403 && snapshot.state !== 'forbidden') ||
+        (this.#responseStatus === 429 && snapshot.state !== 'rate_limited'))
+      throw new PlaywrightDiagnosticError('page_rejected');
+  }
+  async #validateDestination(deadline: number, signal = this.#stopped.signal): Promise<void> {
+    if (this.#responseStatus === 200) return;
+    const document = this.#document;
+    const source = await this.#wait(capturePlaywrightSource(this.options.page), deadline, signal);
+    try { this.#assert(document); this.#assertStatus(source.snapshot); }
+    finally { await source.root.dispose().catch(() => {}); }
   }
   #admit(input: BrowserRequest, gesture: boolean): BrowserRequest {
     this.#assert(); if (!this.#initialized || this.#busy) throw new PlaywrightDiagnosticError('protocol_rejected');

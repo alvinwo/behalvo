@@ -1,9 +1,9 @@
-# Read-only Playwright browser diagnostic
+# Synthetic Playwright browser workflows
 
 P1 opens a visible, newly isolated Chromium browser, reads the local synthetic
 login page through Behalvo's existing BrowserSession, and closes its owned browser.
 It requires no Chrome extension, enrollment value, existing profile or account.
-It does not run the agent, log into websites, monitor appointments or submit actions.
+The diagnostic does not submit actions. The separate P2 command below runs an explicitly scripted synthetic scheduling workflow through the local service. Neither command uses real accounts or a model.
 
 ## Install and run
 
@@ -13,6 +13,7 @@ Use Node.js 22.19 or newer and this checkout's locked dependencies:
 npm ci
 npx playwright install chromium
 npm run browser:playwright -- diagnostic
+npm run browser:playwright -- synthetic-actions
 ```
 
 The browser install is an explicit one-time download of the build matched to
@@ -54,10 +55,10 @@ kill, global profile scan, Singleton deletion or automatic recovery command.
 
 ## Scope and verification
 
-Context routing allows only GET of the exact synthetic root from the owned main
+For the P1 diagnostic, context routing allows only GET of the exact synthetic root from the owned main
 frame. Other methods/paths, off-origin navigation, popups, subframes, WebSockets,
 service workers and downloads are rejected. JavaScript is disabled in the page.
-All gesture requests reject before authorization/dispatch. The local browser
+P1 gesture requests reject before authorization/dispatch. The local browser
 control endpoint is private to the launching process; this is a trusted local
 API boundary, not an OS network sandbox or protection against same-UID code.
 
@@ -72,5 +73,37 @@ The acceptance suite uses only owned synthetic browsers and local servers. It
 covers normal observation, changed markup, navigation during a pending read,
 crash, cancellation, blocked mutations/off-origin requests/popups, and signals
 during launch. [Verification record](verification/2026-10-03-playwright-p1.md).
-P2 actions, durable service integration, human handoff and live accounts require
-separate design and approval; P1 does not establish their guarantees.
+## P2 supervised synthetic actions
+
+`synthetic-actions` starts a private encrypted temporary service store and pairs
+through its local control API. Its fixed script proposes, reviews and arms the
+synthetic grant, observes an empty calendar, cleanly restarts, pauses for a
+synthetic human challenge, resumes from fresh DOM evidence, rejects a withdrawn
+candidate, and books one later candidate. It verifies the rendered appointment,
+checks that another restart creates no effects, and rebuilds projections without
+executing effects. Successful cleanup removes the generated store and profiles.
+
+The browser submits actual typed DOM forms. A one-use route permit binds each
+request to its command, source document, epoch, sequence and deadline. A fresh
+synchronous durable authorization guard runs immediately before dispatch.
+Redirects and retries are disabled. HTTP forbidden/rate-limited responses must
+match the actual parsed page state. An unknown submission is never resubmitted;
+only verification through a fresh owned browser can resolve an exact readback.
+
+Each browser startup is limited to 15 seconds, observations/gestures to 10 seconds,
+and the entire script to 180 seconds plus 5 seconds for cleanup. Restart requires
+confirmed service shutdown and exact owned browser destruction. Active-operation
+handoff terminates the browser and fails closed. Same-run idle handoff supports
+fresh resume; cold crash ownership recovery is not implemented.
+
+All CLI copy uses the existing English catalog; there is no locale selector.
+Run the P2 visible suites serially because they own the same fixed loopback port:
+
+```sh
+TMPDIR=/private/tmp BEHALVO_PLAYWRIGHT_P2_ACCEPTANCE=1 node --test --test-concurrency=1 tests/playwright-actions-mechanics.test.mjs tests/playwright-actions-acceptance.test.mjs tests/playwright-actions-service.test.mjs
+```
+
+[P2 verification record](verification/2026-10-03-playwright-p2.md).
+
+This remains synthetic-only, foreground and awake-only. It does not establish
+real-site compatibility, account security or unattended production readiness.

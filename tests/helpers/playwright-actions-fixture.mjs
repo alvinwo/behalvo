@@ -47,7 +47,7 @@ export async function actionsFixture(options = {}) {
     routes.push(route); await handler(route);
   }
   const transport = new PlaywrightActionsTransport({ ...binding, page, signal: signal.signal,
-    runDeadline: Date.now() + 30000, close: async () => { closes++; } });
+    runDeadline: Date.now() + 30000, close: async () => { closes++; await options.close?.(); } });
   await transport.initialize(Date.now() + 5000);
   const request = (kind = 'recognize', extra = {}) => ({ protocolVersion: 1, requestId: `request-${++sequence}`,
     ...binding, epoch, origin, tabId: 1, sequence, kind, ...extra });

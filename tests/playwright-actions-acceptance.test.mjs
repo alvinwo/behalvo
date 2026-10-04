@@ -114,6 +114,7 @@ test('visible lost submission response leaves one booking and never resubmits', 
   await assert.rejects(f.gesture({ kind: 'booking.submit', slotId, intentId }, 'booking_review', 'confirmation'));
   assert.equal(f.state.mutationCount, 1);
   assert.equal(f.commands.filter(kind => kind === 'booking.submit').length, 1);
+  await f.session.shutdown();
 });
 for (const change of ['duplicate_root', 'missing_safety_attribute', 'unsolicited_reload'])
   test(`visible ${change} cannot produce trusted observations`, { skip: !enabled, timeout: 35000 }, async t => {
@@ -123,3 +124,34 @@ for (const change of ['duplicate_root', 'missing_safety_attribute', 'unsolicited
     if (change === 'unsolicited_reload') await f.page.reload().catch(() => {});
     await assert.rejects(f.session.inspect('calendar', f.fence)); assert.deepEqual(f.commands, []);
   });
+test('visible moved form cannot dispatch after its captured source root is replaced', { skip: !enabled, timeout: 35000 }, async t => {
+  const f = await fixture(t);
+  const { capturePlaywrightSource, preparePlaywrightForm, activatePlaywrightForm } = await import('../dist/browser/playwright-actions-dom.js');
+  const source = await capturePlaywrightSource(f.page);
+  const prepared = await preparePlaywrightForm(source.root, { kind: 'calendar.first_page' });
+  await f.page.evaluate(() => {
+    const root = document.querySelector('main');
+    document.body.append(root.querySelector('button[data-behalvo-gesture="calendar.first_page"]').form);
+    root.outerHTML = '<main data-behalvo-page-state="challenge"></main>';
+  });
+  await assert.rejects(activatePlaywrightForm(prepared, { kind: 'calendar.first_page' }, 'a'.repeat(64)));
+  assert.deepEqual(f.commands, []);
+  await Promise.all([source.root.dispose(), prepared.form.dispose(), prepared.button.dispose()]);
+});
+for (const status of [403, 429]) test(`visible HTTP ${status} rejects a misleading comment before exposing calendar`, { skip: !enabled, timeout: 35000 }, async t => {
+  const { createServer } = await import('node:http');
+  const real = await startSyntheticPortal({ state: new SyntheticPortalState({ scenario: 'calendar_match' }), formResponse: 'document' });
+  const html = await (await fetch(origin)).text(); await real.close();
+  const server = createServer((_request, response) => { response.writeHead(status, { 'content-type': 'text/html; charset=utf-8', connection: 'close' });
+    response.end(`<!-- data-behalvo-page-state="${status === 403 ? 'forbidden' : 'rate_limited'}" -->${html}`); });
+  await new Promise(resolve => server.listen(43117, '127.0.0.1', resolve));
+  const owner = new PlaywrightActionsOwner({ profileId: 'status-test', connectionGeneration: 1, serviceGeneration: 'status-generation',
+    signal: new AbortController().signal, runDeadline: Date.now() + 20000 });
+  t.after(async () => { assert.equal((await owner.close()).confirmed, true); owner.finishReceipt(true, null, true);
+    await new Promise(resolve => server.close(resolve)); });
+  await assert.rejects(async () => {
+    const ready = await owner.start();
+    await ready.transport.inspect({ protocolVersion: 1, requestId: 'status-read', profileId: 'status-test', connectionGeneration: 1,
+      serviceGeneration: 'status-generation', epoch: 'a'.repeat(64), origin, tabId: 1, sequence: 1, kind: 'recognize' });
+  });
+});
