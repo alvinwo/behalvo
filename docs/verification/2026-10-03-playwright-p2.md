@@ -91,3 +91,16 @@ also passed all six gates with unchanged source fingerprint at
 `data/verification/2026-10-04T03-59-19.664Z-3d48e845-be3b-464e-a32e-ec39fd8bdee2/summary.json`.
 Both independent reviewers approved the test-only follow-up. Exact-head hosted
 CI remains a separate merge requirement.
+
+## Merge evidence
+
+Both independent reviewers approved final head
+`0e26f2a90048658277a3501590f62f66c7fd2d53` after the test-only correction.
+Both Node 22.19 and Node 24 jobs passed in the
+[pull-request run](https://github.com/alvinwo/behalvo/actions/runs/37175739334)
+and [push run](https://github.com/alvinwo/behalvo/actions/runs/37175736186).
+[PR #14](https://github.com/alvinwo/behalvo/pull/14) merged at
+`4fa239488bcad79d11775368fa417559cc19bd70` on 2026-10-04 04:03:56 UTC.
+Local master was fast-forwarded and its tree compared equal to the reviewed head.
+[Post-merge CI](https://github.com/alvinwo/behalvo/actions/runs/37175898345)
+also passed on exact merge commit `4fa239488bcad79d11775368fa417559cc19bd70`.
