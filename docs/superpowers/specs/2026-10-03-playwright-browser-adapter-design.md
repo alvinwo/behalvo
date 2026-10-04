@@ -230,6 +230,11 @@ extension reviews do not approve this new transport.
 
 ## Replacement PR integration
 
+Historical authorization below was superseded by the owner's later instruction
+to delegate technical review decisions and merge after specialist approval.
+PR #13 merged at `6b6ef82`; see the
+[verification record](../../verification/2026-10-03-playwright-p1.md).
+
 On 2026-10-03 the owner authorized a new current-work PR and closure of stale
 PR #12. The replacement branch `codex/playwright-p1` starts directly at master
 `09b99e6`; it carries only P1 files and depends on BrowserSession and the synthetic

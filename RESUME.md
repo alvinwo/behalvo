@@ -1,8 +1,20 @@
-# Behalvo Playwright P1 continuation — 2026-10-03
+# Behalvo Playwright P2 design continuation — 2026-10-03
 
-Current branch: `codex/playwright-p1`, directly based on master `09b99e6`.
-The owner authorized publishing a new PR for the current Playwright work and
-closing stale PR #12. No merge is authorized.
+Current branch: `codex/playwright-p2-design`, based on merged master `6b6ef82`.
+The owner delegated technical merge/revise decisions to specialist reviewers,
+authorized addressing findings and merging after approval, then starting the next task.
+PR #13 merged at `6b6ef8279617c5e2395156c0d1b9eca2697feeda` after independent
+Sol-high and Astra-high MERGE decisions for `30ad65e`. All four hosted checks passed.
+PR #12 is closed, superseded by #13. Local master is synchronized; its tree exactly
+matches the reviewed PR head. The fully merged local P1 branch was removed.
+
+Next work is P2's separate design and implementation plan for authorized synthetic
+Playwright actions. Design is in progress; no P2 executable behavior is implemented.
+Keep technical approval with the specialists; do not ask the owner to perform code review.
+The [P2 architecture checkpoint](docs/superpowers/specs/2026-10-03-playwright-p2-design.md)
+records the dispatch-authority and restart-ownership questions. Complete the design
+and implementation plan, obtain independent review, then implement. The checkpoint
+is a draft, not an approval or a completed plan.
 
 The replacement carries only the reviewed P1 implementation/tests and associated
 package/documentation changes. It excludes the installed-extension machinery from

@@ -217,3 +217,22 @@ returns can leave unidentified resources and is explicitly cleanup-pending.
 Bounded CLI exit ends reliable late cleanup; exit hooks are best effort.
 The [browser guide](docs/PLAYWRIGHT_BROWSER.md) describes installation, failure
 handling and the limits of synthetic-only macOS acceptance.
+
+## Supervised synthetic Playwright P2
+
+The separately invoked `synthetic-actions` script uses the paired local service
+API and existing journal-backed grant, reservation and readback paths. Real DOM
+forms require exact captured source ownership and a one-use intercepted request
+permit. Synchronous dispatch guards re-read durable job/domain authority; fatal
+storage reads fault the runtime before browser errors are sanitized. Redirects,
+request retries and arbitrary browser commands remain prohibited.
+
+A lost response is unknown. The script may perform verification-only readback in
+a fresh owned browser after confirmed service and browser shutdown, but never
+resubmits. Missing or mismatched evidence leaves the action unknown. Same-run idle
+handoff supports fresh resume; active-operation retirement fails closed. Final
+session destruction can confirm full owned-resource cleanup independently of
+handoff retirement, without granting a reusable epoch. The run is bounded to
+180 seconds plus 5 seconds cleanup; pending browser ownership attempts retain per-owner receipts and forbid
+automatic restart. Pending portal/service startup also exits 3 but may have no
+browser receipt if no owner was created. No personal profile, credentials, live account or model is used.

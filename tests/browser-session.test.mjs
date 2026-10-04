@@ -352,3 +352,20 @@ test('resume is single-flight and cannot overlap a handoff release', async () =>
   await handoff;
   await releasing.session.shutdown();
 });
+
+test('required synchronous dispatch hook rejects missing authority without mutation', async t => {
+  const f = fixture({ requireDispatchGuard: true });
+  t.after(() => f.session.shutdown());
+  await assert.rejects(f.session.gesture({ kind: 'calendar.first_page' }, 'calendar', fence(f.calls)));
+  assert.equal(f.calls.some(item => item[0] === 'mutate'), false);
+});
+
+test('navigation preserves synchronous dispatch checks after async preflight', async t => {
+  let checked = 0;
+  const f = fixture({ requireDispatchGuard: true });
+  t.after(() => f.session.shutdown());
+  f.transport.inspect = async request => response(request, calendarSnapshot(), 'destination-document');
+  const authority = { ...fence(f.calls), assertDispatchCurrent() { checked++; } };
+  await f.session.gestureAndWaitForNavigation({ kind: 'calendar.first_page' }, 'calendar', ['calendar'], authority);
+  assert.equal(checked, 1);
+});

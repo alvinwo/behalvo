@@ -461,6 +461,12 @@ export class MonitoringService {
         await fence.assertCurrent();
         if (controller.signal.aborted) throw new OperationStoppedError();
       },
+      ...(fence.reportDispatchFailure ? { reportDispatchFailure: (error: unknown) => fence.reportDispatchFailure!(error) } : {}),
+      ...(fence.assertDispatchCurrent ? { assertDispatchCurrent: () => {
+        if (controller.signal.aborted) throw new OperationStoppedError();
+        fence.assertDispatchCurrent!();
+        if (controller.signal.aborted) throw new OperationStoppedError();
+      } } : {}),
       assertSettlementCurrent: () => {
         if (controller.signal.aborted) throw new OperationStoppedError();
         fence.assertSettlementCurrent?.();
@@ -501,6 +507,12 @@ export class MonitoringService {
         await fence.assertCurrent();
         if (controller.signal.aborted) throw new OperationStoppedError();
       },
+      ...(fence.reportDispatchFailure ? { reportDispatchFailure: (error: unknown) => fence.reportDispatchFailure!(error) } : {}),
+      ...(fence.assertDispatchCurrent ? { assertDispatchCurrent: () => {
+        if (controller.signal.aborted) throw new OperationStoppedError();
+        fence.assertDispatchCurrent!();
+        if (controller.signal.aborted) throw new OperationStoppedError();
+      } } : {}),
       ...(fence.assertSettlementCurrent ? { assertSettlementCurrent: () => fence.assertSettlementCurrent!() } : {})
     };
     try { return await this.#runReservedActionJob(job, currentFence); }
@@ -622,8 +634,7 @@ export class MonitoringService {
 
   #reservedActionFence(lifecycle: TrustedExecutionFence, action: Action, grant: MonitoredActionGrant,
       connection: Connection, mutation: boolean): TrustedExecutionFence {
-    const assertCurrent = async () => {
-      await lifecycle.assertCurrent();
+    const assertDomainCurrent = (requireIntent = false) => {
       const state = this.#state();
       const currentAction = state.actions[action.id];
       const currentGrant = state.monitoredActionGrants[grant.id];
@@ -632,7 +643,10 @@ export class MonitoringService {
       const currentInstallation = this.store.monitorInstallation();
       const actionStatus = mutation ? currentAction?.status === 'running' :
         currentAction !== undefined && ['accepted', 'unknown'].includes(currentAction.status);
-      if (!actionStatus || currentAction?.digest !== action.digest || currentAction.attemptId !== action.attemptId ||
+      if ((mutation && requireIntent && (!currentAction?.monitoredIntent ||
+            currentAction.monitoredIntent.attemptId !== action.attemptId ||
+            currentAction.monitoredIntent.intentId !== createIntentId(action.id, action.attemptId!))) ||
+          !actionStatus || currentAction?.digest !== action.digest || currentAction.attemptId !== action.attemptId ||
           currentAction.monitoredGrant?.id !== grant.id || currentAction.monitoredGrant.digest !== grant.digest ||
           currentAction.monitoredGrant.revision !== grant.revision || !currentGrant || currentGrant.status !== 'blocked' ||
           currentGrant.digest !== grant.digest || currentGrant.revision !== grant.revision ||
@@ -647,10 +661,17 @@ export class MonitoringService {
             ['done', 'cancelled'].includes(currentWork.phase))) ||
           (mutation && (currentGrant.revokedAt !== undefined || Date.parse(this.#now()) >= Date.parse(currentGrant.expiresAt))))
         throw new MonitoredAuthorityChangedError();
-      await lifecycle.assertCurrent();
+    };
+    const assertCurrent = async () => {
+      await lifecycle.assertCurrent(); assertDomainCurrent(); await lifecycle.assertCurrent();
     };
     return { serviceGeneration: lifecycle.serviceGeneration, deadline: lifecycle.deadline,
       signal: lifecycle.signal, assertCurrent,
+      ...(lifecycle.reportDispatchFailure ? { reportDispatchFailure: (error: unknown) => lifecycle.reportDispatchFailure!(error) } : {}),
+      ...(lifecycle.assertDispatchCurrent ? { assertDispatchCurrent: () => {
+        lifecycle.assertDispatchCurrent!(); assertDomainCurrent(true);
+        lifecycle.assertDispatchCurrent!();
+      } } : {}),
       ...(lifecycle.assertSettlementCurrent
         ? { assertSettlementCurrent: () => lifecycle.assertSettlementCurrent!() } : {}) };
   }
@@ -678,10 +699,34 @@ export class MonitoringService {
         revision: grant.revision, reason: 'material_drift' });
       return;
     }
+    const assertObservationCurrent = () => {
+      const current = this.#state();
+      const monitor = current.monitors[item.id]; const activeGrant = current.monitoredActionGrants[grant.id];
+      const installation = this.store.monitorInstallation();
+      const activeConnection = current.connections[connection.id];
+      const work = current.works[item.workId];
+      if (!monitor || monitor.status !== 'active' || monitor.inFlightJobId !== job.id ||
+          !work || work.revision !== state.works[item.workId]?.revision || ['done', 'cancelled'].includes(work.phase) ||
+          monitor.grantId !== grant.id || !activeGrant || activeGrant.status !== 'active' ||
+          activeGrant.digest !== grant.digest || activeGrant.revision !== grant.revision ||
+          Date.parse(this.#now()) >= Date.parse(activeGrant.expiresAt) ||
+          activeGrant.browserProfileId !== grant.browserProfileId ||
+          !installation?.active || installation.generation !== grant.installationGeneration ||
+          !activeConnection || activeConnection.status !== 'active' ||
+          activeConnection.generation !== connection.generation || activeConnection.provider !== connection.provider ||
+          activeConnection.subject !== connection.subject) throw new MonitoredAuthorityChangedError();
+      assertArmPlanCurrent(current, activeGrant, monitor);
+    };
+    const observationFence: TrustedExecutionFence = { ...fence,
+      assertCurrent: async () => { await fence.assertCurrent(); assertObservationCurrent(); await fence.assertCurrent(); },
+      ...(fence.reportDispatchFailure ? { reportDispatchFailure: (error: unknown) => fence.reportDispatchFailure!(error) } : {}),
+      ...(fence.assertDispatchCurrent ? { assertDispatchCurrent: () => {
+        fence.assertDispatchCurrent!(); assertObservationCurrent(); fence.assertDispatchCurrent!();
+      } } : {}) };
     let observation: Observation;
     try {
       observation = await withinExecution(() => adapter.inspect!({ monitor: structuredClone(item),
-        grant: structuredClone(grant), connection: structuredClone(connection), fence }), fence);
+        grant: structuredClone(grant), connection: structuredClone(connection), fence: observationFence }), observationFence);
     } catch (error) {
       if (error instanceof OperationStoppedError || fence.signal.aborted) throw error;
       await fence.assertCurrent();

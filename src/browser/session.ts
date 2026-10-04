@@ -12,6 +12,8 @@ export interface BrowserSessionTransport {
     authority: { deadline: number; signal: AbortSignal }): Promise<unknown>;
   revoke(epoch: BrowserEpoch, tabId: number): Promise<void>;
   reconcileRevocation(epoch: BrowserEpoch, tabId: number): Promise<void>;
+  /** Final destruction only: resolve after exact owned resources are irreversibly unavailable. */
+  shutdown?(epoch: BrowserEpoch, tabId: number): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -82,6 +84,7 @@ export interface BrowserSessionOptions {
   termsDigest?: string;
   initialState?: 'active' | 'human' | 'faulted';
   initialFaultEpoch?: BrowserEpoch;
+  requireDispatchGuard?: boolean;
   transport: BrowserSessionTransport;
   persistence: BrowserSessionPersistence;
   registry?: BrowserEpochRegistry;
@@ -155,7 +158,9 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
     const token = this.#captureOperation();
     const deadline = Math.min(fence.deadline, Date.now() + MAX_GESTURE_WINDOW_MS);
     const navigationFence: TrustedExecutionFence = { serviceGeneration: fence.serviceGeneration,
-      deadline, signal: fence.signal, assertCurrent: () => fence.assertCurrent() };
+      deadline, signal: fence.signal, assertCurrent: () => fence.assertCurrent(),
+      ...(fence.reportDispatchFailure ? { reportDispatchFailure: (error: unknown) => fence.reportDispatchFailure!(error) } : {}),
+      ...(fence.assertDispatchCurrent ? { assertDispatchCurrent: () => fence.assertDispatchCurrent!() } : {}) };
     const source = await this.#gestureResponse(command, expectedState, navigationFence, token);
     for (;;) {
       await this.#assertCurrent(navigationFence, token);
@@ -183,6 +188,9 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
       raw = await this.#withinEpoch(token, this.options.transport.gesture(request, async () => {
         await this.#assertCurrent(fence, token);
         return () => {
+          if (this.options.requireDispatchGuard && !fence.assertDispatchCurrent) throw new OperationStoppedError();
+          try { fence.assertDispatchCurrent?.(); }
+          catch (error) { fence.reportDispatchFailure?.(error); throw error; }
           this.#assertOperationToken(token);
           if (fence.serviceGeneration !== this.options.serviceGeneration || fence.signal.aborted ||
               Date.now() >= fence.deadline) throw new OperationStoppedError();
@@ -313,7 +321,10 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
     this.#invalidate();
     try {
       if (wasActive) {
-        try { await this.options.transport.revoke(previous, this.options.tabId); } finally {
+        try {
+          if (this.options.transport.shutdown) await this.options.transport.shutdown(previous, this.options.tabId);
+          else await this.options.transport.revoke(previous, this.options.tabId);
+        } finally {
           await this.options.persistence.releaseWorker();
         }
       }

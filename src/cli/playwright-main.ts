@@ -1,6 +1,7 @@
 import { writeSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { runPlaywrightDiagnostic, type PlaywrightDiagnosticResult } from '../browser/playwright-diagnostic.js';
+import { runPlaywrightActions, type PlaywrightActionsResult } from '../browser/playwright-actions-demo.js';
 import { playwrightMessage as message } from './playwright-messages.js';
 
 export interface PlaywrightCliDependencies {
@@ -8,25 +9,30 @@ export interface PlaywrightCliDependencies {
   writeStdout?: (text: string) => void;
   writeStderr?: (text: string) => void;
   diagnostic?: typeof runPlaywrightDiagnostic;
+  actions?: typeof runPlaywrightActions;
 }
 export async function runPlaywrightCli(argv: readonly string[], dependencies: PlaywrightCliDependencies = {}): Promise<number> {
   const out = dependencies.writeStdout ?? (text => writeSync(1, text));
   const err = dependencies.writeStderr ?? (text => writeSync(2, text));
-  if (argv.length !== 1 || argv[0] !== 'diagnostic') { err(message('usage')); return 2; }
-  let result: PlaywrightDiagnosticResult;
-  try { result = await (dependencies.diagnostic ?? runPlaywrightDiagnostic)({ signal: dependencies.signal ?? new AbortController().signal }); }
+  if (argv.length !== 1 || !['diagnostic', 'synthetic-actions'].includes(argv[0]!)) { err(message('usage')); return 2; }
+  let result: PlaywrightDiagnosticResult | PlaywrightActionsResult;
+  try { result = await (argv[0] === 'synthetic-actions' ? dependencies.actions ?? runPlaywrightActions : dependencies.diagnostic ?? runPlaywrightDiagnostic)({ signal: dependencies.signal ?? new AbortController().signal }); }
   catch { err(message('failure')); return 1; }
-  if (result?.ok && result.cleanup === 'confirmed' && result.snapshot?.state === 'login' &&
+  if (result?.ok && result.cleanup === 'confirmed' && (argv[0] === 'diagnostic' ? 'snapshot' in result && result.snapshot?.state === 'login' :
+        'synthetic' in result && result.synthetic === true && result.emptyPoll === true && result.cleanRestart === true &&
+        result.handoffResume === true && result.candidateRace === true && result.singleBooking === true &&
+        result.authoritativeReadback === true && result.replayNoEffects === true) &&
       result.playwrightVersion === '1.63.0' && /^\d+(?:\.\d+){1,4}$/.test(result.browserVersion)) {
-    out(message('success')); out(message('versions', { playwright: result.playwrightVersion, browser: result.browserVersion })); return 0;
+    out(message(argv[0] === 'synthetic-actions' ? 'actions_success' : 'success')); out(message('versions', { playwright: result.playwrightVersion, browser: result.browserVersion })); return 0;
   }
   if (!result || result.ok) { err(message('failure')); return 1; }
   const key = result.code === 'browser_missing' || result.code === 'unsafe_environment' ||
     result.code === 'cancelled' || result.code === 'cleanup_pending' ? result.code : 'failure';
   err(message(key));
   // Only our generated receipt location is allowed in public output.
-  if (result.receiptPath && /^\/(?:[^\r\n\x00]+\/)?behalvo-playwright-[A-Za-z0-9]+\/receipt\.json$/.test(result.receiptPath))
-    err(message('receipt', { path: result.receiptPath }));
+  for (const receiptPath of ('receiptPaths' in result ? result.receiptPaths : [result.receiptPath]))
+  if (receiptPath && /^\/(?:[^\r\n\x00]+\/)?behalvo-playwright-[A-Za-z0-9]+\/receipt\.json$/.test(receiptPath))
+    err(message('receipt', { path: receiptPath }));
   return result.cleanup === 'pending' ? 3 : 1;
 }
 

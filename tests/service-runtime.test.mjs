@@ -677,3 +677,9 @@ test('restart resumes queued work once and interrupts running work without repla
     }
   });
 });
+
+test('shutdown reports unconfirmed when a browser close rejects', async t => {
+  const f = fixture([], { runtime: { browserSessions: [{ async shutdown() { throw new Error('synthetic close failed'); } }] } });
+  t.after(() => f.store.close());
+  assert.equal(await f.runtime.shutdown(), false);
+});
