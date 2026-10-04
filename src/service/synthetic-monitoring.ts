@@ -98,6 +98,7 @@ export async function createSyntheticMonitoringComposition(input: {
   const retirementTarget = existingMonitor?.control?.resume?.candidate ??
     (existingHandoff?.state !== 'confirmed' ? existingHandoff?.binding : undefined);
   session = new BrowserSession({ profileId, connectionGeneration: 1,
+    requireDispatchGuard: true,
     serviceGeneration: input.serviceGeneration, allowedOrigin: SYNTHETIC_PORTAL_ORIGIN, tabId: created.tabId,
     identityDigest: SYNTHETIC_MONITORING_DIGESTS.identityDigest,
     subjectDigest: SYNTHETIC_MONITORING_DIGESTS.subjectDigest, termsVersion: 'terms-1',

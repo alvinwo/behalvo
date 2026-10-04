@@ -877,3 +877,95 @@ for (const mismatch of ['empty', 'wrong', 'incomplete'])
     assert.deepEqual(f.monitoring.grant('grant-visa'), before);
     assert.equal(f.submits(), 0); assert.equal(portal.mutationCount, 1, 'the seeded appointment is the only provider mutation');
   });
+
+for (const change of ['connection', 'work', 'expiry']) test(`final durable ${change} change without abort prevents submission`, async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'visa-dispatch-authority-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const portal = new SyntheticPortalState({ scenario: 'calendar_match' });
+  portal.gesture({ kind: 'calendar.next_page' });
+  let f, changed = false, clock = now;
+  f = build(join(directory, 'store.db'), randomBytes(32), portal, {
+    clock: () => clock,
+    beforeFinalAuthorize(kind) {
+      if (kind !== 'booking.submit') return;
+      changed = true;
+      if (change === 'expiry') { clock = '2026-09-23T12:00:00.000Z'; return; }
+      const state = f.store.state(workspaceId);
+      f.store.append(workspaceId, state.version, [change === 'connection'
+        ? { type: 'connection.revoked', data: { id: 'connection-visa', generation: 2 } }
+        : { type: 'work.phase_changed', data: { id: 'work', phase: 'cancelled' } }], { recordedAt: now });
+    }
+  });
+  t.after(async () => { await f.runtime.shutdown(); f.store.close(); });
+  const action = reserve(f);
+  f.runtime.admitAction({ requestId: 'execute-final-durable', kind: 'execute', actionId: action.id, digest: action.digest });
+  await f.runtime.drain();
+  assert.equal(changed, true);
+  assert.equal(f.submits(), 0);
+  assert.equal(portal.mutationCount, 0);
+  assert.equal(f.store.state(workspaceId).actions[action.id].status, 'unknown');
+});
+
+for (const change of ['action_digest', 'attempt', 'reservation', 'grant_revision', 'profile', 'intent', 'installation', 'claim', 'instance', 'job_status'])
+  test(`dispatch rejects changed ${change} in the final storage read`, async t => {
+    const directory = mkdtempSync(join(tmpdir(), 'visa-dispatch-snapshot-'));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const portal = new SyntheticPortalState({ scenario: 'calendar_match' }); portal.gesture({ kind: 'calendar.next_page' });
+    let f, injected = false;
+    f = build(join(directory, 'store.db'), randomBytes(32), portal, {
+      beforeFinalAuthorize(kind) {
+        if (kind !== 'booking.submit') return;
+        injected = true;
+        if (['claim', 'instance', 'job_status'].includes(change)) {
+          const read = f.store.serviceJob.bind(f.store);
+          f.store.serviceJob = (...args) => { f.store.serviceJob = read; const value = structuredClone(read(...args));
+            if (change === 'claim') value.claim.claimId = 'changed-claim';
+            if (change === 'instance') value.claim.instanceId = 'changed-instance';
+            if (change === 'job_status') value.status = 'finished';
+            return value; }; return;
+        }
+        if (change === 'installation') {
+          const read = f.store.monitorInstallation.bind(f.store);
+          f.store.monitorInstallation = () => { f.store.monitorInstallation = read; return { ...read(), active: false }; }; return;
+        }
+        const read = f.store.state.bind(f.store);
+        f.store.state = (...args) => { f.store.state = read; const state = structuredClone(read(...args));
+          const action = state.actions['action-visa'], grant = state.monitoredActionGrants['grant-visa'];
+          if (change === 'action_digest') action.digest = '0'.repeat(64);
+          if (change === 'attempt') action.attemptId = 'other-attempt';
+          if (change === 'reservation') grant.reservedActionId = 'other-action';
+          if (change === 'grant_revision') grant.revision++;
+          if (change === 'profile') grant.browserProfileId = 'other-profile';
+          if (change === 'intent') delete action.monitoredIntent;
+          return state;
+        };
+      }
+    });
+    t.after(async () => { await f.runtime.shutdown(); f.store.close(); });
+    const action = reserve(f);
+    f.runtime.admitAction({ requestId: 'execute-final-snapshot', kind: 'execute', actionId: action.id, digest: action.digest });
+    await f.runtime.drain();
+    assert.equal(injected, true); assert.equal(f.submits(), 0); assert.equal(portal.mutationCount, 0);
+  });
+
+test('observation pagination rejects work drift after async authority without dispatch', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'visa-observe-dispatch-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const portal = new SyntheticPortalState({ scenario: 'calendar_match' }); portal.gesture({ kind: 'calendar.next_page' });
+  let f, changed = false, paginationPosts = 0;
+  const gesture = portal.gesture.bind(portal);
+  portal.gesture = command => { if (command.kind === 'calendar.first_page') paginationPosts++; return gesture(command); };
+  f = build(join(directory, 'store.db'), randomBytes(32), portal, {
+    beforeFinalAuthorize(kind) {
+      if (kind !== 'calendar.first_page' || changed) return;
+      changed = true;
+      f.store.append(workspaceId, f.store.state(workspaceId).version,
+        [{ type: 'work.phase_changed', data: { id: 'work', phase: 'cancelled' } }], { recordedAt: now });
+    }
+  });
+  t.after(async () => { await f.runtime.shutdown(); f.store.close(); }); arm(f);
+  await f.runtime.tick(); await f.runtime.drain();
+  assert.equal(changed, true);
+  assert.equal(paginationPosts, 0);
+  assert.equal(portal.mutationCount, 0);
+});

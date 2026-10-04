@@ -15,6 +15,8 @@ export interface TrustedExecutionFence {
     readonly deadline: number;
     readonly signal: AbortSignal;
     assertCurrent(): Promise<void>;
+    /** Fresh synchronous authority read immediately before external dispatch. */
+    assertDispatchCurrent?(): void;
     /** Allows only a fixed application stop receipt after cancellation/deadline. */
     assertSettlementCurrent?(): void;
 }

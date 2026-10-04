@@ -163,12 +163,14 @@ export class ServiceRuntime {
     this.#activeController?.abort();
     const browserShutdown = Promise.allSettled((this.options.browserSessions ?? []).map(session => session.shutdown()));
     const active = [this.#ticking, this.#draining].filter((promise): promise is Promise<void> => promise !== undefined);
-    active.push(browserShutdown.then(() => undefined));
+    active.push(browserShutdown.then(results => {
+      if (results.some(result => result.status === 'rejected')) throw new OperationStoppedError();
+    }));
     let settled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        Promise.allSettled(active).then(() => { settled = true; }),
+        Promise.allSettled(active).then(results => { settled = results.every(result => result.status === 'fulfilled'); }),
         new Promise<void>(resolve => { timeout = setTimeout(resolve, 5000); })
       ]);
     } finally {
@@ -207,6 +209,15 @@ export class ServiceRuntime {
         if (this.#fatalError !== undefined) throw this.#fatalError;
         if (controller.signal.aborted || Date.now() >= deadline || this.#activeJobId !== job.id ||
             this.options.serviceGeneration !== fence.serviceGeneration) throw new OperationStoppedError();
+      },
+      assertDispatchCurrent: () => {
+        if (this.#fatalError !== undefined) throw this.#fatalError;
+        if (controller.signal.aborted || Date.now() >= deadline || this.#activeJobId !== job.id ||
+            this.options.serviceGeneration !== fence.serviceGeneration) throw new OperationStoppedError();
+        const current = this.store.serviceJob(this.options.workspaceId, job.id);
+        if (current.status !== 'running' || !current.claim || !job.claim ||
+            current.claim.claimId !== job.claim.claimId || current.claim.instanceId !== job.claim.instanceId)
+          throw new OperationStoppedError();
       },
       assertSettlementCurrent: () => {
         if (this.#fatalError !== undefined) throw this.#fatalError;

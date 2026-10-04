@@ -82,6 +82,7 @@ export interface BrowserSessionOptions {
   termsDigest?: string;
   initialState?: 'active' | 'human' | 'faulted';
   initialFaultEpoch?: BrowserEpoch;
+  requireDispatchGuard?: boolean;
   transport: BrowserSessionTransport;
   persistence: BrowserSessionPersistence;
   registry?: BrowserEpochRegistry;
@@ -155,7 +156,8 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
     const token = this.#captureOperation();
     const deadline = Math.min(fence.deadline, Date.now() + MAX_GESTURE_WINDOW_MS);
     const navigationFence: TrustedExecutionFence = { serviceGeneration: fence.serviceGeneration,
-      deadline, signal: fence.signal, assertCurrent: () => fence.assertCurrent() };
+      deadline, signal: fence.signal, assertCurrent: () => fence.assertCurrent(),
+      ...(fence.assertDispatchCurrent ? { assertDispatchCurrent: () => fence.assertDispatchCurrent!() } : {}) };
     const source = await this.#gestureResponse(command, expectedState, navigationFence, token);
     for (;;) {
       await this.#assertCurrent(navigationFence, token);
@@ -183,6 +185,8 @@ export class BrowserSession implements BrowserSessionPort, BrowserSessionLifecyc
       raw = await this.#withinEpoch(token, this.options.transport.gesture(request, async () => {
         await this.#assertCurrent(fence, token);
         return () => {
+          if (this.options.requireDispatchGuard && !fence.assertDispatchCurrent) throw new OperationStoppedError();
+          fence.assertDispatchCurrent?.();
           this.#assertOperationToken(token);
           if (fence.serviceGeneration !== this.options.serviceGeneration || fence.signal.aborted ||
               Date.now() >= fence.deadline) throw new OperationStoppedError();
