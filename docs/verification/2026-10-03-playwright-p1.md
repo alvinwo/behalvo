@@ -24,8 +24,25 @@ correction distinguishing existing shared dependencies from newly added Playwrig
 that correction is included. No integration code changes were required. Only subsequent
 documentation checkpoints differ from this tested executable source.
 
-The owner authorized publication and closure of superseded PR #12, not merging.
-Hosted CI for the replacement must be assessed separately after publication.
+The owner subsequently delegated technical merge/revise decisions to specialist
+reviewers and authorized merge after approval. Independent `gpt-5.6-sol`/high and
+`gpt-6-astra`/high reviewers both returned MERGE for unchanged PR head
+`30ad65ec267b6777267289b85e6978a1489e0243`, with no outstanding findings.
+These were agent reviews in the development session, not GitHub account approvals.
+Both Node 22.19 and Node 24 jobs succeeded in the
+[pull-request run](https://github.com/alvinwo/behalvo/actions/runs/37168293716)
+and [push run](https://github.com/alvinwo/behalvo/actions/runs/37168276373).
+[PR #13](https://github.com/alvinwo/behalvo/pull/13) merged at
+`6b6ef8279617c5e2395156c0d1b9eca2697feeda` on 2026-10-04 02:08:24 UTC.
+Local master was fast-forwarded and its tree compared equal to the reviewed head.
+[Post-merge CI](https://github.com/alvinwo/behalvo/actions/runs/37170136316)
+also completed successfully on exact merge commit `6b6ef82`.
+No source changes or repeated acceptance runs were needed for this merge.
+PR #12 was closed without merging; the historical branches remain preserved.
+
+Final decision ledger: Sol/high, independent code/design clearance, zero new
+fix retries, MERGE; Astra/high, independent architecture/security clearance,
+zero new fix retries, MERGE. These reused the existing independent review contexts.
 
 ## Original stacked-branch evidence
 
