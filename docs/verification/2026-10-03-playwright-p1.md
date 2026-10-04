@@ -1,13 +1,31 @@
 # Playwright P1 local verification — 2026-10-03
 
-## Replacement branch — integration in progress
+## Replacement branch — verified integration
 
 The owner authorized publication of a replacement PR and closure of stale PR #12.
 `codex/playwright-p1` is based directly on master `09b99e6`, carrying the same P1
 executable files and tests reviewed at `82fc957`. PR #12's installable extension
-changes are excluded; existing master supplies all runtime dependencies. Both
-older branches remain preserved. Verification and review results for the clean
-base will be recorded below before publication; no merge is authorized.
+changes are excluded; existing master supplies the required shared BrowserSession and synthetic portal
+dependencies; this branch adds Playwright. Both
+older branches remain preserved. The clean-base source commit is `9ec85387aa9125fe136e369c74d699e28b4cc53a`.
+Fresh `npm run verify` passed all six gates on that clean, unchanged head:
+`data/verification/2026-10-04T01-28-51.889Z-cc7b5b8f-dc5b-492f-9bd9-5a3535b6dbb4/summary.json`.
+Tests: 1118 total, 1099 passed, 19 skipped, zero failed. The lower count reflects
+exclusion of PR #12's installer/bridge tests, not suppressed P1 coverage.
+
+Exact-head visible Mac acceptance passed 15/15 and the public command exited 0,
+confirming login and cleanup. Logs are under ignored
+`data/verification/playwright-p1-replacement/` (`source-head.txt`,
+`mac-acceptance.log`, `public-command.log`). All twelve P1 source/test/helper files
+were byte-compared with approved `82fc957`; shared session/types/portal files also
+match master and the previously reviewed tree. Focused independent Sol-high and Astra-high integration reviews cleared
+dependency completeness and the reduced PR scope. Sol requested a wording
+correction distinguishing existing shared dependencies from newly added Playwright;
+that correction is included. No integration code changes were required. Only subsequent
+documentation checkpoints differ from this tested executable source.
+
+The owner authorized publication and closure of superseded PR #12, not merging.
+Hosted CI for the replacement must be assessed separately after publication.
 
 ## Original stacked-branch evidence
 
@@ -124,6 +142,8 @@ added. Output-delivery, redaction, build and verification checks passed.
 | Design/security review | gpt-5.6-sol | high | Independent P1 boundary and acceptance review | Focused correction check | Approved revised design |
 | Independent final code review | gpt-5.6-sol | high | Reused non-implementer review context | One output fix re-review | Approved 82fc957 |
 | Independent final architecture review | gpt-6-astra | high | New transport/network/lifecycle risks | Focused redirect and output re-review | Approved 82fc957 |
+| Replacement integration review | gpt-5.6-sol | high | Reused P1 reviewer; direct-master dependencies/scope | One documentation wording correction | Cleared |
+| Replacement integration review | gpt-6-astra | high | Reused P1 reviewer; removal of PR12 prerequisites | Zero retries | Approved |
 
 The primary implemented locally with its existing session settings; no model or
 reasoning override, paid provider fallback or runtime agent was introduced.
