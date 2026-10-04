@@ -223,11 +223,15 @@ test('caller context budget caps full accumulated loop requests even below confi
 
 test('in-flight loop deadline settles the action before durable reply and discards late effect success after close', async () => {
     let resolveLate;
-    const f = fixture([], { loop: { timeoutMs: 10 }, effect: () => new Promise(resolve => { resolveLate = resolve; }) });
+    const f = fixture([], { loop: { timeoutMs: 100 }, effect: () => new Promise(resolve => { resolveLate = resolve; }) });
     const action = await prepared(f); approve(f, action);
     f.responses.push(tool('execute', { actionId: action.id }));
     const result = await f.run();
-    assert.match(result.turn.reply, /deadline after dispatch started/i);
+    // Either the operation timer or the outer loop may observe the deadline first.
+    // Both must report unknown without retry; exact wording is not the safety contract.
+    assert.equal(f.calls(), 1);
+    assert.match(result.turn.reply, /unknown/i);
+    assert.match(result.turn.reply, /no automatic retry/i);
     assert.equal(f.store.state('ws').actions[action.id].status, 'unknown');
     assert.equal(f.store.inbox('ws').length, 0);
     f.store.close();

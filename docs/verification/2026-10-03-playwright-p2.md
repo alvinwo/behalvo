@@ -77,3 +77,17 @@ personal-account, unattended monitoring, cold-crash ownership recovery, or other
 platform readiness. Active-operation handoff terminates the owned browser and
 fails closed. CLI copy remains in the English catalog. Hosted CI must be checked
 on the exact published head separately before merge.
+
+## Hosted timing regression follow-up
+
+The first final-head PR matrix passed, but the push matrix exposed an existing
+10 ms operation-loop test that asserted one deadline message. The action was
+correctly unknown and the reply prohibited retry; nested operation/loop timers
+can produce either safe stop message. The test now allows 100 ms for dispatch
+setup and asserts one dispatch, unknown/no-retry reply, durable unknown state,
+completed inbox handling, and rejection of late effect success after store close.
+No executable implementation changed. The complete operation-loop file passed locally (32/32). Fresh full verification
+also passed all six gates with unchanged source fingerprint at
+`data/verification/2026-10-04T03-59-19.664Z-3d48e845-be3b-464e-a32e-ec39fd8bdee2/summary.json`.
+Both independent reviewers approved the test-only follow-up. Exact-head hosted
+CI remains a separate merge requirement.
