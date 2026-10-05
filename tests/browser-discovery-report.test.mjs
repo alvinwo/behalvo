@@ -72,3 +72,68 @@ test('synthetic report cannot become an authenticated fixture or readiness autho
   assert.throws(() => assessUsVisaChinaReadiness({ fixture: report, authenticator, now: new Date().toISOString(), privateConnection: true, activeGrant: true }));
   assert.equal(usVisaChinaDefaultReadiness().liveRegistration, 'disabled');
 });
+
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, symlinkSync, chmodSync, statSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { captureDiscoverySource, discoveryProvenance, createDiscoveryReportRun, persistDiscoveryReport } from './helpers/browser-discovery-report-io.mjs';
+function repository(t) {
+  const root = mkdtempSync(join(tmpdir(), 'discovery-repo-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
+  git('init', '-q'); writeFileSync(join(root, '.gitignore'), 'data/\n'); writeFileSync(join(root, 'source.txt'), 'original\n');
+  git('add', '.'); git('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', 'commit', '-qm', 'fixture');
+  return { root, git };
+}
+test('source provenance distinguishes clean, staged, unstaged, untracked and changed evidence', async t => {
+  const { root, git } = repository(t); const clean = await captureDiscoverySource(root);
+  assert.equal(clean.dirty, false); assert.deepEqual(discoveryProvenance(clean, clean), { kind: 'clean_commit', commit: clean.head });
+  writeFileSync(join(root, 'source.txt'), 'modified\n'); const dirty = await captureDiscoverySource(root); assert.equal(dirty.dirty, true);
+  git('add', 'source.txt'); const staged = await captureDiscoverySource(root); assert.equal(staged.dirty, true);
+  writeFileSync(join(root, 'new.txt'), 'new\n'); const untracked = await captureDiscoverySource(root);
+  assert.notEqual(untracked.fingerprint, staged.fingerprint);
+  const changed = discoveryProvenance(clean, untracked); assert.equal(changed.changedDuringRun, true);
+  const report = buildDiscoveryReport({ ...metadata(), provenance: changed, cases: ids.map(row) }); assert.equal(report.result, 'failed');
+  assert.equal(discoveryProvenance(dirty, dirty).kind, 'dirty_tree');
+  assert.equal(buildDiscoveryReport({ ...metadata(), provenance: discoveryProvenance(dirty, dirty), cases: ids.map(row) }).result, 'passed');
+  assert.equal(JSON.stringify(untracked).includes('source.txt'), false);
+});
+test('private scoped report publication is exclusive and rejects forged handles', t => {
+  const { root } = repository(t), run = createDiscoveryReportRun(root);
+  const report = buildDiscoveryReport({ ...metadata(), workspaceId: run.workspaceId, runId: run.runId, cases: ids.map(row) });
+  const file = persistDiscoveryReport(run, report); assert.equal(file, join(run.runDirectory, 'report.json'));
+  assert.equal(statSync(file).mode & 0o777, 0o600); assert.equal(statSync(run.runDirectory).mode & 0o777, 0o700);
+  assert.equal(readFileSync(file, 'utf8'), serializeDiscoveryReport(report).toString());
+  assert.throws(() => persistDiscoveryReport(run, report));
+  assert.throws(() => persistDiscoveryReport({ ...run, runDirectory: '/private/tmp' }, report));
+  assert.throws(() => persistDiscoveryReport(run, { ...report, runId: randomUUID() }));
+  assert.deepEqual(readdirSync(run.runDirectory), ['report.json']);
+});
+test('symlinks, unsafe directory modes, and changed directory identity cannot redirect publication', t => {
+  const { root } = repository(t);
+  symlinkSync(tmpdir(), join(root, 'data')); assert.throws(() => createDiscoveryReportRun(root)); rmSync(join(root, 'data'));
+  mkdirSync(join(root, 'data'), { mode: 0o777 }); chmodSync(join(root, 'data'), 0o777);
+  assert.throws(() => createDiscoveryReportRun(root)); chmodSync(join(root, 'data'), 0o700);
+  const run = createDiscoveryReportRun(root), report = buildDiscoveryReport({ ...metadata(), runId: run.runId, cases: ids.map(row) });
+  rmSync(run.runDirectory, { recursive: true }); mkdirSync(run.runDirectory, { mode: 0o700 });
+  assert.throws(() => persistDiscoveryReport(run, report));
+  const other = createDiscoveryReportRun(root); symlinkSync(join(root, 'source.txt'), join(other.runDirectory, 'report.json'));
+  assert.throws(() => persistDiscoveryReport(other, { ...report, runId: other.runId })); assert.equal(readFileSync(join(root, 'source.txt'), 'utf8'), 'original\n');
+});
+test('invalid report persistence leaves no temporary file and uses fixed errors', t => {
+  const { root } = repository(t), run = createDiscoveryReportRun(root);
+  const canary = 'PRIVATE-CANARY';
+  assert.throws(() => persistDiscoveryReport(run, { ...full(), raw: canary }), error => !String(error).includes(canary));
+  assert.deepEqual(readdirSync(run.runDirectory), []);
+});
+test('write and publication failures keep unrelated files and return fixed errors', t => {
+  const { root } = repository(t);
+  for (const operation of ['write', 'publish']) {
+    const run = createDiscoveryReportRun(root), report = buildDiscoveryReport({ ...metadata(), runId: run.runId, cases: ids.map(row) });
+    writeFileSync(join(run.runDirectory, 'unrelated'), 'keep');
+    assert.throws(() => persistDiscoveryReport(run, report, { [operation]() { throw new Error('SENSITIVE-IO-FAILURE'); } }),
+      error => !String(error).includes('SENSITIVE'));
+    assert.deepEqual(readdirSync(run.runDirectory), ['unrelated']);
+  }
+});
