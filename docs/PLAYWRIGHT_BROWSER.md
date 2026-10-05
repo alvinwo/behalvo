@@ -109,3 +109,37 @@ TMPDIR=/private/tmp BEHALVO_PLAYWRIGHT_P2_ACCEPTANCE=1 node --test --test-concur
 
 This remains synthetic-only, foreground and awake-only. It does not establish
 real-site compatibility, account security or unattended production readiness.
+
+## Synthetic discovery report
+
+On the verified macOS/POSIX environment, build and run the existing read-only cases:
+
+```sh
+npm run build
+TMPDIR=/private/tmp BEHALVO_PLAYWRIGHT_P2_ACCEPTANCE=1 BEHALVO_BROWSER_DISCOVERY_REPORT=1 node --test --test-concurrency=1 --test-name-pattern='^visible DOM parser reads the actual .* contract$' tests/playwright-actions-acceptance.test.mjs
+```
+
+The report is written privately to
+`data/verification/browser-discovery/synthetic-browser-discovery/<run UUID>/report.json`
+under the canonical repository root. Dedicated directories use mode 0700 and the
+bounded JSON file uses 0600. Publication is exclusive, with one attempt per run
+handle; rerun the command for a new run after a persistence failure. Persistence
+requires POSIX ownership/modes; it is unsupported on Windows. Pure report tests
+remain cross-platform. Without `BEHALVO_BROWSER_DISCOVERY_REPORT=1`, no report is
+created. The report flag alone never starts a browser: without the separate
+visible-test flag it writes an incomplete report and the command exits nonzero.
+
+`passed` means all 13 catalog cases were observed, with zero measured gestures and
+POST requests and confirmed cleanup. POSTs are counted independently at HTTP
+server ingress, including rejected requests; an unavailable counter cannot pass.
+Skipped, filtered/missing, rejected or pending-cleanup cases cannot pass. The
+installed Playwright version is validated against the pinned version; the actual
+browser and Node versions are recorded. Provenance distinguishes a clean commit
+from a stable dirty tree, and a source change during the run fails the report.
+
+Only fixed metadata and validated field-presence checks are serialized. The report
+contains no page HTML, snapshot values, credentials or raw exceptions. Every row
+is fixture-seeded. Calendar pagination and every listed live-site gap remain
+unobserved. It grants no live authority and cannot replace owner-laptop discovery,
+authenticated contract fixtures, independent review or exact owner activation.
+Run browser suites serially because they share the fixed loopback port.

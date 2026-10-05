@@ -1,39 +1,49 @@
-# Behalvo Playwright P2 design continuation — 2026-10-03
+# Behalvo browser discovery design continuation — 2026-10-04
 
-Current branch: `codex/playwright-p2-design`, based on merged master `6b6ef82`.
-The owner delegated technical merge/revise decisions to specialist reviewers,
-authorized addressing findings and merging after approval, then starting the next task.
-PR #13 merged at `6b6ef8279617c5e2395156c0d1b9eca2697feeda` after independent
-Sol-high and Astra-high MERGE decisions for `30ad65e`. All four hosted checks passed.
-PR #12 is closed, superseded by #13. Local master is synchronized; its tree exactly
-matches the reviewed PR head. The fully merged local P1 branch was removed.
+Current branch: `codex/browser-discovery-design`, based on merged master `4fa2394`.
+The owner delegated technical review and merge decisions to specialist agents,
+authorized fixing findings and merging after approval, then starting the next task.
+Do not ask the owner to perform code review.
 
-Next work is P2's separate design and implementation plan for authorized synthetic
-Playwright actions. Design is in progress; no P2 executable behavior is implemented.
-Keep technical approval with the specialists; do not ask the owner to perform code review.
-The [P2 architecture checkpoint](docs/superpowers/specs/2026-10-03-playwright-p2-design.md)
-records the dispatch-authority and restart-ownership questions. Complete the design
-and implementation plan, obtain independent review, then implement. The checkpoint
-is a draft, not an approval or a completed plan.
+## Completed
 
-The replacement carries only the reviewed P1 implementation/tests and associated
-package/documentation changes. It excludes the installed-extension machinery from
-PR #12. BrowserSession and the synthetic portal already exist on master; no
-unmerged extension prerequisite is required. The original stacked branch
-`codex/playwright-browser-adapter` at `797e7c6` and extension branch
-`feat/installed-chrome-bridge` at `634c791` remain intact.
+[PR #14](https://github.com/alvinwo/behalvo/pull/14) merged at
+`4fa239488bcad79d11775368fa417559cc19bd70`. Independent Sol-high and Astra-high
+reviewers approved all source, lifecycle, authority, cleanup, and test follow-ups.
+All four hosted checks passed on final head `0e26f2a90048658277a3501590f62f66c7fd2d53`.
+Local master was fast-forwarded and its tree compared equal to that reviewed head.
+Post-merge CI also passed on that exact merge commit.
+The merged local P2 feature branch was removed; historical extension branches and
+profiles were preserved.
 
-P1 is a visible, isolated, read-only synthetic login diagnostic. It enables no
-live sites, accounts, page actions or P2 service integration. The original source
-passed independent Sol/Astra code reviews, all six local verification gates and
-15/15 visible macOS tests. The clean replacement source `9ec8538` passed all six verification gates
-(1099 tests passed, 19 skipped, zero failed), followed by 15/15 visible macOS
-acceptance and a successful public command. P1 files are byte-identical to the
-previously reviewed implementation; both independent reviewers cleared the new base and reduced PR scope.
-Do not apply the old stacked-branch test counts to this tree.
-See [the verification record](docs/verification/2026-10-03-playwright-p1.md).
+P2 is operational for synthetic data only: visible owned browser forms, one-use
+permits, synchronous durable guards, paired service grants, polling, clean restart,
+handoff/resume, candidate race, one booking, authoritative readback and replay.
+Unknown submissions are never resubmitted. Missing/mismatched readback stays unknown.
+All six local verification gates passed; 1,160 tests passed, 52 opt-in skipped.
+The separate combined visible P1/P2 suite passed 57/57 and both public commands
+exited 0 with confirmed cleanup. A later test-only CI timing correction passed
+32/32 focused tests and another full verification. See
+[the P2 verification record](docs/verification/2026-10-03-playwright-p2.md).
 
-Use Node.js >=22.19 (`/opt/homebrew/opt/node/bin` is available on this Mac).
-Matched Chromium is already installed. Run
-`npm run browser:playwright -- diagnostic`; see [the guide](docs/PLAYWRIGHT_BROWSER.md).
-Preserve old extension test profiles and their custody/Singleton files.
+PR #13 delivered P1, the read-only login diagnostic. PR #12 was closed unmerged.
+The old installed-extension path is not a prerequisite for P1/P2.
+
+## Current task
+
+The owner authorized the reviewed synthetic discovery exporter. Implementation is
+complete on this branch; no production files or authority paths changed. The
+metadata-only report reuses 13 read-only P2 cases, records source provenance,
+versions, independent POST counts and cleanup, and leaves all live gaps unobserved.
+Astra-max authored the plan; Sol-high approved it. Independent Sol-high and
+Astra-high final reviews approved the code after regression-tested fixes.
+
+The 16 focused report tests and 25 visible browser acceptance tests pass.
+Filtered and browser-disabled report requests produce incomplete artifacts and
+exit 1. Full verification passed before the final path-normalization correction;
+repeat on the committed final tree, then push, create PR, inspect exact-head CI,
+and merge under the owner's existing authorization. Do not ask the owner to
+perform code review. See [the evidence record](docs/verification/2026-10-04-browser-discovery-report.md).
+
+No production origin, credentials, account access, live grant or real booking is
+authorized. Historical extension profiles and branches remain preserved.

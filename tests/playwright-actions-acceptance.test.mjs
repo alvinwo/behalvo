@@ -1,4 +1,8 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { DISCOVERY_CASES } from './helpers/browser-discovery-report.mjs';
+import { captureDiscoverySource, discoveryProvenance, createDiscoveryReportRun, persistDiscoveryReport } from './helpers/browser-discovery-report-io.mjs';
+import { createDiscoveryCollector, observePortalRequests, installedDiscoveryVersions } from './helpers/browser-discovery-collector.mjs';
 import assert from 'node:assert/strict';
 import { randomBytes, createHash } from 'node:crypto';
 import { BrowserSession, BrowserEpochRegistry } from '../dist/browser/session.js';
@@ -7,18 +11,50 @@ import { SyntheticPortalState } from '../dist/synthetic-portal/state.js';
 const enabled = process.env.BEHALVO_PLAYWRIGHT_P2_ACCEPTANCE === '1';
 const { PlaywrightActionsOwner } = enabled ? await import('../dist/browser/playwright-actions-owner.js') : {};
 const origin = 'http://127.0.0.1:43117';
+const reportEnabled = process.env.BEHALVO_BROWSER_DISCOVERY_REPORT === '1';
+const repoRoot = fileURLToPath(new URL('../', import.meta.url));
+let reportRun, sourceBefore, collector;
+if (reportEnabled) {
+  sourceBefore = await captureDiscoverySource(repoRoot);
+  reportRun = createDiscoveryReportRun(repoRoot);
+  collector = createDiscoveryCollector({ workspaceId: reportRun.workspaceId, runId: reportRun.runId,
+    versions: installedDiscoveryVersions(), provenance: discoveryProvenance(sourceBefore, sourceBefore) });
+  if (!enabled) collector.skipAll();
+  after(async () => {
+    const report = collector.report(discoveryProvenance(sourceBefore, await captureDiscoverySource(repoRoot)));
+    persistDiscoveryReport(reportRun, report);
+    assert.equal(report.result, 'passed', 'Synthetic discovery report is not passing.');
+  });
+}
 async function fixture(t, options = {}) {
   const state = new SyntheticPortalState({ scenario: 'calendar_match', ...options });
   const commands = [], actual = state.gesture.bind(state);
   state.gesture = command => { commands.push(command.kind); const result = actual(command);
     if (options.loseSubmissionResponse && command.kind === 'booking.submit') throw new Error('CANARY-LOST-RESPONSE');
     return result; };
-  const portal = await startSyntheticPortal({ state, formResponse: 'document' });
+  let portal, owner, session;
+  const observer = options.discoveryCaseId && collector ? observePortalRequests() : undefined;
+  t.after(async () => {
+    let stopped = true, cleanup = { confirmed: true };
+    try { await session?.shutdown(); } catch { if (observer) stopped = false; }
+    try { if (owner) cleanup = await owner.close(); } catch { stopped = false; }
+    try { await portal?.close(); } catch { stopped = false; }
+    const confirmed = stopped && cleanup.confirmed;
+    try { owner?.finishReceipt(confirmed, confirmed ? null : 'cleanup_pending', confirmed); }
+    catch { stopped = false; }
+    if (observer) {
+      collector.finish(options.discoveryCaseId, { cleanup: stopped && cleanup.confirmed ? 'confirmed' : 'pending',
+        gestureCount: commands.length, postCount: observer.postCount() });
+      observer.close();
+    }
+    assert.equal(stopped && cleanup.confirmed, true);
+  });
+  portal = await startSyntheticPortal({ state, formResponse: 'document' });
   const binding = { profileId: 'p2-fixture', connectionGeneration: 1, serviceGeneration: 'p2-service' };
   let page, server;
   const { chromium } = await import('playwright');
   const controller = new AbortController();
-  const owner = new PlaywrightActionsOwner({ ...binding, signal: controller.signal, runDeadline: Date.now() + 30000 }, {
+  owner = new PlaywrightActionsOwner({ ...binding, signal: controller.signal, runDeadline: Date.now() + 30000 }, {
     loadChromium: async () => ({ executablePath: () => chromium.executablePath(),
       launchServer: async value => { server = await chromium.launchServer(value); return server; },
       connect: async (...args) => { const browser = await chromium.connect(...args);
@@ -26,12 +62,6 @@ async function fixture(t, options = {}) {
         const create = browser.newContext.bind(browser);
         browser.newContext = async value => { const context = await create(value); context.on('page', p => { page ??= p; }); return context; };
         return browser; } })
-  });
-  let session;
-  t.after(async () => {
-    await session?.shutdown().catch(() => {});
-    const cleanup = await owner.close(); await portal.close();
-    assert.equal(cleanup.confirmed, true); owner.finishReceipt(true, null, true);
   });
   const ready = await owner.start();
   const initial = state.inspect();
@@ -96,12 +126,20 @@ test('visible malformed form cannot dispatch a substituted command', { skip: !en
   await assert.rejects(f.gesture({ kind: 'calendar.first_page' }, 'calendar', 'calendar'));
   assert.deepEqual(f.commands, []);
 });
-for (const scenario of ['login', 'security_question', 'group_roster', 'booking_review', 'challenge', 'session_expired',
-  'forbidden', 'rate_limited', 'terms_changed', 'unknown', 'confirmation', 'ambiguous_submission', 'appointment'])
+for (const { caseId: scenario } of DISCOVERY_CASES)
   test(`visible DOM parser reads the actual ${scenario} contract`, { skip: !enabled, timeout: 35000 }, async t => {
-    const f = await fixture(t, { scenario });
-    assert.deepEqual(await f.session.recognize(f.fence), f.state.inspect());
-    assert.deepEqual(f.commands, []);
+    collector?.begin(scenario);
+    let failureCode = 'observation_failed';
+    try {
+      const f = await fixture(t, { scenario, discoveryCaseId: scenario });
+      const snapshot = await f.session.recognize(f.fence); failureCode = 'assertion_failed';
+      assert.deepEqual(snapshot, f.state.inspect());
+      assert.deepEqual(f.commands, []);
+      failureCode = 'observation_failed';
+      collector?.observe(scenario, snapshot, f.ready.browserVersion);
+    } catch (error) {
+      collector?.reject(scenario, failureCode); throw error;
+    }
   });
 test('visible lost submission response leaves one booking and never resubmits', { skip: !enabled, timeout: 35000 }, async t => {
   const f = await fixture(t, { loseSubmissionResponse: true });
