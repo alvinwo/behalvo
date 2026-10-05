@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ModelGateway, ModelInfo, ModelRequest, ModelResponse, ModelUsage } from './types.js';
 import { PiCredentialFileStore, type PiCredential } from './pi-auth-store.js';
 import { copyModelStateKey, type ModelStateProtectionOptions } from '../storage/model-state-codec.js';
@@ -12,10 +13,11 @@ export interface PiModelDescriptor {
 export interface PiTextContent {
   type: 'text';
   text: string;
+  textSignature?: string;
 }
 
 export interface PiAssistantMessage {
-  content: readonly ({ type: string; text?: string } | PiTextContent)[];
+  content: readonly ({ type: string; text?: string; textSignature?: string } | PiTextContent)[];
   responseId?: string;
   stopReason?: string;
   errorMessage?: string;
@@ -90,9 +92,25 @@ export function createPiRuntimeLoader(
     const builtinModels = module.builtinModels;
     if (typeof builtinModels !== 'function')
       throw new Error('pi-ai providers/all does not export builtinModels()');
-    return (builtinModels as (options: { credentials: PiCredentialFileStore }) => PiRuntime)({
+    const runtime = (builtinModels as (options: { credentials: PiCredentialFileStore }) => PiRuntime)({
       credentials: new PiCredentialFileStore(authPath, protectedOptions)
     });
+    return {
+      getModels: provider => runtime.getModels(provider),
+      getModel: (provider, id) => runtime.getModel(provider, id),
+      ...(runtime.login ? { login: runtime.login.bind(runtime) } : {}),
+      async completeSimple(model, context, controls) {
+        // Each completion owns its provider resources, even when callers share a hint.
+        // The full prompt is supplied each time; no provider session is domain state.
+        const core = await importer(PI_PACKAGE);
+        if (typeof core.cleanupSessionResources !== 'function')
+          throw new Error('Pi session cleanup is unavailable');
+        const cleanup = core.cleanupSessionResources as (sessionId: string) => void;
+        const sessionId = randomUUID();
+        try { return await runtime.completeSimple(model, context, { ...controls, sessionId }); }
+        finally { cleanup(sessionId); }
+      }
+    };
   };
 }
 
@@ -100,16 +118,35 @@ async function defaultPiRuntimeLoader(): Promise<PiRuntime> {
   return createPiRuntimeLoader('data/pi-auth.json')();
 }
 
-function textFrom(message: PiAssistantMessage): string {
+function textFrom(message: PiAssistantMessage): { text: string; diagnosticText?: string } {
   if (message.stopReason === 'error')
     throw new Error(message.errorMessage || 'Pi provider returned an error');
-  const text = message.content
-    .filter((part): part is PiTextContent => part.type === 'text' && typeof part.text === 'string')
-    .map(part => part.text)
-    .join('');
-  if (!text)
-    throw new Error('Pi provider returned no text content');
-  return text;
+  if (message.stopReason !== undefined && message.stopReason !== 'stop')
+    throw new Error('Pi provider completion is incomplete');
+  const blocks = message.content.filter((part): part is PiTextContent =>
+    part.type === 'text' && typeof part.text === 'string');
+  const phases = blocks.map(part => {
+    if (!part.textSignature?.startsWith('{')) return undefined;
+    let signature: unknown;
+    try { signature = JSON.parse(part.textSignature); } catch { throw new Error('Invalid Pi text signature'); }
+    const value = signature as { v?: unknown; id?: unknown; phase?: unknown } | null;
+    if (!value || value.v !== 1 || typeof value.id !== 'string' ||
+        (value.phase !== undefined && value.phase !== 'commentary' && value.phase !== 'final_answer'))
+      throw new Error('Invalid Pi text signature');
+    return value.phase === undefined ? undefined : { id: value.id, phase: value.phase };
+  });
+  if (blocks.reduce((total, part) => total + Buffer.byteLength(part.text, 'utf8'), 0) > 65536)
+    throw new Error('Pi provider text exceeds the response limit');
+  const diagnosticText = blocks.map(part => part.text).join('');
+  if (!diagnosticText) throw new Error('Pi provider returned no text content');
+  if (!phases.some(Boolean)) return { text: diagnosticText };
+  if (phases.some(phase => phase === undefined)) throw new Error('Ambiguous Pi text phases');
+  const finals = blocks.filter((_part, i) => phases[i]?.phase === 'final_answer');
+  const finalIds = new Set(phases.filter(phase => phase?.phase === 'final_answer').map(phase => phase!.id));
+  if (finalIds.size !== 1 || !finals.length) throw new Error('Ambiguous Pi final answer');
+  const text = finals.map(part => part.text).join('');
+  if (!text) throw new Error('Pi provider returned no final text');
+  return { text, diagnosticText };
 }
 
 function nonnegativeInteger(value: unknown): number | null {
@@ -228,7 +265,7 @@ export class PiModelGateway implements ModelGateway {
 
       const usage = usageFrom(result);
       return {
-        text: textFrom(result),
+        ...textFrom(result),
         ...(result.responseId ? { providerResponseId: result.responseId } : {}),
         ...(usage ? { usage } : {})
       };

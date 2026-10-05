@@ -221,3 +221,14 @@ test('BudgetedModelGateway validates positive bounded options', async () => {
     assert.throws(() => new BudgetedModelGateway(inner, options), /invalid/i);
   }
 });
+
+test('diagnostic text is bounded and retained even when protocol text excludes commentary', async () => {
+  const { BudgetedModelGateway } = await api();
+  const g = new BudgetedModelGateway(scriptedGateway(async () => ({ text: '{}', diagnosticText: 'synthetic commentary{}' })),
+    { maxCalls: 2, maxDurationMs: 1000 });
+  assert.equal((await g.complete(request)).text, '{}');
+  assert.equal(g.records[0].responseExcerpt, 'synthetic commentary{}');
+  const oversized = new BudgetedModelGateway(scriptedGateway(async () => ({ text: '{}', diagnosticText: 'x'.repeat(65537) })),
+    { maxCalls: 1, maxDurationMs: 1000 });
+  await rejectionCode(oversized.complete(request), 'response_size');
+});

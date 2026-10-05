@@ -40,6 +40,11 @@ export interface OperationLoopResult {
 
 const PROTOCOL = `You may instead return exactly {"tool":{"name":NAME,"arguments":OBJECT}} with no final fields.
 One request per completion; no batches, arrays, unknown fields or tools.
+Put the single complete JSON object in your final answer only, with no commentary or prose outside it.
+Concrete tool-envelope examples (replace example actionId with the exact supplied ID):
+{"tool":{"name":"catalog","arguments":{}}}
+{"tool":{"name":"execute","arguments":{"actionId":"example-action-id"}}}
+Close the arguments object, tool object, and outer object. Do not omit any closing brace.
 Tools and exact arguments:
 - catalog: {}. Lists active workspace connections and registered operations with trusted resource/argument hints.
 - prepare: {"connectionId":string,"operationId":string,"operationVersion":string,"resourceId":string,"arguments":object}. Requires focused durable work. Preparation stops for separate owner approval.
@@ -101,16 +106,27 @@ export class OperationLoop {
             { signal: controller!.signal, deadline: Date.now() + this.#timeoutMs };
         const initialAttempts = new Set(Object.values(initial.actions).map(action => action.attemptId));
         const transcript: { request: unknown; result: unknown }[] = [];
+        let recoveryUsed = false, nonReadOnlyInvoked = false, correctionPending = false;
         try {
             for (let count = 0; count < 8; count++) {
                 assertExecutionActive(context);
-                const next = this.request(request, binding, transcript);
+                const next = this.request(correctionPending ? { ...request, system: `${request.system}\nAPPLICATION FORMAT CORRECTION: The prior response was invalid JSON and was not dispatched. Return one fresh, complete JSON object. Do not repeat successful tool calls.` } : request, binding, transcript);
+                correctionPending = false;
                 bounded(JSON.stringify(next), Math.min(this.#maxRequestBytes, binding.inputBudgetBytes ?? this.#maxRequestBytes), 'Accumulated model request');
                 const dispatch = context.signal ? { ...next, signal: context.signal } : next;
                 const response = await withinExecution(() => gateway.complete(dispatch), context);
                 assertExecutionActive(context);
+                if (response.diagnosticText !== undefined) bounded(response.diagnosticText, 65536, 'Model diagnostic response');
                 const text = bounded(response.text, 65536, 'Model response');
-                const parsed: unknown = JSON.parse(text);
+                let parsed: unknown;
+                try { parsed = JSON.parse(text); }
+                catch (error) {
+                    // A fresh inference is allowed only before any potentially mutating tool.
+                    // Never repair text, replay a request, or catch provider/invocation errors here.
+                    if (!(error instanceof SyntaxError) || recoveryUsed || nonReadOnlyInvoked || count === 7) throw error;
+                    recoveryUsed = true; correctionPending = true;
+                    continue;
+                }
                 if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new LoopInputError('Invalid response envelope');
                 if (!Object.hasOwn(parsed, 'tool')) {
                     strictObject(parsed, ['reply', 'workProposals', 'factProposals'], 'final envelope');
@@ -124,6 +140,7 @@ export class OperationLoop {
                 strictObject(call, ['name', 'arguments'], 'tool request');
                 const { name, arguments: args } = call as { name: unknown; arguments: unknown };
                 bounded(JSON.stringify(args), 16384, 'Tool arguments');
+                if (name !== 'catalog' && name !== 'inspect') nonReadOnlyInvoked = true;
                 const result = await this.invoke(name, args, binding, context);
                 assertExecutionActive(context);
                 if ('stop' in result) return stop(result.stop, result.reason);

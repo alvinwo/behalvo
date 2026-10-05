@@ -31,6 +31,8 @@ export interface ModelUsage {
 
 export interface ModelResponse {
   text: string;
+  /** All provider-visible text for bounded diagnostics; never executable protocol. */
+  diagnosticText?: string;
   providerResponseId?: string;
   usage?: ModelUsage;
 }

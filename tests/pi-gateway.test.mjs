@@ -251,7 +251,7 @@ test('createPiRuntimeLoader injects the configured file credential store into bu
       }
     };
   });
-  assert.equal(await loader(), runtime);
+  assert.deepEqual((await loader()).getModels(), runtime.getModels());
   assert.ok(receivedOptions.credentials instanceof PiCredentialFileStore);
   assert.equal(receivedOptions.credentials.path, '/tmp/operator-auth.json');
 });
@@ -284,6 +284,7 @@ test('protected loader eagerly captures its key and injects a protected credenti
   const callerKey = Buffer.alloc(32, 5);
   let received;
   const loader = createPiRuntimeLoader(path, async () => ({
+    cleanupSessionResources() {},
     builtinModels(options) {
       received = options.credentials;
       const runtime = fakePiRuntime();
@@ -306,6 +307,7 @@ test('an injected Pi runtime refreshes synthetic OAuth credentials through the p
   const path = join(dir, 'auth.json');
   let credentials;
   const loader = createPiRuntimeLoader(path, async () => ({
+    cleanupSessionResources() {},
     builtinModels(options) {
       credentials = options.credentials;
       const runtime = fakePiRuntime();

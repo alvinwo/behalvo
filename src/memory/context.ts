@@ -58,7 +58,7 @@ export function buildContext(store: SqliteStore, request: ContextRequest): Conte
         if (subjects.has(fact.subject))
             selectors.set(JSON.stringify([fact.subject, fact.predicate]), { subject: fact.subject, predicate: fact.predicate });
     const facts = [...selectors.values()].map(({ subject, predicate }) => ({ subject, predicate, ...resolveFact(s, subject, predicate, request.at ?? new Date().toISOString()) }));
-    const pinned = `APPLICATION CONSTRAINTS\n${PINNED_POLICY}\nCURRENT WORKSPACE VIEW\n${JSON.stringify({ workspaceId: s.workspaceId, stateVersion: s.version, work: work ?? null, actions, facts })}`;
+    const pinned = `APPLICATION CONSTRAINTS\n${PINNED_POLICY}\nCURRENT WORKSPACE VIEW\n${JSON.stringify({ workspaceId: s.workspaceId, ownerId: s.ownerId, stateVersion: s.version, work: work ?? null, actions, facts })}`;
     const records = store.threadMessages(request.workspaceId, request.threadId, 50);
     const current = request.currentRecordId === undefined ? undefined : store.record(request.workspaceId, request.currentRecordId);
     if (current && (current.event.type !== 'message.received' || current.event.data.threadId !== request.threadId ||

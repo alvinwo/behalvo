@@ -190,12 +190,13 @@ export class BudgetedModelGateway implements ModelGateway {
       throw new BudgetedModelError('suite_deadline');
     }
 
-    const responseBytes = Buffer.byteLength(outcome.response.text, 'utf8');
+    const evidenceText = outcome.response.diagnosticText ?? outcome.response.text;
+    const responseBytes = Math.max(Buffer.byteLength(outcome.response.text, 'utf8'), Buffer.byteLength(evidenceText, 'utf8'));
     if (responseBytes > MAX_RESPONSE_BYTES) {
-      this.#record(request, startedAt, requestBytes, 'response_size', outcome.response.text, outcome.response.usage);
+      this.#record(request, startedAt, requestBytes, 'response_size', evidenceText, outcome.response.usage);
       throw new BudgetedModelError('response_size');
     }
-    this.#record(request, startedAt, requestBytes, 'ok', outcome.response.text, outcome.response.usage);
+    this.#record(request, startedAt, requestBytes, 'ok', evidenceText, outcome.response.usage);
     return outcome.response;
   }
 
