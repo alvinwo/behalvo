@@ -251,3 +251,11 @@ boundaries are defined above; the three tasks own each Review Focus regression.
 No live validator, runtime capability, grant or report-ingestion route changes.
 This plan now goes to independent review; primary remains the sole implementation
 writer. No further product choice is required for the synthetic increment.
+
+## Implementation checkpoint
+
+All three tasks are implemented. Independent Sol-high and Astra-high reviews
+approved the corrected code. Actual commands, outcomes and remaining release
+gates are recorded in [the verification record](../../verification/2026-10-04-browser-discovery-report.md).
+The original checklist above preserves the reviewed plan rather than claiming
+that configured CI has already executed.

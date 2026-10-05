@@ -26,8 +26,9 @@ function safe(value, limit = 65536) {
     for (const key of Reflect.ownKeys(item)) {
       if (typeof key !== 'string' || key === 'toJSON' || key === '__proto__') fail();
       const descriptor = Object.getOwnPropertyDescriptor(item, key);
-      if (!Object.hasOwn(descriptor, 'value') || (key !== 'length' && !descriptor.enumerable)) fail();
-      if (key !== 'length') walk(descriptor.value, depth + 1);
+      const arrayLength = Array.isArray(item) && key === 'length';
+      if (!Object.hasOwn(descriptor, 'value') || (!arrayLength && !descriptor.enumerable)) fail();
+      if (!arrayLength) walk(descriptor.value, depth + 1);
     }
   };
   walk(value, 0);
@@ -87,6 +88,9 @@ export function buildDiscoveryReport(input) {
       for (const count of [row.gestureCount, row.postCount])
         if (!(Number.isSafeInteger(count) && count >= 0) && !(count === null && row.outcome === 'rejected')) fail();
       if (row.outcome !== 'rejected' && (row.cleanup !== 'confirmed' || row.gestureCount !== 0 || row.postCount !== 0)) fail();
+      const hasRequest = row.gestureCount > 0 || row.postCount > 0;
+      if (row.cleanup === 'pending' ? row.code !== 'cleanup_pending'
+        : row.code === 'cleanup_pending' || (hasRequest ? row.code !== 'unexpected_request' : row.code === 'unexpected_request')) fail();
       seen.set(row.caseId, structuredClone(row));
     }
     const cases = DISCOVERY_CASES.map(item => seen.get(item.caseId) ?? missingDiscoveryCase(item.caseId));

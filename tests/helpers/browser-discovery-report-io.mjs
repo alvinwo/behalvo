@@ -19,7 +19,7 @@ async function git(root, args) {
 export async function captureDiscoverySource(repoRoot) {
   try {
     const root = realpathSync(repoRoot);
-    if ((await git(root, ['rev-parse', '--show-toplevel'])).toString().trim() !== root) fail();
+    if (realpathSync((await git(root, ['rev-parse', '--show-toplevel'])).toString().trim()) !== root) fail();
     const head = (await git(root, ['rev-parse', 'HEAD'])).toString().trim();
     if (!/^[a-f0-9]{40}$/.test(head)) fail();
     const diffArgs = ['--no-ext-diff', '--no-textconv', '--binary', '--'];
@@ -85,6 +85,7 @@ export function persistDiscoveryReport(run, report, operations = {}) {
   let temporary, fd;
   try {
     const handle = handles.get(run); if (!handle) fail();
+    handles.delete(run); // One publication attempt per handle, including failed attempts.
     const bytes = serializeDiscoveryReport(report);
     if (report.workspaceId !== run.workspaceId || report.runId !== run.runId ||
         relative(handle.root, run.runDirectory) !== join('data', 'verification', 'browser-discovery', workspaceId, run.runId)) fail();

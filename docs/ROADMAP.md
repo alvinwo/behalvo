@@ -23,11 +23,15 @@ substitute for step 1 or certify M1.1 acceptance.
 | --- | --- |
 | One foreground service/store/queue/scheduler/worker | OS-supervised 24/7 operation |
 | Paired synthetic setup, exact grant review/arm, pause, takeover, resume, stop, revoke | Remote/mobile owner identity and phone takeover |
-| Fixed-origin synthetic portal through compiled extension and framed native transport | Installed Chrome/extension/native host and signed Keychain helper |
+| Fixed-origin synthetic portal through the legacy extension boundary and the application-owned Playwright P1/P2 boundary | Independently reviewed live transport, private credential custody and installation/session binding |
 | Empty/restart/challenge/resume/pre-reservation-race/later-booking acceptance | Owner-laptop read-only discovery and current terms/group verification |
 | One verified synthetic effect, stopped recurrence, effect-free rebuild | Live credentials, live portal acceptance, exact owner activation, real booking |
 
-The next visa step is the separate supervised read-only discovery described in
+The metadata-only synthetic browser discovery report now records the 13 read-only P2
+contracts, cleanup and request counts. Calendar pagination and all live-site gaps
+remain unobserved. See [the report guide](PLAYWRIGHT_BROWSER.md#synthetic-discovery-report).
+
+The later live visa step is the separate supervised read-only discovery described in
 [VISA_DISCOVERY.md](VISA_DISCOVERY.md). It cannot be replaced by CI or the
 synthetic demo.
 

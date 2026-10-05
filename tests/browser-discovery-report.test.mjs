@@ -99,7 +99,7 @@ test('source provenance distinguishes clean, staged, unstaged, untracked and cha
   assert.equal(buildDiscoveryReport({ ...metadata(), provenance: discoveryProvenance(dirty, dirty), cases: ids.map(row) }).result, 'passed');
   assert.equal(JSON.stringify(untracked).includes('source.txt'), false);
 });
-test('private scoped report publication is exclusive and rejects forged handles', t => {
+test('private scoped report publication is exclusive and rejects forged handles', { skip: process.platform === 'win32' ? 'POSIX ownership and private modes required' : false }, t => {
   const { root } = repository(t), run = createDiscoveryReportRun(root);
   const report = buildDiscoveryReport({ ...metadata(), workspaceId: run.workspaceId, runId: run.runId, cases: ids.map(row) });
   const file = persistDiscoveryReport(run, report); assert.equal(file, join(run.runDirectory, 'report.json'));
@@ -110,7 +110,7 @@ test('private scoped report publication is exclusive and rejects forged handles'
   assert.throws(() => persistDiscoveryReport(run, { ...report, runId: randomUUID() }));
   assert.deepEqual(readdirSync(run.runDirectory), ['report.json']);
 });
-test('symlinks, unsafe directory modes, and changed directory identity cannot redirect publication', t => {
+test('symlinks, unsafe directory modes, and changed directory identity cannot redirect publication', { skip: process.platform === 'win32' ? 'POSIX ownership and private modes required' : false }, t => {
   const { root } = repository(t);
   symlinkSync(tmpdir(), join(root, 'data')); assert.throws(() => createDiscoveryReportRun(root)); rmSync(join(root, 'data'));
   mkdirSync(join(root, 'data'), { mode: 0o777 }); chmodSync(join(root, 'data'), 0o777);
@@ -121,13 +121,13 @@ test('symlinks, unsafe directory modes, and changed directory identity cannot re
   const other = createDiscoveryReportRun(root); symlinkSync(join(root, 'source.txt'), join(other.runDirectory, 'report.json'));
   assert.throws(() => persistDiscoveryReport(other, { ...report, runId: other.runId })); assert.equal(readFileSync(join(root, 'source.txt'), 'utf8'), 'original\n');
 });
-test('invalid report persistence leaves no temporary file and uses fixed errors', t => {
+test('invalid report persistence leaves no temporary file and uses fixed errors', { skip: process.platform === 'win32' ? 'POSIX ownership and private modes required' : false }, t => {
   const { root } = repository(t), run = createDiscoveryReportRun(root);
   const canary = 'PRIVATE-CANARY';
   assert.throws(() => persistDiscoveryReport(run, { ...full(), raw: canary }), error => !String(error).includes(canary));
   assert.deepEqual(readdirSync(run.runDirectory), []);
 });
-test('write and publication failures keep unrelated files and return fixed errors', t => {
+test('write and publication failures keep unrelated files and return fixed errors', { skip: process.platform === 'win32' ? 'POSIX ownership and private modes required' : false }, t => {
   const { root } = repository(t);
   for (const operation of ['write', 'publish']) {
     const run = createDiscoveryReportRun(root), report = buildDiscoveryReport({ ...metadata(), runId: run.runId, cases: ids.map(row) });
@@ -136,4 +136,73 @@ test('write and publication failures keep unrelated files and return fixed error
       error => !String(error).includes('SENSITIVE'));
     assert.deepEqual(readdirSync(run.runDirectory), ['unrelated']);
   }
+});
+
+import { createDiscoveryCollector, observePortalRequests, installedDiscoveryVersions } from './helpers/browser-discovery-collector.mjs';
+import { createServer } from 'node:http';
+test('collector waits for cleanup and preserves failed assertions, setup, versions and skipped cases', () => {
+  const make = () => createDiscoveryCollector(metadata());
+  const pending = make(); pending.begin('login'); pending.observe('login', { state: 'login' }, '153.0.8010.12');
+  assert.equal(pending.report().result, 'failed');
+  pending.finish('login', { cleanup: 'confirmed', gestureCount: 0, postCount: 0 }); assert.equal(pending.report().result, 'incomplete');
+  for (const kind of ['assertion_failed', 'observation_failed', 'cleanup_pending', 'unexpected_request']) {
+    const collector = make(); collector.begin('login');
+    if (kind === 'assertion_failed') collector.observe('login', { state: 'login' }, '153.0.8010.12');
+    collector.reject('login', kind);
+    collector.finish('login', { cleanup: kind === 'cleanup_pending' ? 'pending' : 'confirmed', gestureCount: 0, postCount: kind === 'unexpected_request' ? 1 : 0 });
+    assert.equal(collector.report().result, 'failed');
+    assert.equal(collector.report().cases[0].outcome, 'rejected');
+  }
+  const skipped = make(); skipped.skipAll(); assert.equal(skipped.report().counts.skipped, 13); assert.equal(skipped.report().result, 'incomplete');
+  const mismatch = make();
+  for (const [id, version] of [['login', '153.0.1'], ['challenge', '153.0.2']]) {
+    mismatch.begin(id);
+    try { mismatch.observe(id, { state: id }, version); } catch {}
+    mismatch.finish(id, { cleanup: 'confirmed', gestureCount: 0, postCount: 0 });
+  }
+  assert.equal(mismatch.report().result, 'failed');
+  assert.equal(mismatch.report().cases.find(item => item.caseId === 'challenge').code, 'observation_failed');
+  const bad = make(); bad.begin('login'); assert.throws(() => bad.observe('login', { state: 'challenge' }, '153.0.1'));
+  bad.finish('login', { cleanup: 'confirmed', gestureCount: 0, postCount: 0 }); assert.equal(bad.report().result, 'failed');
+  assert.equal(bad.report().cases[0].code, 'observation_failed');
+});
+test('HTTP ingress counts rejected POST independently from portal gestures', async t => {
+  const server = createServer((_req, res) => { res.writeHead(400); res.end(); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const observer = observePortalRequests(server.address().port);
+  t.after(async () => { observer.close(); await new Promise(resolve => server.close(resolve)); });
+  assert.equal(observer.postCount(), null);
+  await fetch(`http://127.0.0.1:${server.address().port}`, { method: 'POST' });
+  assert.equal(observer.postCount(), 1);
+});
+test('versions come from installed packages and are validated before reporting', () => {
+  const versions = installedDiscoveryVersions(); assert.equal(versions.playwright, '1.63.0');
+  assert.equal(versions.adapterId, 'us-visa-china'); assert.equal(versions.browser, null);
+});
+
+test('failure labels agree with cleanup and measured request evidence', () => {
+  for (const change of [
+    { code: 'cleanup_pending', cleanup: 'confirmed' },
+    { code: 'unexpected_request', gestureCount: 0, postCount: 0 },
+    { code: 'assertion_failed', cleanup: 'pending' },
+    { code: 'observation_failed', postCount: 1 },
+  ]) {
+    const bad = { ...row('login'), outcome: 'rejected', code: 'assertion_failed', checks: { page_state: 'rejected' }, ...change };
+    assert.throws(() => buildDiscoveryReport({ ...metadata(), cases: [bad] }));
+    const report = full(); report.cases[0] = bad;
+    assert.throws(() => serializeDiscoveryReport(report));
+  }
+});
+test('ordinary length properties cannot hide serialization hooks', () => {
+  let invoked = 0;
+  for (const length of [{ toJSON() { invoked++; return 'hidden'; } }, { get secret() { invoked++; return 'hidden'; } }])
+    assert.throws(() => mapDiscoverySnapshot('login', { state: 'login', length }));
+  assert.equal(invoked, 0);
+});
+
+test('publication handles remain consumed after the report is removed', { skip: process.platform === 'win32' ? 'POSIX ownership and private modes required' : false }, t => {
+  const { root } = repository(t), run = createDiscoveryReportRun(root);
+  const report = buildDiscoveryReport({ ...metadata(), runId: run.runId, cases: ids.map(row) });
+  rmSync(persistDiscoveryReport(run, report));
+  assert.throws(() => persistDiscoveryReport(run, report));
 });

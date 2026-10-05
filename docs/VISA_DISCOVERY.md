@@ -19,10 +19,23 @@ terms, roster, polling limits, and expiry. They contain sanitized metadata, not
 credentials or applicant values. A valid fixture still reports live registration
 as disabled and cannot activate a grant.
 
+## Partial browser verification report
+
+The separate `synthetic-browser-discovery-v1` report uses the existing 13 read-only
+P2 browser cases. It records validated page-state and selected field-presence
+checks, zero-gesture/POST evidence, cleanup, installed versions and source
+provenance. State-only cases prove only the synthetic page state. Every row is
+fixture-seeded; no snapshot values, credentials or applicant data are exported.
+Calendar pagination and all live identity, roster, terms, origins, polling,
+profile-custody and reachability gaps remain unobserved even when the report passes.
+This report is not an authenticated contract fixture, readiness approval or grant.
+See [execution and output](PLAYWRIGHT_BROWSER.md#synthetic-discovery-report).
+
 ## Required supervised owner-laptop discovery
 
 This later operation must be read-only and separate from CI and synthetic
-acceptance. The owner opens the dedicated normal-Chrome profile, logs in, handles
+acceptance. A separately reviewed transport must own or bind a dedicated profile
+with verified custody. The owner logs in, handles
 every challenge, and reviews:
 
 1. current portal terms and whether the intended access pattern is permitted;
@@ -42,8 +55,10 @@ data in the repository or report.
 ## Gates before live activation
 
 Live use remains blocked until current terms/group semantics are accepted; the
-final contract and polling plan are reviewed; a signed Keychain helper, extension,
-and native host are installed; the dedicated profile satisfies custody and
+final contract and polling plan are reviewed; the signed Keychain/helper and
+installed extension/native-host path, or an independently reviewed equivalent
+transport with the same credential, installation and session trust outcomes, is
+accepted; the dedicated profile satisfies custody and
 backup exclusions; the private connection and current installation are bound;
 owner-laptop read-only and live acceptance pass; independent reviews are clean;
 and the owner reviews and activates the exact live grant.

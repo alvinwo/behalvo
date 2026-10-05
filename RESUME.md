@@ -31,24 +31,19 @@ The old installed-extension path is not a prerequisite for P1/P2.
 
 ## Current task
 
-The next discovery scope is drafted and independently approved as a design gate.
-The roadmap and live-discovery document still contain extension-centric assumptions;
-reconcile those with the application-owned browser without treating synthetic
-acceptance as live-site compatibility or authorization. No production origin,
-credential, account, live grant or real booking is authorized by this design task.
-Astra-max authored
-[the next scope](docs/superpowers/specs/2026-10-04-browser-discovery-scope.md), and
-Sol-high approved it without scope blockers. It proposes a sanitized, partial
-evidence exporter in verification support using existing read-only P2 cases,
-with no new runtime/browser authority. Next: write and review the short
-implementation plan, including a fixed case/check catalog, strict snapshots,
-nonpassing skipped/failed/pending-cleanup outcomes, and clear source provenance.
-Keep any actual live operation behind separate explicit scope and evidence gates.
+The owner authorized the reviewed synthetic discovery exporter. Implementation is
+complete on this branch; no production files or authority paths changed. The
+metadata-only report reuses 13 read-only P2 cases, records source provenance,
+versions, independent POST counts and cleanup, and leaves all live gaps unobserved.
+Astra-max authored the plan; Sol-high approved it. Independent Sol-high and
+Astra-high final reviews approved the code after regression-tested fixes.
 
-Use Node >=22.19 (`/opt/homebrew/opt/node/bin` on this Mac) and canonical
-`TMPDIR=/private/tmp` for verification. Matched Chromium is installed.
-Run either `npm run browser:playwright -- diagnostic` or
-`npm run browser:playwright -- synthetic-actions`; see
-[the browser guide](docs/PLAYWRIGHT_BROWSER.md). Run visible suites serially;
-they share the fixed synthetic portal port. Preserve old extension test profiles
-and custody/Singleton files.
+The 16 focused report tests and 25 visible browser acceptance tests pass.
+Filtered and browser-disabled report requests produce incomplete artifacts and
+exit 1. Full verification passed before the final path-normalization correction;
+repeat on the committed final tree, then push, create PR, inspect exact-head CI,
+and merge under the owner's existing authorization. Do not ask the owner to
+perform code review. See [the evidence record](docs/verification/2026-10-04-browser-discovery-report.md).
+
+No production origin, credentials, account access, live grant or real booking is
+authorized. Historical extension profiles and branches remain preserved.
