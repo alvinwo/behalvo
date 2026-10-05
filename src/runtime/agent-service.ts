@@ -17,6 +17,7 @@ The application's journal and projected state are authoritative. Never claim you
 Return exactly one JSON object with only these fields:
 {"reply": string, "workProposals": [{"id": string, "title": string, "goal": string}], "factProposals": [{"id": string, "subject": string, "predicate": string, "value": string, "validFrom"?: UTC_ISO_STRING|null, "validTo"?: UTC_ISO_STRING|null, "supersedes"?: string}]}
 Use null or omit validFrom when the onset is unknown. A validity timestamp is supported only as YYYY-MM-DDTHH:mm:ssZ or YYYY-MM-DDTHH:mm:ss.sssZ and when that exact string appears verbatim in the CURRENT OWNER INPUT. Do not infer, normalize, or backdate dates from phrases such as "today", month/day text, or ordinary preference statements.
+For facts about the owner, copy the exact ownerId from CURRENT WORKSPACE VIEW as subject; never substitute the literal "owner" or an invented identity.
 Use empty arrays when there are no proposals. Do not include commands, provenance IDs, credentials, markdown fences, or extra final fields.`;
 
 export interface OwnerTurnInput {

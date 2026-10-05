@@ -338,3 +338,104 @@ test('final inbox deadline is rechecked inside the acquired SQLite transaction',
         assert.equal(replies[0].event.data.source, 'agent:application');
     } finally { f.store.close(); if (lockFinished) await lockFinished; rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('oversized excluded commentary cannot dispatch an otherwise valid approved command', async () => {
+    const f = fixture([]);
+    try {
+        const action = await prepared(f); approve(f, action);
+        f.responses.push(() => ({ text: JSON.stringify(tool('execute', { actionId: action.id })),
+            diagnosticText: 'x'.repeat(65537) }));
+        await f.run();
+        assert.equal(f.calls(), 0);
+        assert.equal(f.store.state('ws').actions[action.id].status, 'approved');
+    } finally { f.store.close(); }
+});
+
+test('one fresh JSON response may recover after read-only inspection before any effect', async () => {
+    const f = fixture([]);
+    try {
+        const action = await prepared(f); approve(f, action);
+        f.responses.push(tool('inspect', { actionId: action.id }), '{"PRIVATE_BAD_RESPONSE":',
+            tool('execute', { actionId: action.id }), tool('verify', { actionId: action.id }), final('Verified.'));
+        const result = await f.run();
+        assert.equal(result.turn.reply, 'Verified.'); assert.equal(f.calls(), 1);
+        assert.equal(f.requests.length, 5);
+        assert.match(f.requests[2].system, /fresh.*JSON/i);
+        assert.doesNotMatch(f.requests[3].system, /APPLICATION FORMAT CORRECTION/);
+        assert.ok(f.requests.every(req => !JSON.stringify(req).includes('PRIVATE_BAD_RESPONSE')));
+        assert.equal(f.store.state('ws').actions[action.id].verification.status, 'satisfied');
+    } finally { f.store.close(); }
+});
+test('JSON recovery is once-only and shares the eight-completion budget', async () => {
+    for (const responses of [['{', '{', final('must not run')], [...Array.from({ length: 7 }, () => tool('catalog')), '{', final('must not run')]]) {
+        const expected = responses.length - 1, f = fixture(responses);
+        try { assert.match((await f.run()).turn.reply, /stopped/i); assert.equal(f.requests.length, expected); assert.equal(f.calls(), 0); }
+        finally { f.store.close(); }
+    }
+});
+test('JSON recovery never follows execute or verify and never retries provider errors', async () => {
+    for (const afterVerify of [false, true]) {
+        const f = fixture([]);
+        try {
+            const action = await prepared(f); approve(f, action);
+            f.responses.push(tool('execute', { actionId: action.id }));
+            if (afterVerify) f.responses.push(tool('verify', { actionId: action.id }));
+            f.responses.push('{', tool('execute', { actionId: action.id }));
+            assert.match((await f.run()).turn.reply, /stopped/i);
+            assert.equal(f.calls(), 1); assert.equal(f.requests.length, afterVerify ? 3 : 2);
+        } finally { f.store.close(); }
+    }
+    const f = fixture([() => { throw new SyntaxError('provider exception'); }, final('must not run')]);
+    try { await f.run(); assert.equal(f.requests.length, 1); assert.equal(f.calls(), 0); }
+    finally { f.store.close(); }
+});
+
+test('verify alone consumes syntax-recovery eligibility even when execution happened before the run', async () => {
+    const f = fixture([]);
+    try {
+        const action = await prepared(f); approve(f, action);
+        await f.operations.execute({ workspaceId: 'ws', ownerId: 'owner', actionId: action.id });
+        f.responses.push(tool('verify', { actionId: action.id }), '{', final('must not run'));
+        await f.run(); assert.equal(f.requests.length, 2); assert.equal(f.calls(), 1);
+    } finally { f.store.close(); }
+});
+test('successful read-only calls cannot restore recovery or invocation eligibility', async () => {
+    const once = fixture(['{', tool('catalog'), '{', final('must not run')]);
+    try { await once.run(); assert.equal(once.requests.length, 3); assert.equal(once.calls(), 0); }
+    finally { once.store.close(); }
+    const f = fixture([]);
+    try {
+        const action = await prepared(f); approve(f, action);
+        f.responses.push(tool('execute', { actionId: action.id }), tool('inspect', { actionId: action.id }), '{', final('must not run'));
+        await f.run(); assert.equal(f.requests.length, 3); assert.equal(f.calls(), 1);
+    } finally { f.store.close(); }
+});
+test('corrected completion shares the original deadline and cannot dispatch a late result', async () => {
+    let resolveLate;
+    const f = fixture(['{', () => new Promise(resolve => { resolveLate = resolve; })], { loop: { timeoutMs: 200 } });
+    try {
+        const action = await prepared(f); approve(f, action);
+        assert.match((await f.run()).turn.reply, /deadline/i);
+        assert.equal(f.requests.length, 2); assert.equal(f.calls(), 0);
+        const version = f.store.state('ws').version;
+        resolveLate({ text: JSON.stringify(tool('execute', { actionId: action.id })) });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(f.calls(), 0); assert.equal(f.store.state('ws').version, version);
+    } finally { f.store.close(); }
+});
+test('format correction cannot exceed the original serialized request size limit', async () => {
+    const { OperationLoop } = await import('../dist/runtime/operation-loop.js');
+    const f = fixture([]), req = { model: { provider: 'fake', model: 'one' }, system: '', prompt: 'synthetic' };
+    const binding = { workspaceId: 'ws', ownerId: 'owner', workId: 'work', ownerRecordId: 'synthetic-source' };
+    try {
+        let bytes;
+        await new OperationLoop(f.store, { service: f.operations, registry: f.registry }).run({
+            complete: async request => { bytes = Buffer.byteLength(JSON.stringify(request)); return { text: JSON.stringify(final()) }; }
+        }, req, binding);
+        let calls = 0;
+        const result = await new OperationLoop(f.store, { service: f.operations, registry: f.registry, maxRequestBytes: bytes }).run({
+            complete: async () => { calls++; return { text: '{' }; }
+        }, req, binding);
+        assert.equal(calls, 1); assert.match(result.turn.reply, /size limit/i); assert.equal(f.calls(), 0);
+    } finally { f.store.close(); }
+});

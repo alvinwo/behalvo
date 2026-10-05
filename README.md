@@ -64,8 +64,9 @@ For the deterministic synthetic agent-evaluation harness:
 npm run eval:agent -- --scripted
 ```
 
-This scripted result is non-live evidence. Genuine live-model acceptance has not
-yet been run and remains pending configured model authorization and human review.
+This scripted result is non-live evidence. Live Astra evaluation has now run on
+synthetic tasks; acceptance remains gated by the full evaluation and human review.
+See [the integration evidence](docs/verification/2026-10-04-live-model-integration.md).
 
 For real models, the bundled, pinned Pi 0.85.1 adapter exposes Pi's multi-provider catalog while keeping provider state outside the agent kernel. Node.js **22.19+** is required:
 
@@ -128,7 +129,7 @@ see the [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md).
 | Versioned prepared operations with exact connection/resource bindings | Real account handlers, remote authentication or universal account discovery |
 | Opt-in persistent synthetic contact/subscription operations with readback | Production credential protection or provider write verification |
 | Bounded structured operation loop and trusted `/actions` / `/approve` commands | Autonomous retries or startup recovery of running effects |
-| Versioned 20-case synthetic evaluation harness with private JSON reports | Genuine live-model evaluation and manual acceptance review |
+| Versioned 20-case evaluation harness, live Astra diagnostic runs, phase-aware Pi responses, scoped session cleanup and bounded pre-dispatch syntax recovery | Full live-model acceptance and human usefulness review |
 | Foreground loopback service with pairing, durable chat/reminders, review, approval, explicit synthetic execution/readback and status | Remote/mobile identity, OS-supervised 24/7 operation, real-provider control or deployment |
 | Fenced local-only browser sessions, one-host MV3 boundary, and synthetic scheduling portal | Live browser/visa adapter, production credentials, or real portal automation |
 | Callback-scoped synthetic secrets, fail-closed native Keychain-helper transport, interprocess private-profile custody, and durable retryable disconnect controls | Installed signed Keychain helper, arbitrary sync/backup-root detection, live credential collection, or live private connection validation |

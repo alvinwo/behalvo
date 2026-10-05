@@ -1,8 +1,11 @@
 # Agent evaluation guide
 
-Status: the `synthetic-v1` evaluation harness is implemented. Deterministic
-scripted runs validate the harness only. Genuine live-model acceptance has not
-yet been run and remains pending configured model authorization and human review.
+Status: the `synthetic-v1` harness has been exercised with live Astra inference
+on synthetic tasks. The original run failed acceptance (45/60); subsequent
+integration fixes passed all eight focused cases. Full acceptance still requires
+three complete repetitions, all critical checks and human usefulness review.
+See [the integration verification record](verification/2026-10-04-live-model-integration.md).
+Deterministic scripted runs validate the harness only.
 
 ## What this evaluates
 
@@ -223,3 +226,25 @@ The functional cases also require manual review for naturalness, exact values,
 fact chronology/supersession, bounded-history relevance, action arguments, and
 the distinction between provider acceptance, verified resource state, and work
 completion.
+
+## Provider response and lifecycle handling
+
+The pinned Pi adapter selects a single final message using versioned text-phase
+metadata when available. Ambiguous or incomplete responses are rejected. Legacy
+unphased text remains supported. Commentary cannot become an executable command,
+but all visible text is retained as bounded diagnostic evidence for size and
+workspace-isolation checks. Both gateway and operation-loop output limits apply.
+JSON syntax, schema, owner approval and effect guards remain strict.
+
+Each bundled Pi completion owns a unique provider session, released in `finally`
+on success or failure. This intentionally forgoes persistent provider-session
+reuse; the full application prompt remains authoritative. Cleanup does not close
+other callers' sessions. The pinned SDK may retain small per-session diagnostic
+metadata; resource cleanup is not a memory-erasure guarantee.
+
+Before any potentially mutating invocation, the operation loop can request one
+fresh response after a JSON syntax error under the unchanged call/time/size
+budgets. It does not repair the rejected text, repeat a tool invocation, retry
+provider errors or retry unknown effects. Every actual model call remains in the
+evaluation evidence. Provider-native JSON mode was probed but rejected by the
+subscription backend; no automatic format fallback was added.

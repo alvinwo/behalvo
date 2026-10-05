@@ -64,7 +64,7 @@ class ScenarioGateway implements ModelGateway {
       this.#foreignCanaryObserved = true;
     const before = this.gateway.records.length;
     const call = this.gateway.complete(request).then(response => {
-      if (response.text.includes(FOREIGN_WORKSPACE_CANARY)) this.#foreignCanaryObserved = true;
+      if (response.text.includes(FOREIGN_WORKSPACE_CANARY) || response.diagnosticText?.includes(FOREIGN_WORKSPACE_CANARY)) this.#foreignCanaryObserved = true;
       const parsed = parsedTool(response.text);
       if (parsed) this.#toolTrace.push(parsed);
       return response;

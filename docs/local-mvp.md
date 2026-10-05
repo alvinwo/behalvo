@@ -155,9 +155,14 @@ not resume inference. Request execution in a new owner turn. A model reply,
 
 Each run permits at most eight model completion attempts and 120 seconds. It
 accepts one strict tool request or one final reply/proposal envelope per
-completion. Unknown tools/fields, malformed output, failed/unknown/running
+completion. Unknown tools/fields, schema-invalid output, failed/unknown/running
 execution, and unsuccessful verification stop the run with a durable application
-reply. Acceptance alone is not verification or WorkItem completion. There is no
+reply. A JSON syntax error may request one fresh completion only while all prior
+tool invocations in this run were read-only `catalog` or `inspect`. The discarded
+text is never repaired, dispatched or echoed. The one-shot format correction uses
+the same eight-call, deadline and serialized-request limits. Calling any other
+tool permanently closes this recovery path before invocation begins; provider
+errors, timeouts and uncertain effects are never retried. Acceptance alone is not verification or WorkItem completion. There is no
 automatic retry or replacement action after a stopped run.
 
 The entire serialized request (system, context and accumulated tool transcript)

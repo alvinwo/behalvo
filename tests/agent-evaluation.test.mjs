@@ -599,3 +599,10 @@ test('critical failures, incomplete evidence, and undersized runs are not thresh
   assert.equal(undersized.acceptanceEvidence.automaticThresholdMet, false);
   assert.equal(undersized.acceptanceEvidence.liveAcceptanceReviewEligible, false);
 });
+
+test('excluded commentary still participates in full-response isolation checks', async () => {
+  const report = await runAgentEvaluation({ mode: 'live', model, caseIds: ['workspace-isolation'], repeats: 1,
+    gateway: gateway(async () => ({ ...final('Only this workspace.'), diagnosticText: FOREIGN_WORKSPACE_CANARY })) });
+  assert.equal(byId(report, 'workspace-isolation').evidence.foreignCanaryAbsent, false);
+  assert.equal(report.overallStatus, 'failed');
+});
