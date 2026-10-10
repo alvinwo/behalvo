@@ -1,5 +1,7 @@
 # Task Teachings Implementation Plan
 
+Status: delegated Astra/max architecture review approved on 2026-10-09; implementation has not started.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. The primary agent is the sole writer; technical review is delegated under the owner's existing instructions.
 
 **Goal:** Let the owner teach, correct, recall and retract work-scoped instructions
@@ -64,6 +66,19 @@ current source. The reducer validates lifecycle, scope and revision, advances
 work revision once per change, and keeps supersession/retraction provenance.
 The store checks owner-message/artifact source integrity on append and verified
 replay. Validation happens for the whole change batch before any commit.
+Replacement creates a new ID (revision 1), linking the old active entry; the old
+entry's lifecycle revision increments. Retraction increments the old lifecycle
+revision and retains a separate `retractionSource` with the exact new owner record
+and quote offsets, never overwriting the original source.
+
+`TeachingClarification` has a runtime ID, work ID, exact owner source record/quote,
+and open/resolved status. `teaching.clarification_opened` advances work revision
+and holds the work against action preparation, approval and dispatch through all
+entry points. `teaching.clarification_resolved` requires the exact open ID and a
+new owner source, advances revision and clears that hold. Multiple open items all
+require resolution. These records are in projection v2 and mandatory context.
+Extend guards in `src/runtime/operator.ts`, `src/operations/service.ts` and the
+monitor reservation/dispatch path; no direct or scheduled action may bypass it.
 
 - [ ] Write tests for add/replace/retract and conflicting active instructions;
   unchanged original artifacts; stale expected revision; wrong owner/work/thread;
@@ -76,6 +91,10 @@ replay. Validation happens for the whole change batch before any commit.
   fields, duplicate target changes, unsupported lifecycle and invalid sources.
 - [ ] Assert teaching changes invalidate an already approved operation through
   the existing work-revision check; no action approval or execution is added.
+- [ ] Test an ambiguous correction opens a durable hold, no-op messages and
+  restarts preserve it, every action entry point rejects it, and exact sourced
+  resolution permits only fresh preparation/approval. Conflicting constraints
+  open the same hold rather than allowing an old approval to execute.
 - [ ] Run the focused tests and existing reducer/operation tests, then commit.
 
 ## Task 2: Explicit projection v2 maintenance upgrade
@@ -90,6 +109,8 @@ maintenance API, reached under the existing exclusive process lock by a storage
 CLI command. Ordinary v1 reads remain supported without mutation; teaching mode
 refuses a v1 projection with an actionable upgrade instruction. V2 adds the
 teaching map; v1 cannot contain teaching events. Unknown versions reject.
+Ordinary writes to a v1 projection remain v1 until the explicit upgrade; neither
+opening the store nor saving an unrelated work/fact event silently upgrades it.
 
 - [ ] Add old-journal fixtures and tests for normal legacy reads, explicit
   upgrade, deterministic rebuild, repeated upgrade, unsupported version, unknown
@@ -111,8 +132,27 @@ teaching map; v1 cannot contain teaching events. Unknown versions reject.
 `tests/operation-loop.test.mjs`.
 
 **Interfaces:** `extractTeachings(gateway, model, input, execution):
-Promise<TeachingChange[]>` accepts current raw owner text and active teaching
-source records/IDs/revisions only. Its model output is exactly `{changes: [...]}`.
+Promise<TeachingResult>` accepts current raw owner text, active teaching sources,
+IDs/revisions, and open clarification owner sources/IDs only. Strict output is:
+
+```ts
+type TeachingResult =
+  | { outcome: 'none' }
+  | { outcome: 'apply'; changes: TeachingChange[];
+      resolutions: { clarificationId: string; sourceQuote: string }[] }
+  | { outcome: 'clarify'; sourceQuote: string;
+      targets: { teachingId: string; expectedRevision: number }[];
+      question: string };
+```
+
+`apply` requires at least one change or resolution; at most 8 of each. Resolution
+references must be currently open in focused work and have a unique exact current
+owner quote. `clarify` targets are at most 8 active same-work teaching references;
+the question is at most 2048 UTF-8 bytes and is labeled as a model question, not
+owner source. It opens a durable hold, records a bounded acknowledgment/question
+and completes the inbox atomically without operation tools. `none` cannot clear a
+hold; while a hold exists it returns a fixed clarification-needed response and
+never enters the operation loop. Malformed output is not `none`.
 `execution` owns the original absolute deadline, cancellation and shared remaining
 completion count. No syntax-recovery allowance can expand the eight-call total.
 The extractor uses one completion and rejects malformed output; it does not retry.
@@ -129,8 +169,9 @@ work means no extraction and no implicit assignment to another work item.
   Observe RED before implementation.
 - [ ] Validate the complete teaching batch before commit. A nonempty batch ends
   the turn with an application-authored memory acknowledgment and no operation
-  tools; commit changes, acknowledgment and inbox completion atomically. Empty
-  batches continue through the normal loop with the remaining budget. This keeps
+  tools; commit changes, resolutions, acknowledgment and inbox completion atomically.
+  Only `none` without an open hold continues through the normal loop with the
+  remaining budget. This keeps
   instruction changes separate from action dispatch and prevents stale approval
   use in the same turn.
 - [ ] Ensure duplicate owner delivery cannot extract or append the same changes

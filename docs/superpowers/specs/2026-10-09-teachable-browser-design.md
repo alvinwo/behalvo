@@ -97,6 +97,11 @@ quoting page instructions in an owner message is not automatic endorsement of
 their contents. No inferred teaching can enlarge executable capabilities.
 Creating, correcting or retracting a teaching conservatively advances the focused
 work revision, invalidating prior action approvals under existing freshness rules.
+An ambiguous correction or retraction is a distinct clarification outcome, never
+an empty change list. Preserve its exact owner source as mandatory pending context,
+advance work revision, and block action preparation/approval/dispatch for that
+work until a later owner-only turn explicitly resolves it. An ordinary no-change
+message cannot clear the hold. Conflicting unresolved teachings use the same hold.
 
 Capture teaching proposals in an owner-only interpretation step before browser
 evidence or learned notes enter model context. Bind new sources to the current
@@ -188,11 +193,16 @@ work-goal paraphrases and assistant/browser-derived content. Its changes are
 owner text. The runtime computes source offsets. Replacement/retraction requires
 the exact currently active teaching ID and revision in focused work. A model's
 interpretation remains advisory; no fuzzy source matching is allowed.
+Replacement creates a new immutable teaching ID linked to the superseded entry;
+the old entry's lifecycle revision advances. Retraction retains its original
+source and records a separate current-owner retraction source.
 
 The first extraction consumes one of the same eight model completions and shares
 the original absolute 120-second deadline with the subsequent loop. Projection
 v2 requires explicit maintenance rebuild from the old journal, with no effects;
 ordinary startup never silently upgrades an existing projection.
+Legacy writes remain projection v1 and cannot append teaching events until the
+explicit upgrade. Clarification holds and their resolution replay without effects.
 
 The owner describes the goal and gives instructions in the ordinary chat surface.
 The agent acknowledges the relevant teachings in plain language. A later owner

@@ -19,8 +19,8 @@ combined model/browser acceptance earns the teachable-exploration claim. Live
 access and consequential booking remain separate reviewed increments.
 
 The [T1a implementation plan](docs/superpowers/plans/2026-10-09-task-teachings.md)
-is written and undergoing delegated architecture review. Next: address that review,
-then implement its behavior tests first. Read development, execution and UI-copy
+is approved by delegated Astra/max architecture review. Next: implement its
+behavior tests first. Read development, execution and UI-copy
 skills before implementation. Preserve old databases; projection v2 requires
 explicit maintenance. Do not increase the eight-call/120-second turn budget.
 
