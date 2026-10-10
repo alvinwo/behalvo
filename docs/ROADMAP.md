@@ -8,8 +8,10 @@ progress without a hard-coded visa workflow. The H-1B appointment case is the
 first intended use. Email and phone integrations are not prerequisites.
 
 1. Design and review [teachable browser work](superpowers/specs/2026-10-09-teachable-browser-design.md).
-   Its first implementation target is durable teachings and model-driven synthetic
-   exploration across different websites. This capability is not implemented yet.
+   T1a durable teachings are implemented behind `--task-teachings`, with exact
+   owner sources, correction/retraction and durable clarification holds. Release
+   evidence is tracked in [T1a verification](verification/2026-10-09-task-teachings.md).
+   T1b model-driven synthetic exploration and learned website notes remain next.
 2. Establish supervised live exploration with explicit site scope, private session
    custody and current observations. Existing synthetic browser acceptance does
    not prove real portal compatibility.

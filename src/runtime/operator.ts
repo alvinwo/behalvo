@@ -1,3 +1,4 @@
+import { assertTeachingClear } from '../kernel/teachings.js';
 import { randomUUID } from 'node:crypto';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import type { Action, Fact, WorkItem, WorkPhase } from '../kernel/types.js';
@@ -52,6 +53,7 @@ export class Operator {
             return existing;
         }
         const w = required(s.works, input.workId, 'Work');
+        assertTeachingClear(s,w.id);
         if (['done', 'cancelled'].includes(w.phase))
             throw new Error('Work is closed');
         const a: Action = { id: randomUUID(), workId: w.id, key, command: structuredClone(input.command),
@@ -69,6 +71,7 @@ export class Operator {
             throw new Error('Approval expired or exceeds 24-hour TTL');
         const a = required(s.actions, actionId, 'Action');
         const w = required(s.works, a.workId, 'Work');
+        assertTeachingClear(s,w.id);
         if (digest !== a.digest)
             throw new Error('Approval digest mismatch');
         if (w.revision !== a.workRevision || ['done', 'cancelled'].includes(w.phase))
@@ -93,6 +96,7 @@ export class Operator {
         if (driverChannel !== a.command.channel)
             throw new Error('Effect driver channel mismatch');
         const w = required(s.works, a.workId, 'Work');
+        assertTeachingClear(s,w.id);
         if (w.revision !== a.workRevision || ['done', 'cancelled'].includes(w.phase))
             throw new Error('Stale or closed work authorization');
         const now = this.clock();
@@ -157,6 +161,7 @@ export class Operator {
         identifier(input.id);
         instant(input.dueAt);
         const w = required(s.works, input.workId, 'Work');
+        assertTeachingClear(s,w.id);
         if (['done', 'cancelled'].includes(w.phase))
             throw new Error('Work is closed');
         this.store.append(workspaceId, s.version, [{ type: 'timer.scheduled', data: { timer: { ...input, workRevision: w.revision, status: 'scheduled' } } }], { actorId: ownerId, recordedAt: this.clock() });

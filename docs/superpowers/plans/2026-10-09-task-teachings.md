@@ -1,6 +1,8 @@
 # Task Teachings Implementation Plan
 
-Status: delegated Astra/max architecture review approved on 2026-10-09; implementation has not started.
+Status: T1a implementation and focused independent re-review completed on 2026-10-09; final release gates are tracked in the verification report.
+
+Execution note: Tasks 1–4 share source/projection/transaction interfaces and were implemented as one reviewed commit with focused RED/GREEN cycles. Tests for shared budgets live in the dedicated teaching extractor suite; existing REPL focus/linking required no source edit. Task 5 release gates remain pending until recorded below.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. The primary agent is the sole writer; technical review is delegated under the owner's existing instructions.
 
@@ -80,22 +82,22 @@ require resolution. These records are in projection v2 and mandatory context.
 Extend guards in `src/runtime/operator.ts`, `src/operations/service.ts` and the
 monitor reservation/dispatch path; no direct or scheduled action may bypass it.
 
-- [ ] Write tests for add/replace/retract and conflicting active instructions;
+- [x] Write tests for add/replace/retract and conflicting active instructions;
   unchanged original artifacts; stale expected revision; wrong owner/work/thread;
   unknown, repeated, empty and non-verbatim quote; emoji source offsets; forged
   source; duplicate changes targeting one teaching; and no partial batch append.
-- [ ] Run `npm run build && node --test tests/task-teachings.test.mjs`; observe
+- [x] Run `npm run build && node --test tests/task-teachings.test.mjs`; observe
   the missing feature failing before implementing it.
-- [ ] Implement strict parsers: at most 8 changes per extraction, source quote
+- [x] Implement strict parsers: at most 8 changes per extraction, source quote
   at most 4096 UTF-8 bytes, interpretation at most 2048 bytes. Reject unknown
   fields, duplicate target changes, unsupported lifecycle and invalid sources.
-- [ ] Assert teaching changes invalidate an already approved operation through
+- [x] Assert teaching changes invalidate an already approved operation through
   the existing work-revision check; no action approval or execution is added.
-- [ ] Test an ambiguous correction opens a durable hold, no-op messages and
+- [x] Test an ambiguous correction opens a durable hold, no-op messages and
   restarts preserve it, every action entry point rejects it, and exact sourced
   resolution permits only fresh preparation/approval. Conflicting constraints
   open the same hold rather than allowing an old approval to execute.
-- [ ] Run the focused tests and existing reducer/operation tests, then commit.
+- [x] Run the focused tests and existing reducer/operation tests, then commit.
 
 ## Task 2: Explicit projection v2 maintenance upgrade
 
@@ -112,17 +114,17 @@ teaching map; v1 cannot contain teaching events. Unknown versions reject.
 Ordinary writes to a v1 projection remain v1 until the explicit upgrade; neither
 opening the store nor saving an unrelated work/fact event silently upgrades it.
 
-- [ ] Add old-journal fixtures and tests for normal legacy reads, explicit
+- [x] Add old-journal fixtures and tests for normal legacy reads, explicit
   upgrade, deterministic rebuild, repeated upgrade, unsupported version, unknown
   events, corrupt source, wrong encryption key and transaction rollback.
-- [ ] Observe RED with `npm run build && node --test tests/teaching-projection-upgrade.test.mjs`.
-- [ ] Implement rebuild from validated journal in one transaction, retaining
+- [x] Observe RED with `npm run build && node --test tests/teaching-projection-upgrade.test.mjs`.
+- [x] Implement rebuild from validated journal in one transaction, retaining
   the original journal/artifacts and correctly resealing projection v2 associated
   data. Never normalize an old persisted shape and silently write it as v2.
-- [ ] Extend encrypted backup/restore verification to accept and compare both
+- [x] Extend encrypted backup/restore verification to accept and compare both
   supported projection versions using their versioned deterministic shape.
   Verify upgrade does not execute a model, browser, effect driver or timer.
-- [ ] Run focused storage, encrypted-backup and teaching tests, then commit.
+- [x] Run focused storage, encrypted-backup and teaching tests, then commit.
 
 ## Task 3: Owner-only extraction and shared execution budget
 
@@ -161,23 +163,23 @@ Expose teaching mode only as trusted `AgentService` configuration. For focused
 owner turns in that mode, extract before assembling ordinary context. No focused
 work means no extraction and no implicit assignment to another work item.
 
-- [ ] Test the serialized extraction input contains no legacy facts, assistant
+- [x] Test the serialized extraction input contains no legacy facts, assistant
   messages, history, goal paraphrases, browser observations or learned notes.
   Malicious model output with forged bindings or invalid quotes must reject.
-- [ ] Test one extraction plus at most seven later completions, one absolute
+- [x] Test one extraction plus at most seven later completions, one absolute
   deadline, cancellation before/after extraction, and oversized inputs/outputs.
   Observe RED before implementation.
-- [ ] Validate the complete teaching batch before commit. A nonempty batch ends
+- [x] Validate the complete teaching batch before commit. A nonempty batch ends
   the turn with an application-authored memory acknowledgment and no operation
   tools; commit changes, resolutions, acknowledgment and inbox completion atomically.
   Only `none` without an open hold continues through the normal loop with the
   remaining budget. This keeps
   instruction changes separate from action dispatch and prevents stale approval
   use in the same turn.
-- [ ] Ensure duplicate owner delivery cannot extract or append the same changes
+- [x] Ensure duplicate owner delivery cannot extract or append the same changes
   again. A failed extraction leaves teachings unchanged and records only the
   existing bounded application failure reply; raw provider errors are excluded.
-- [ ] Test active-source-only correction, quoted misleading text, stale-turn
+- [x] Test active-source-only correction, quoted misleading text, stale-turn
   fencing and admission through the service queue, then commit the passing slice.
 
 ## Task 4: Scoped recall and ordinary chat entry point
@@ -193,16 +195,16 @@ output. Existing `/work` focus/linking remains the scope selection mechanism.
 messages, IDs/revisions and separately labeled advisory interpretations for the
 focused work. Superseded/retracted entries are history, not active instructions.
 
-- [ ] Test ordinary teaching/correction/recall/retraction input, restart, linked
+- [x] Test ordinary teaching/correction/recall/retraction input, restart, linked
   thread recall, unlinked thread rejection, other workspace exclusion and legacy
   CLI behavior with the flag absent. Observe RED.
-- [ ] Pin active exact sources in bounded context; deduplicate source messages.
+- [x] Pin active exact sources in bounded context; deduplicate source messages.
   Never silently truncate or omit a mandatory teaching. Overflow fails with a
   fixed message. Surface unresolved competing teachings without picking a winner.
-- [ ] Keep remembered instructions separate from `APPLICATION CONSTRAINTS`;
+- [x] Keep remembered instructions separate from `APPLICATION CONSTRAINTS`;
   they cannot grant execution authority. Ensure model replies cannot claim a
   successful memory change that runtime validation rejected.
-- [ ] Add end-to-end scripted REPL tests with ordinary language and no required
+- [x] Add end-to-end scripted REPL tests with ordinary language and no required
   `/remember` command. Provide clear fixed acknowledgment of changes and recall
   guidance. Run related context/CLI/agent tests and commit.
 
@@ -212,7 +214,7 @@ focused work. Superseded/retracted entries are history, not active instructions.
 `RESUME.md`; create `docs/verification/2026-10-09-task-teachings.md` and
 `tests/task-teachings-acceptance.test.mjs`.
 
-- [ ] Prove teach → restart → recall → correct → stale approval rejected →
+- [x] Prove teach → restart → recall → correct → stale approval rejected →
   retract → restart → no active obsolete instruction, with deterministic
   journal/rebuild equality and exact source checks. Include oversized mandatory
   memory and conflicting constraints.
@@ -220,11 +222,11 @@ focused work. Superseded/retracted entries are history, not active instructions.
   model (no credential inspection). Use synthetic task instructions and keep
   actual source head, model-call count, failures and process exit evidence.
   Automatic protocol success is not owner usefulness approval.
-- [ ] Update the status table only for the implemented T1a memory capability.
+- [x] Update the status table only for the implemented T1a memory capability.
   Explicitly retain T1b exploration, learned website notes, live access and
   booking as unimplemented. Include upgrade, limits and opt-in instructions.
 - [ ] Run `npm run verify` on the final tree; inspect its actual summary.
   Obtain independent Sol/high and Astra/high code review, address findings,
   and publish/merge only after exact-head CI under existing owner authorization.
-- [ ] Prepare a separate T1b plan against the implemented T1a contracts; its
+- [x] Prepare a separate T1b plan against the implemented T1a contracts; its
   shared acceptance must prove model-driven exploration without route scripts.

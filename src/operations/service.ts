@@ -1,3 +1,4 @@
+import { assertTeachingClear } from '../kernel/teachings.js';
 import { assertExecutionActive, assertExecutionCurrent, withinExecution, type OperationExecutionContext } from './execution-context.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Approval, State } from '../kernel/types.js';
@@ -65,6 +66,7 @@ export class OperationService {
         const initial = this.store.state(input.workspaceId);
         assertOwner(initial, input.ownerId);
         const work = required(initial.works, input.workId, 'Work');
+        assertTeachingClear(initial, work.id);
         if (['done', 'cancelled'].includes(work.phase)) throw new Error('Work is closed');
         const connection = this.activeConnection(initial, input.connectionId);
         const handler = this.registry.resolve(connection.provider, input.operationId, input.operationVersion);
@@ -153,6 +155,7 @@ export class OperationService {
             seen.add(item.actionId);
             const action = this.operationAction(state, item.actionId);
             const work = required(state.works, action.workId, 'Work');
+            assertTeachingClear(state, work.id);
             if (action.status !== 'proposed') throw new Error('Action not awaiting approval');
             if (item.digest !== action.digest) throw new Error('Approval digest mismatch');
             if (work.revision !== action.workRevision || ['done', 'cancelled'].includes(work.phase)) throw new Error('Stale or closed work');
@@ -347,6 +350,7 @@ export class OperationService {
         const state = this.store.state(workspaceId);
         assertOwner(state, ownerId);
         const work = required(state.works, workId, 'Work');
+        assertTeachingClear(state,work.id);
         if (work.revision !== workRevision || ['done', 'cancelled'].includes(work.phase)) throw new Error('Work changed during operation preparation');
         this.boundConnection(state, { connectionId: connection.id, provider: connection.provider, subject: connection.subject,
             connectionGeneration: connection.generation });
@@ -360,6 +364,7 @@ export class OperationService {
         if (['running', 'accepted', 'failed', 'unknown', 'cancelled'].includes(action.status)) return action;
         if (action.status !== 'approved' || !action.approval) throw new Error('Operation requires owner approval');
         const work = required(state.works, action.workId, 'Work');
+        assertTeachingClear(state,work.id);
         if (work.revision !== action.workRevision || ['done', 'cancelled'].includes(work.phase)) throw new Error('Stale or closed work authorization');
         const now = this.now();
         if (Date.parse(action.approval.expiresAt) <= Date.parse(now)) throw new Error('Approval expired');
@@ -384,6 +389,7 @@ export class OperationService {
                 canonicalJson(jsonValue(expected.command, 'operation command')))
             throw new Error('Operation action changed before provider dispatch');
         const work = required(state.works, action.workId, 'Work');
+        assertTeachingClear(state,work.id);
         if (work.revision !== action.workRevision || ['done', 'cancelled'].includes(work.phase))
             throw new Error('Stale or closed work authorization');
         if (!action.approval || action.approval.ownerId !== state.ownerId || action.approval.digest !== action.digest ||

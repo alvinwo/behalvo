@@ -1,3 +1,4 @@
+import { validateTeachingSource, type TeachingEvent } from '../kernel/teachings.js';
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -13,7 +14,7 @@ import { preparePrivateDatabasePath } from './private-files.js';
 import { initializeStorage, monitorInstallationState, monitorStorageIdentity, setMonitorInstallationActive, validateStorage } from './sqlite-schema.js';
 import type { MonitorInstallationState } from './sqlite-schema.js';
 import { isOperationCommand } from '../operations/validation.js';
-import { verifyServiceEnvelope, verifyServiceModel, verifyServiceResult } from './sqlite-validation.js';
+import { verifyEncryptedDatabase, verifyServiceEnvelope, verifyServiceModel, verifyServiceResult } from './sqlite-validation.js';
 import { artifactContext, canonicalServiceEnvelope, decodeProjection, decodeRecord, decodeServiceEnvelope, decodeServiceJob, decodeServiceReceipt, decodeSummary, journalContext, messageTokens, open, projectionContext, seal, serviceJobContext, serviceRequestContext, serviceRequestTokens, summaryContext, summaryThread, timerTokens } from './sqlite-codec.js';
 import type { Row } from './sqlite-codec.js';
 import { ServiceStorageError } from './service-jobs.js';
@@ -222,10 +223,30 @@ export class SqliteStore {
             return this.#append(workspaceId, expectedVersion, [event], metadata);
         });
     }
-    #save(s: State): void {
+    projectionVersion(workspaceId: string): number {
+        const row = this.#db.prepare('SELECT projection_version FROM projections WHERE workspace_id=?').get(workspaceId);
+        if (!row || ![1,2].includes(Number(row.projection_version))) throw new Error('Unsupported projection version');
+        return Number(row.projection_version);
+    }
+    upgradeTeachingProjection(workspaceId: string): void {
+        this.#transaction(() => {
+            if (this.projectionVersion(workspaceId) === 2) return;
+            if (this.#cipher) verifyEncryptedDatabase(this.#db,this.#cipher);
+            const state = this.#replay(workspaceId);
+            if (!isDeepStrictEqual(state,this.state(workspaceId))) throw new Error('Projection does not match journal');
+            state.teachingMemory = {teachings: {}, clarifications: {}};
+            this.#save(state, 2);
+        });
+    }
+    #teachingSource(state: State, event: DomainEvent): void {
+        if (event.type.startsWith('teaching.')) validateTeachingSource(state, event as TeachingEvent,
+            id => this.record(state.workspaceId,id), id => this.readArtifact(state.workspaceId,id));
+    }
+    #save(s: State, version?: number): void {
+        const projectionVersion = version ?? Number(this.#db.prepare('SELECT projection_version FROM projections WHERE workspace_id=?').get(s.workspaceId)?.projection_version ?? 2);
         this.#db.prepare(`INSERT INTO projections VALUES (?,?,?,?) ON CONFLICT(workspace_id)
       DO UPDATE SET version=excluded.version,projection_version=excluded.projection_version,state_json=excluded.state_json`)
-            .run(s.workspaceId, s.version, SCHEMA, seal(JSON.stringify(s), projectionContext(s.workspaceId, s.version, SCHEMA), this.#cipher));
+            .run(s.workspaceId, s.version, projectionVersion, seal(JSON.stringify(s), projectionContext(s.workspaceId, s.version, projectionVersion), this.#cipher));
     }
     #append(workspaceId: string, expectedVersion: number, events: DomainEvent[], metadata: RecordMetadata = {}, creating = false): JournalRecord[] {
         let s = this.#load(workspaceId);
@@ -245,6 +266,7 @@ export class SqliteStore {
                 recordedAt, actorId: metadata.actorId ?? 'system', causationId: metadata.causationId ?? null, event: structuredClone(event) };
             const sourceObservedAt = record.event.type === 'fact.recorded'
                 ? this.record(workspaceId, record.event.data.fact.sourceRecordId).recordedAt : undefined;
+            this.#teachingSource(s,record.event);
             s = reduce(s, record.event, record.seq, sourceObservedAt);
             this.#db.prepare('INSERT INTO journal(id,workspace_id,seq,schema_version,recorded_at,actor_id,causation_id,event_json) VALUES (?,?,?,?,?,?,?,?)')
                 .run(record.id, workspaceId, record.seq, SCHEMA, record.recordedAt,
@@ -291,34 +313,41 @@ export class SqliteStore {
         if (!Number.isSafeInteger(revision) || revision < 1 || revision > current.version)
             throw new Error('Historical revision out of range');
         const rows = this.#db.prepare('SELECT * FROM journal WHERE workspace_id=? AND seq<=? ORDER BY seq').all(workspaceId, revision);
-        let state = emptyState(workspaceId);
+        let state = emptyState(workspaceId,this.projectionVersion(workspaceId));
         for (const row of rows) {
             const record = this.#decode(row);
             const sourceObservedAt = record.event.type === 'fact.recorded'
                 ? this.record(workspaceId, record.event.data.fact.sourceRecordId).recordedAt : undefined;
+            this.#teachingSource(state,record.event);
             state = reduce(state, record.event, record.seq, sourceObservedAt);
         }
         return state;
     }
-    rebuild(workspaceId: string): State {
-        return this.#transaction(() => {
+    #replay(workspaceId: string): State {
             const rows = this.#db.prepare('SELECT * FROM journal WHERE workspace_id=? ORDER BY seq').all(workspaceId);
             if (!rows.length)
                 throw new Error('Workspace not found');
-            let s = emptyState(workspaceId);
+            let s = emptyState(workspaceId,this.projectionVersion(workspaceId));
             const events: DomainEvent[] = [];
             for (const row of rows) {
                 const record = this.#decode(row);
                 events.push(record.event);
+                if (record.event.type === 'message.received') {
+                    const body=this.readArtifact(workspaceId,record.event.data.artifactId);
+                    nonempty(body,'message artifact');
+                    if(Buffer.byteLength(body,'utf8')>262144) throw new Error('Invalid message artifact');
+                }
                 const sourceObservedAt = record.event.type === 'fact.recorded'
                     ? this.record(workspaceId, record.event.data.fact.sourceRecordId).recordedAt : undefined;
-                s = reduce(s, record.event, record.seq, sourceObservedAt);
+                this.#teachingSource(s,record.event);
+            s = reduce(s, record.event, record.seq, sourceObservedAt);
             }
             validateMonitoredReservationJournal(events, s);
             validateMonitoredReservationState(s);
-            this.#save(s);
             return s;
-        });
+    }
+    rebuild(workspaceId: string): State {
+        return this.#transaction(() => { const state=this.#replay(workspaceId); this.#save(state); return state; });
     }
     #artifact(workspaceId: string, body: string): string {
         this.#writable();

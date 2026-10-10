@@ -1,3 +1,4 @@
+import { assertTeachingClear } from '../kernel/teachings.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Action, DomainEvent, State } from '../kernel/types.js';
 import { identifier, required } from '../kernel/types.js';
@@ -843,6 +844,7 @@ export class MonitoringService {
   #narrowedAction(state: State, grant: MonitoredActionGrant, workId: string, observation: Observation,
       command: OperationCommand, actionId: string): Action {
     const work = required(state.works, workId, 'Work');
+    assertTeachingClear(state,workId);
     if (['done', 'cancelled'].includes(work.phase)) throw new Error('Monitored action work is closed');
     return { id: actionId, workId: work.id, key: `monitor:${grant.id}:${observationDigest(observation)}`,
       command, digest: monitoredActionCommandDigest(this.options.workspaceId, work.id, work.revision, grant, command),

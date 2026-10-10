@@ -1,3 +1,4 @@
+import { teachingMessage } from '../runtime/teaching-messages.js';
 import { OperationRegistry } from '../operations/registry.js';
 import { OperationService } from '../operations/service.js';
 import { openSyntheticOperations, type PersistentSyntheticOperationsProvider } from '../operations/local-synthetic.js';
@@ -14,6 +15,7 @@ export interface LocalAgentOptions {
   ownerId: string;
   gateways: readonly ModelGateway[];
   syntheticOperations?: boolean;
+  teachingMode?: boolean;
   encryptionKey?: Uint8Array;
 }
 
@@ -46,6 +48,7 @@ export function openLocalAgent(options: LocalAgentOptions): LocalAgent {
     if (state.ownerId !== options.ownerId)
       throw new Error(`Workspace owner mismatch: expected ${state.ownerId}`);
 
+    if (options.teachingMode && !state.teachingMemory) throw new Error(teachingMessage('upgrade'));
     const registry = new ModelRegistry(options.gateways);
     const operationRegistry = new OperationRegistry();
     const operations = new OperationService(store, operationRegistry, undefined, options.workspaceId);
@@ -57,7 +60,7 @@ export function openLocalAgent(options: LocalAgentOptions): LocalAgent {
       operations,
       operationRegistry,
       registry,
-      service: new AgentService(store, registry, undefined, { service: operations, registry: operationRegistry, workspaceId: options.workspaceId }),
+      service: new AgentService(store, registry, undefined, { service: operations, registry: operationRegistry, workspaceId: options.workspaceId }, {teachingMode:options.teachingMode ?? false}),
       operator: new Operator(store),
       close: () => {
         if (closed) return;

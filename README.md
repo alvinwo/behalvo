@@ -117,6 +117,8 @@ see the [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md).
 | --- | --- |
 | Append-only Journal, rebuildable state, historical reads | Automatic long-history consolidation / semantic retrieval |
 | Durable owner + assistant messages across process restarts | Email, WhatsApp, WeChat, SMS or phone channels |
+| Opt-in owner-sourced task teachings, corrections, retraction and clarification holds across restart/linked threads | General model-driven website exploration and learned website notes |
+| Explicit journal-validated v1 → v2 teaching projection upgrade, including encrypted backups | Automatic legacy projection upgrades |
 | WorkItems/Facts shared across explicitly linked threads | Live browser automation or model-generated real-world effects |
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |
 | Pinned Pi multi-provider adapter and separate file credential store | Independent live-model operation-loop verification |

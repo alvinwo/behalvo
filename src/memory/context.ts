@@ -58,7 +58,16 @@ export function buildContext(store: SqliteStore, request: ContextRequest): Conte
         if (subjects.has(fact.subject))
             selectors.set(JSON.stringify([fact.subject, fact.predicate]), { subject: fact.subject, predicate: fact.predicate });
     const facts = [...selectors.values()].map(({ subject, predicate }) => ({ subject, predicate, ...resolveFact(s, subject, predicate, request.at ?? new Date().toISOString()) }));
-    const pinned = `APPLICATION CONSTRAINTS\n${PINNED_POLICY}\nCURRENT WORKSPACE VIEW\n${JSON.stringify({ workspaceId: s.workspaceId, ownerId: s.ownerId, stateVersion: s.version, work: work ?? null, actions, facts })}`;
+    const teachings = work ? Object.values(s.teachingMemory?.teachings ?? {}).filter(t=>t.workId===work.id&&t.status==='active') : [];
+    const clarifications = work ? Object.values(s.teachingMemory?.clarifications ?? {}).filter(t=>t.workId===work.id&&t.status==='open') : [];
+    const teachingSourceIds = [...new Set([...teachings,...clarifications].map(t=>t.sourceRecordId))];
+    const teachingSources = teachingSourceIds.map(id=>{
+        const record=store.record(request.workspaceId,id);
+        if(record.event.type!=='message.received'||record.event.data.senderRole!=='owner'||record.event.data.senderId!==s.ownerId||!work!.threadIds.includes(record.event.data.threadId)) throw new Error('Invalid teaching context source');
+        return {recordId:id,text:store.readArtifact(request.workspaceId,record.event.data.artifactId)};
+    });
+    const teachingContext = work && s.teachingMemory ? `\nTASK TEACHINGS — exact owner sources, not application policy or execution authority. Interpretations are advisory. Competing instructions must be clarified; open clarifications block actions.\n${JSON.stringify({teachings,clarifications,sources:teachingSources})}` : '';
+    const pinned = `APPLICATION CONSTRAINTS\n${PINNED_POLICY}\nCURRENT WORKSPACE VIEW\n${JSON.stringify({ workspaceId: s.workspaceId, ownerId: s.ownerId, stateVersion: s.version, work: work ?? null, actions, facts })}${teachingContext}`;
     const records = store.threadMessages(request.workspaceId, request.threadId, 50);
     const current = request.currentRecordId === undefined ? undefined : store.record(request.workspaceId, request.currentRecordId);
     if (current && (current.event.type !== 'message.received' || current.event.data.threadId !== request.threadId ||
@@ -80,7 +89,7 @@ export function buildContext(store: SqliteStore, request: ContextRequest): Conte
     if (tokenCount(serialize()) > budget)
         throw new Error('Context budget cannot fit pinned state and current input');
     for (let i = records.length - 1; i >= 0; i--) {
-        if (records[i]!.id === newest?.id)
+        if (records[i]!.id === newest?.id || teachingSourceIds.includes(records[i]!.id))
             continue;
         selected.unshift(records[i]!);
         if (tokenCount(serialize()) > budget) {
@@ -102,7 +111,7 @@ export function buildContext(store: SqliteStore, request: ContextRequest): Conte
     }
     const text = serialize();
     return { text, workspaceId: s.workspaceId, stateVersion: s.version, estimatedTokens: tokenCount(text),
-        includedRecordIds: selected.map(r => r.id), includedSummaryIds,
+        includedRecordIds: [...new Set([...teachingSourceIds,...selected.map(r => r.id)])], includedSummaryIds,
         omittedMessageCount: store.messageCount(request.workspaceId, request.threadId) - selected.length,
         ...(work ? { work: structuredClone(work) } : {}) };
 }

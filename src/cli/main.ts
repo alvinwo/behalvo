@@ -20,6 +20,7 @@ import {
 export interface CliArgs {
   offline: boolean;
   syntheticOperations: boolean;
+  teachingMode?: boolean;
   dbPath: string;
   authPath: string;
   workspaceId: string;
@@ -72,6 +73,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   const model = parseModel(valueAfter(argv, '--model') ?? process.env.BEHALVO_MODEL ?? process.env.OPERATOR_MODEL);
   return {
     offline,
+    ...(argv.includes('--task-teachings') ? {teachingMode:true} : {}),
     syntheticOperations: argv.includes('--synthetic-operations'),
     dbPath: resolve(valueAfter(argv, '--db') ?? (argv.includes('--synthetic-operations') ? 'data/synthetic-agent.db' : process.env.BEHALVO_DB ?? process.env.OPERATOR_DB ?? 'data/agent.db')),
     authPath: resolve(valueAfter(argv, '--auth') ?? process.env.BEHALVO_PI_AUTH ?? process.env.OPERATOR_PI_AUTH ?? 'data/pi-auth.json'),
@@ -116,6 +118,7 @@ async function main(): Promise<void> {
         ownerId: args.ownerId,
         gateways: [offline],
         syntheticOperations: args.syntheticOperations,
+        ...(args.teachingMode ? {teachingMode:true} : {}),
         ...(encryptionKey ? { encryptionKey } : {})
       });
     } else {
@@ -156,6 +159,7 @@ async function main(): Promise<void> {
         ownerId: args.ownerId,
         gateways: [pi],
         syntheticOperations: args.syntheticOperations,
+        ...(args.teachingMode ? {teachingMode:true} : {}),
         ...(encryptionKey ? { encryptionKey } : {})
       });
     }
