@@ -28,7 +28,7 @@ for final test, live-model and release status. Preserve old databases and retain
 the eight-call/120-second turn budget.
 
 Next is [T1b semantic exploration](docs/superpowers/plans/2026-10-09-semantic-browser-exploration.md),
-with its own review before implementation. No hard-coded goal routes, real portal
+whose delegated Astra/max plan review is approved. No hard-coded goal routes, real portal
 access or booking should be added to this T1a release.
 
 PR16 already merged: its final synthetic live-model report passed 60/60 automatic

@@ -218,7 +218,7 @@ focused work. Superseded/retracted entries are history, not active instructions.
   retract → restart → no active obsolete instruction, with deterministic
   journal/rebuild equality and exact source checks. Include oversized mandatory
   memory and conflicting constraints.
-- [ ] Run bounded live-model synthetic acceptance using the already configured
+- [x] Run bounded live-model synthetic acceptance using the already configured
   model (no credential inspection). Use synthetic task instructions and keep
   actual source head, model-call count, failures and process exit evidence.
   Automatic protocol success is not owner usefulness approval.
