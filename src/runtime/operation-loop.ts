@@ -22,6 +22,8 @@ export interface OperationLoopOptions {
     maxRequestBytes?: number;
 }
 export interface OperationLoopBinding {
+    /** Remaining shared model completions after trusted pre-processing. */
+    maxCompletions?: number;
     workspaceId: string;
     ownerId: string;
     workId?: string;
@@ -99,6 +101,7 @@ export class OperationLoop {
     async run(gateway: ModelGateway, request: ModelRequest, binding: OperationLoopBinding): Promise<OperationLoopResult> {
         if (this.options.workspaceId !== undefined && binding.workspaceId !== this.options.workspaceId)
             throw new Error('Operation loop workspace binding mismatch');
+        const maxCompletions = lowerLimit(binding.maxCompletions,8);
         const initial = this.store.state(binding.workspaceId);
         assertOwner(initial, binding.ownerId);
         const controller = binding.executionContext ? undefined : new AbortController();
@@ -108,7 +111,7 @@ export class OperationLoop {
         const transcript: { request: unknown; result: unknown }[] = [];
         let recoveryUsed = false, nonReadOnlyInvoked = false, correctionPending = false;
         try {
-            for (let count = 0; count < 8; count++) {
+            for (let count = 0; count < maxCompletions; count++) {
                 assertExecutionActive(context);
                 const next = this.request(correctionPending ? { ...request, system: `${request.system}\nAPPLICATION FORMAT CORRECTION: The prior response was invalid JSON and was not dispatched. Return one fresh, complete JSON object. Do not repeat successful tool calls.` } : request, binding, transcript);
                 correctionPending = false;
@@ -123,7 +126,7 @@ export class OperationLoop {
                 catch (error) {
                     // A fresh inference is allowed only before any potentially mutating tool.
                     // Never repair text, replay a request, or catch provider/invocation errors here.
-                    if (!(error instanceof SyntaxError) || recoveryUsed || nonReadOnlyInvoked || count === 7) throw error;
+                    if (!(error instanceof SyntaxError) || recoveryUsed || nonReadOnlyInvoked || count === maxCompletions - 1) throw error;
                     recoveryUsed = true; correctionPending = true;
                     continue;
                 }

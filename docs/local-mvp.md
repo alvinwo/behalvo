@@ -106,6 +106,57 @@ Because the gateway uses Pi's current built-in model collection, the same model 
 
 The Behalvo kernel does not contain provider-specific memory or provider-specific domain state.
 
+## Task teachings (opt-in)
+
+Start with the configured model and enable durable task instructions:
+
+```bash
+npm run agent -- --task-teachings
+```
+
+Use `/work` to list tasks, then `/work <work-id>` to focus and explicitly link the
+current thread. For a new task, ask the agent to create a work item first, then
+select its ID. In that focused task, use ordinary conversation:
+
+```text
+Remember for this task: only consider morning sessions.
+What preference do you remember?
+Change my preference to afternoon sessions instead.
+Forget my afternoon-session preference.
+```
+
+A change receives an application-authored acknowledgment and executes no action
+in that turn. Exact owner quotes and containing messages are retained. Changes
+advance the task revision, invalidating old approvals. Ambiguous corrections open
+a durable clarification hold; action preparation, approval and dispatch remain
+blocked until a later owner message explicitly resolves it. Recall includes active
+sources and labels interpretations as advisory. Instructions never grant action
+authority. A new linked thread recalls the same active instructions; retired
+instructions remain in history but are not active teachings.
+
+This uses the configured live model, not the offline demo's canned responses.
+Teaching extraction consumes one of the existing eight completions and shares the
+120-second turn deadline. Quotes are limited to 4096 UTF-8 bytes, interpretations
+to 2048 bytes, and changes/resolutions to eight each. Oversized required memory
+fails rather than silently dropping sources. Without the flag, legacy behavior
+is preserved. The foreground service does not expose this opt-in yet.
+
+Existing projection-v1 databases require explicit maintenance. Stop Behalvo first,
+retain a verified backup, then use the database and workspace IDs you normally use:
+
+```bash
+npm run storage -- upgrade-teachings --db <database> --workspace <workspace>
+```
+
+For an encrypted database, supply its existing `--key-file <key-file>`. This
+validates the journal and source payloads, replaces only the projection, and runs
+no models or effects. Opening or ordinarily writing a v1 database does not upgrade
+it. New databases use projection v2. Wrong keys or invalid sources reject the
+upgrade without replacing the old projection.
+
+This delivers task memory (T1a). General website exploration and learned website
+observations (T1b), supervised live access and real booking remain separate work.
+
 ## Bounded synthetic operations
 
 The terminal agent can discover registered operations, prepare a concrete command,
@@ -328,7 +379,7 @@ A process restart is not a memory boundary. A new thread is not a memory boundar
 
 Facts record two different times. `observedAt` is the timestamp of the source record from which the application learned the fact. `validFrom` is the time the fact became true and remains `null` when that onset is unknown. New model-proposed validity timestamps are accepted only as `YYYY-MM-DDTHH:mm:ssZ` or `YYYY-MM-DDTHH:mm:ss.sssZ` and when the exact timestamp appears verbatim in the current owner input; natural-language dates are not silently converted or backdated. This stricter admission rule does not reinterpret older schema-v1 journal timestamps, including their previously accepted fractional forms. The trusted `Operator.recordFact` API continues to accept explicit validity timestamps, and schema-v1 facts replay with their original validity while deriving `observedAt` from their source record.
 
-Raw history is retained even when it cannot fit into the model context. However, **automatic long-thread compaction and semantic retrieval are not implemented yet**. The current ContextBuilder loads a bounded recent raw tail plus source-bound summaries that already exist. The MVP relies primarily on structured WorkItems/Facts for cross-thread durable memory; automated summary generation and historical retrieval are the next memory milestone.
+Raw history is retained even when it cannot fit into the model context. However, **automatic long-thread compaction and semantic retrieval are not implemented yet**. The current ContextBuilder loads a bounded recent raw tail plus source-bound summaries that already exist. The MVP uses structured WorkItems/Facts and opt-in owner-sourced task teachings for cross-thread durable memory; automated summary generation and historical retrieval are the next memory milestone.
 
 ## Safety boundary
 

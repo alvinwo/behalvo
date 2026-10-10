@@ -1,21 +1,31 @@
 # Roadmap and scope ledger
 
-## Approved delivery sequence from the current revision
+## Current owner priority — 2026-10-09
 
-1. Run the genuine live-model evaluation and complete its manual review. The
-   harness exists, but live acceptance has not yet been run.
-2. Add OS supervision and complete the owner-laptop monitored-action gates. The
-   foreground loopback service and synthetic composition exist; supervised live
-   discovery and acceptance do not.
-3. Add secure phone owner control.
-4. Add one mail integration.
-5. Run a two-week personal alpha.
-6. Later, add multi-account support and production browser capability. The
-   current browser boundary is synthetic/disabled-by-default only.
-7. Only then consider a small public alpha.
+The owner prioritized a teachable browser agent: explain a goal in conversation,
+remember instructions and corrections, explore the website, and learn how to
+progress without a hard-coded visa workflow. The H-1B appointment case is the
+first intended use. Email and phone integrations are not prerequisites.
 
-The deterministic `synthetic-v1` scripted suite validates the harness; it cannot
-substitute for step 1 or certify M1.1 acceptance.
+1. Design and review [teachable browser work](superpowers/specs/2026-10-09-teachable-browser-design.md).
+   T1a durable teachings are implemented behind `--task-teachings`, with exact
+   owner sources, correction/retraction and durable clarification holds. Release
+   evidence is tracked in [T1a verification](verification/2026-10-09-task-teachings.md).
+   T1b model-driven synthetic exploration and learned website notes remain next.
+2. Establish supervised live exploration with explicit site scope, private session
+   custody and current observations. Existing synthetic browser acceptance does
+   not prove real portal compatibility.
+3. Complete one supervised, approved action with independent readback, then assess
+   the additional supervision and polling requirements for unattended operation.
+4. Return to broader personal-alpha priorities, including phone and mail where
+   those workflows actually require them. Public alpha remains a later decision.
+
+PR16's live-model synthetic evaluation passed 60/60 automatic cases on reviewed
+head `7e06dbcc079bff6543075ad58fff5b2c23efec2f`; human usefulness review remains
+pending. The local report is
+`data/evaluations/synthetic-v1-2026-10-05T06-35-12-500Z-ed33bc37-51cb-4ad9-9b10-d8d5294dfed4.json`.
+Neither this evaluation nor the deterministic scripted suite certifies live
+browser readiness or completes M1.1 acceptance.
 
 ## Monitored-action status
 

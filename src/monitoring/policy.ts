@@ -1,3 +1,4 @@
+import { assertTeachingClear } from '../kernel/teachings.js';
 import { createHash } from 'node:crypto';
 import { identifier, instant, nonempty, type State } from '../kernel/types.js';
 import type { Connection, OperationCommand } from '../operations/types.js';
@@ -125,7 +126,9 @@ export function validateArmPlan(value: unknown): asserts value is NonNullable<Mo
 
 /** Rechecks the complete reviewed plan against current durable authority at every execution boundary. */
 export function assertArmPlanCurrent(state: State, grant: MonitoredActionGrant, monitor?: MonitorState): void {
+  if (monitor) assertTeachingClear(state,monitor.workId);
   if (!grant.armPlan) return;
+  assertTeachingClear(state,grant.armPlan.workId);
   validateGrant(grant);
   const plan = grant.armPlan, work = state.works[plan.workId], connection = state.connections[grant.connectionId];
   if (!work || work.revision !== plan.workRevision || ['done', 'cancelled'].includes(work.phase) ||

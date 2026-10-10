@@ -1,3 +1,4 @@
+import { validateTeachingSource, type TeachingEvent } from '../kernel/teachings.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
 import { emptyState, reduce } from '../kernel/reducer.js';
@@ -522,7 +523,7 @@ export function verifyEncryptedDatabase(db: DatabaseSync, cipher: PayloadCipher)
             };
             const prior = new Map<string, JournalRecord>();
             const handled = new Set<string>();
-            let state = emptyState(workspaceId);
+            let state = emptyState(workspaceId,Number(projections[0]!.projection_version));
             for (const record of records) {
                 identifier(record.id, 'recordId');
                 instant(record.recordedAt);
@@ -548,6 +549,7 @@ export function verifyEncryptedDatabase(db: DatabaseSync, cipher: PayloadCipher)
                     requireValid(record.causationId === source.id && !handled.has(source.id));
                     handled.add(source.id);
                 }
+                if (event.type.startsWith('teaching.')) validateTeachingSource(state,event as TeachingEvent,id=>{const r=prior.get(id);requireValid(r);return r;},requireArtifact);
                 state = reduce(state, event, record.seq, observedAt);
                 prior.set(record.id, record);
             }

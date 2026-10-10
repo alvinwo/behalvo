@@ -1,3 +1,7 @@
+import { extractTeachings } from './teaching-extractor.js';
+import { prepareTeachingEvents } from './teachings.js';
+import { teachingHold } from '../kernel/teachings.js';
+import { teachingMessage } from './teaching-messages.js';
 import { assertExecutionActive, executionDeadlineReached, withinExecution, OperationStoppedError,
   type OperationExecutionContext, type TrustedExecutionFence } from '../operations/execution-context.js';
 import { OperationLoop, type OperationLoopOptions, type OperationLoopResult } from './operation-loop.js';
@@ -55,13 +59,16 @@ export class AgentService {
   readonly #loop: OperationLoop | undefined;
   readonly #workspaceId: string | undefined;
   readonly #clock: () => string;
+  readonly #timeoutMs: number;
 
   constructor(
     private readonly store: SqliteStore,
     private readonly gateway: ModelGateway,
     clock: () => string = () => new Date().toISOString(),
-    operations?: OperationLoopOptions
+    operations?: OperationLoopOptions,
+    private readonly features: { teachingMode?: boolean } = {}
   ) {
+    this.#timeoutMs = operations?.timeoutMs ?? 120000;
     this.#operator = new Operator(store, clock);
     this.#clock = clock;
     this.#workspaceId = operations?.workspaceId;
@@ -91,6 +98,7 @@ export class AgentService {
       const work = state.works[input.workId];
       if (!work)
         throw new Error(`Work not found: ${input.workId}`);
+      if (!work.threadIds.includes(input.threadId) && this.features.teachingMode) throw new Error('Thread must be explicitly linked to work');
       if (!work.threadIds.includes(input.threadId))
         this.#operator.linkThread(input.workspaceId, input.ownerId, input.workId, input.threadId);
     }
@@ -130,6 +138,41 @@ export class AgentService {
   async #processOwnerRecord(input: OwnerTurnInput, ownerRecord: JournalRecord,
     admitted?: { job: ServiceJob; fence: TrustedExecutionFence }): Promise<AgentTurnResult> {
 
+    const teachingEvents: DomainEvent[] = [];
+    const teachingEnabled = this.features.teachingMode === true;
+    const controller = teachingEnabled && !admitted ? new AbortController() : undefined;
+    const timer = controller ? setTimeout(()=>controller.abort(),this.#timeoutMs) : undefined;
+    try {
+    const execution: OperationExecutionContext | undefined = teachingEnabled ? {
+      deadline: Math.min(Date.now()+this.#timeoutMs,admitted?.fence.deadline ?? Infinity),
+      ...(admitted ? {signal:admitted.fence.signal,assertCurrent:()=>admitted.fence.assertCurrent()} : controller ? {signal:controller.signal} : {})
+    } : undefined;
+    let teachingReply: string | undefined;
+    let extracted = false;
+    if (teachingEnabled && input.workId) {
+      const before = this.store.state(input.workspaceId);
+      if (!before.teachingMemory) throw new Error(teachingMessage('upgrade'));
+      const sourceText = (id:string):string => {
+        const r=this.store.record(input.workspaceId,id);
+        if(r.event.type!=='message.received'||r.event.data.senderRole!=='owner'||r.event.data.senderId!==input.ownerId) throw new Error('Invalid teaching source');
+        return this.store.readArtifact(input.workspaceId,r.event.data.artifactId);
+      };
+      try {
+        extracted = true;
+        const result = await extractTeachings(this.gateway,input.model,{
+          currentOwnerText:sourceText(ownerRecord.id),
+          teachings:Object.values(before.teachingMemory.teachings).filter(t=>t.workId===input.workId&&t.status==='active').map(t=>({id:t.id,revision:t.revision,sourceQuote:t.sourceQuote,sourceText:sourceText(t.sourceRecordId)})),
+          clarifications:Object.values(before.teachingMemory.clarifications).filter(t=>t.workId===input.workId&&t.status==='open').map(t=>({id:t.id,sourceQuote:t.sourceQuote,sourceText:sourceText(t.sourceRecordId)}))
+        },execution!, (input.windowTokens ?? 64000)-(input.outputReserve ?? 8000));
+        teachingEvents.push(...prepareTeachingEvents(this.store,{workspaceId:input.workspaceId,ownerId:input.ownerId,workId:input.workId,ownerRecordId:ownerRecord.id,expectedWorkRevision:before.works[input.workId]!.revision},result));
+        if(result.outcome==='clarify') teachingReply=teachingMessage('clarification')+' '+result.question;
+        else if(result.outcome==='apply') teachingReply=teachingMessage('saved');
+        else if(teachingHold(before,input.workId)) teachingReply=teachingMessage('clarification');
+      } catch {
+        teachingEvents.length=0; teachingReply=teachingMessage('rejected');
+      }
+    }
+
     const request = {
       model: input.model,
       system: AGENT_SYSTEM,
@@ -137,9 +180,10 @@ export class AgentService {
       sessionHint: `${input.workspaceId}:${input.threadId}`
     };
     const binding = { workspaceId: input.workspaceId, ownerId: input.ownerId,
+      ...(execution ? {executionContext:execution,maxCompletions:extracted?7:8} : {}),
       ownerRecordId: ownerRecord.id, inputBudgetBytes: (input.windowTokens ?? 64000) - (input.outputReserve ?? 8000),
       ...(admitted ? { capability: 'prepare_only' as const, executionContext: {
-        signal: admitted.fence.signal, deadline: admitted.fence.deadline,
+        signal: admitted.fence.signal, deadline: execution?.deadline ?? admitted.fence.deadline,
         assertCurrent: () => admitted.fence.assertCurrent()
       } } : {}),
       ...(input.workId ? { workId: input.workId } : {}) };
@@ -156,11 +200,12 @@ export class AgentService {
 
     request.prompt = context.text;
     let result: OperationLoopResult;
-    if (this.#loop) result = await this.#loop.run(this.gateway, request, binding);
-    else if (!admitted) result = await this.gateway.complete(request).then(response => ({ turn: parseAgentTurn(response.text),
-      applicationAuthored: false, ...(response.providerResponseId ? { providerResponseId: response.providerResponseId } : {}) }));
+    if (teachingReply !== undefined) result = {turn:{reply:teachingReply,workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution!.deadline};
+    else if (this.#loop) result = await this.#loop.run(this.gateway, request, binding);
+    else if (!admitted) result = await withinExecution(()=>this.gateway.complete(execution?.signal ? {...request,signal:execution.signal} : request),execution).then(response => ({ turn: parseAgentTurn(response.text),
+      applicationAuthored: false, ...(execution ? {deadline:execution.deadline} : {}), ...(response.providerResponseId ? { providerResponseId: response.providerResponseId } : {}) }));
     else {
-      const context: OperationExecutionContext = { signal: admitted.fence.signal, deadline: admitted.fence.deadline,
+      const context: OperationExecutionContext = { signal: admitted.fence.signal, deadline: execution?.deadline ?? admitted.fence.deadline,
         assertCurrent: () => admitted.fence.assertCurrent() };
       try {
         const response = await withinExecution(() => this.gateway.complete({ ...request, signal: admitted.fence.signal }), context);
@@ -179,10 +224,11 @@ export class AgentService {
 
     const current = this.store.state(input.workspaceId);
     const proposedWorkIds = new Set<string>();
-    const events: DomainEvent[] = [];
+    const events: DomainEvent[] = [...teachingEvents];
 
     try {
-      if (!applicationAuthored && result.deadline !== undefined && Date.now() >= result.deadline)
+      if (teachingEnabled && turn.factProposals.length) throw new Error('Task teaching mode does not accept legacy facts');
+      if ((!applicationAuthored || teachingEvents.length>0) && result.deadline !== undefined && Date.now() >= result.deadline)
         throw new Error('Run deadline');
       for (const proposal of turn.workProposals) {
         if (Object.hasOwn(current.works, proposal.id) || proposedWorkIds.has(proposal.id))
@@ -218,10 +264,10 @@ export class AgentService {
 
       let preview = current;
       for (const event of events) preview = reduce(preview, event, preview.version + 1);
-      if (!applicationAuthored && result.deadline !== undefined && Date.now() >= result.deadline)
+      if ((!applicationAuthored || teachingEvents.length>0) && result.deadline !== undefined && Date.now() >= result.deadline)
         throw new Error('Run deadline');
     } catch (error) {
-      if (!this.#loop) throw error;
+      if (!this.#loop && !teachingEnabled) throw error;
       events.length = 0;
       applicationAuthored = true;
       stopReason = 'invalid_model_result';
@@ -240,8 +286,8 @@ export class AgentService {
         reason: stopReason, at: this.#clock()
       }, () => {
         admitted.fence.assertSettlementCurrent?.();
-        if (!applicationAuthored || !admitted.fence.assertSettlementCurrent)
-          assertExecutionActive({ signal: admitted.fence.signal, deadline: admitted.fence.deadline });
+        if (!applicationAuthored || teachingEvents.length>0 || !admitted.fence.assertSettlementCurrent)
+          assertExecutionActive({ signal: admitted.fence.signal, deadline: execution?.deadline ?? admitted.fence.deadline });
       });
       const assistantRecord = completed.records.find((record): record is JournalRecord =>
         record.event.type === 'message.received' && record.event.data.senderRole === 'agent');
@@ -275,13 +321,13 @@ export class AgentService {
     };
     const finalVersion = this.store.state(input.workspaceId).version;
     // Check before entry and after SQLite obtains its writer lock; lock waits may exceed the deadline.
-    if (!applicationAuthored && result.deadline !== undefined && Date.now() >= result.deadline) deadlineStop();
+    if ((!applicationAuthored || teachingEvents.length>0) && result.deadline !== undefined && Date.now() >= result.deadline) deadlineStop();
     let committed: JournalRecord[];
     try {
       committed = this.store.completeInbox(input.workspaceId, ownerRecord.id, finalVersion, events,
-        !applicationAuthored && result.deadline !== undefined ? () => assertExecutionActive({ deadline: result.deadline! }) : undefined);
+        (!applicationAuthored || teachingEvents.length>0) && result.deadline !== undefined ? () => assertExecutionActive({ deadline: result.deadline! }) : undefined);
     } catch (error) {
-      if (!(error instanceof OperationStoppedError) || applicationAuthored) throw error;
+      if (!(error instanceof OperationStoppedError) || (applicationAuthored && teachingEvents.length===0)) throw error;
       deadlineStop();
       committed = this.store.completeInbox(input.workspaceId, ownerRecord.id, this.store.state(input.workspaceId).version, events);
     }
@@ -290,5 +336,6 @@ export class AgentService {
       throw new Error('Assistant message was not committed');
 
     return { ownerRecordId: ownerRecord.id, assistantRecordId: assistantRecord.id, context, turn };
+    } finally { clearTimeout(timer); controller?.abort(); }
   }
 }

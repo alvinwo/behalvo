@@ -1,3 +1,4 @@
+import { reduceTeaching, assertTeachingClear } from './teachings.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { DomainEvent, Fact, State } from './types.js';
 import { identifier, instant, nonempty, required } from './types.js';
@@ -5,8 +6,8 @@ import { exactObject, isOperationCommand, jsonValue, validateConnection, validat
 import { assertArmPlanCurrent, assertArmPlanReservationReady, boundedMonitorJitter, canonicalInstant, exactMonitoringObject,
     monitoredActionCommandDigest, validateDigest, validateGrant } from '../monitoring/policy.js';
 import type { MonitorState } from '../monitoring/types.js';
-export function emptyState(workspaceId: string): State {
-    return { workspaceId, ownerId: '', version: 0, works: {}, actions: {}, timers: {}, facts: {}, connections: {},
+export function emptyState(workspaceId: string, projectionVersion = 2): State {
+    return { ...(projectionVersion === 2 ? { teachingMemory: {teachings: {}, clarifications: {}} } : {}), workspaceId, ownerId: '', version: 0, works: {}, actions: {}, timers: {}, facts: {}, connections: {},
         monitoredActionGrants: {}, monitors: {} };
 }
 
@@ -216,6 +217,7 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
                 throw new Error('Narrowed action no longer matches reviewed arm plan');
             assertArmPlanReservationReady(s, grant);
             const work = required(s.works, action.workId, 'Work');
+            assertTeachingClear(s,action.workId);
             if (work.revision !== action.workRevision || ['done', 'cancelled'].includes(work.phase))
                 throw new Error('Stale monitored action work');
             const actionKeyPrefix = `monitor:${grant.id}:`;
@@ -589,6 +591,7 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             nonempty(a.key, 'operation key');
             nonempty(a.digest, 'digest');
             const w = required(s.works, a.workId, 'Work');
+            assertTeachingClear(s,a.workId);
             if (a.status !== 'proposed' || a.approval || a.attemptId || a.evidenceRef || a.monitoredGrant)
                 throw new Error('Invalid initial action state');
             if (a.verification) throw new Error('Invalid initial action verification');
@@ -602,6 +605,7 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
         }
         case 'action.approved': {
             const a = required(s.actions, event.data.id, 'Action');
+            assertTeachingClear(s,a.workId);
             if (a.status !== 'proposed')
                 throw new Error('Action not awaiting approval');
             if (event.data.approval.digest !== a.digest || event.data.approval.ownerId !== s.ownerId)
@@ -616,6 +620,7 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             if (a.status !== 'approved')
                 throw new Error('Action requires approval');
             const work = required(s.works, a.workId, 'Work');
+            assertTeachingClear(s,a.workId);
             if (work.revision !== a.workRevision || ['done', 'cancelled'].includes(work.phase))
                 throw new Error('Stale or closed work authorization');
             if (isOperationCommand(a.command)) {
@@ -723,6 +728,11 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             timer.status = event.type === 'timer.fired' ? 'fired' : 'cancelled';
             break;
         }
+        case 'teaching.recorded':
+        case 'teaching.retracted':
+        case 'teaching.clarification_opened':
+        case 'teaching.clarification_resolved':
+            reduceTeaching(s,event); break;
         case 'fact.recorded': {
             // observedAt was added after schema v1 journals existed. Storage supplies
             // the immutable source-record timestamp while replaying an older event.

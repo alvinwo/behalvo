@@ -1,3 +1,4 @@
+import type { TeachingMemory, TeachingEvent } from './teachings.js';
 /** Domain data is transport- and model-independent. No provider session owns it. */
 import type { Connection, OperationCommand, VerificationState } from '../operations/types.js';
 import type {
@@ -65,6 +66,7 @@ export interface Fact {
     supersedes?: string;
 }
 export interface State {
+    teachingMemory?: TeachingMemory;
     workspaceId: string;
     ownerId: string;
     version: number;
@@ -84,7 +86,7 @@ export interface MessageInput {
     senderRole: 'owner' | 'external' | 'agent';
     text: string;
 }
-export type DomainEvent = {
+export type DomainEvent = TeachingEvent | {
     type: 'workspace.created';
     data: {
         ownerId: string;
