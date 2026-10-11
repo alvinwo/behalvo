@@ -8,8 +8,8 @@ test('a new thread loads the same durable work without loading the entire old se
     createWork(f);
     f.operator.linkThread('personal', 'owner', 'w', 'web');
     f.store.ingest('personal', message('m1', { text: 'Earlier discussion.' }));
-    f.store.ingest('personal', message('m2', { threadId: 'web', text: 'What is its status?' }));
-    const c = f.buildContext(f.store, { ...request, threadId: 'web' });
+    const current=f.store.ingest('personal', message('m2', { threadId: 'web', text: 'What is its status?' }));
+    const c = f.buildContext(f.store, { ...request, threadId: 'web',currentRecordId:current.id });
     assert.equal(c.work.id, 'w');
     assert.equal(c.work.phase, 'open');
     assert.match(c.text, /What is its status/);
@@ -22,8 +22,8 @@ test('context omits old raw messages while retaining their original artifacts', 
     for (let i = 0; i < 30; i++)
         rows.push(f.store.ingest('personal', message(`m${i}`, { text: `Old message ${i}: ${'detail '.repeat(100)}` })));
     f.store.saveSummary('personal', { threadId: 'im', sourceIds: rows.slice(0, 20).map(r => r.id), text: 'Earlier conversation about a pending refund.' });
-    f.store.ingest('personal', message('last', { text: 'Please follow up.' }));
-    const c = f.buildContext(f.store, { ...request, windowTokens: 3500, outputReserve: 1000 });
+    const current=f.store.ingest('personal', message('last', { text: 'Please follow up.' }));
+    const c = f.buildContext(f.store, { ...request, currentRecordId:current.id, windowTokens: 3500, outputReserve: 1000 });
     assert.ok(c.estimatedTokens <= 2500);
     assert.ok(c.omittedMessageCount > 0);
     assert.equal(f.store.threadMessages('personal', 'im', 100).length, 31);

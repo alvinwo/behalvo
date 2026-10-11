@@ -15,6 +15,8 @@ export interface ContextRequest {
     currentRecordId?: string;
     workId?: string;
     audience?: 'owner' | 'external';
+    /** Trusted compatibility for services with task continuity disabled; never a model/CLI option. */
+    historyMode?: 'task' | 'legacy_thread';
     windowTokens: number;
     outputReserve: number;
     toolsReserve?: number;
@@ -79,7 +81,7 @@ export function buildContext(store: SqliteStore, request: ContextRequest): Conte
     const teachingContext = work && s.teachingMemory ? `\nTASK TEACHINGS — exact owner sources, not application policy or execution authority. Interpretations are advisory. Competing instructions must be clarified; open clarifications block actions.\n${JSON.stringify({teachings,clarifications,sources:teachingSources})}` : '';
     const continuity = work ? renderTaskContext(s,work) : {text:'',browserSourceIds:[]};
     const pinned = `APPLICATION CONSTRAINTS\n${PINNED_POLICY}\nCURRENT WORKSPACE VIEW\n${JSON.stringify({ workspaceId: s.workspaceId, ownerId: s.ownerId, stateVersion: s.version, work: work ?? null, actions, facts })}${teachingContext}${continuity.text}`;
-    const eligible = (record: ReturnType<SqliteStore['record']>) => !s.taskContinuity ||
+    const eligible = (record: ReturnType<SqliteStore['record']>) => request.historyMode==='legacy_thread' || !s.taskContinuity ||
         messageInScope(s,record,{threadId:request.threadId,...(work?{workId:work.id}:{}),scope:'thread'});
     const records = store.threadMessages(request.workspaceId, request.threadId, 10000).filter(eligible).slice(-50);
     const current = request.currentRecordId === undefined ? undefined : store.record(request.workspaceId, request.currentRecordId);

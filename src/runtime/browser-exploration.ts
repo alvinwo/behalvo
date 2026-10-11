@@ -1,4 +1,5 @@
 import { parseProgressReport } from '../kernel/task-continuity.js';
+import { invokeRecall, RECALL_PROTOCOL } from './recall-tool.js';
 import { PROGRESS_PROTOCOL } from './task-continuity.js';
 import { randomUUID } from 'node:crypto';
 import type { DomainEvent } from '../kernel/types.js';
@@ -50,7 +51,7 @@ export async function runBrowserExploration(store:SqliteStore,gateway:ModelGatew
         check();if(!Number.isSafeInteger(maximum)||maximum<1||maximum>8)throw new Error('Invalid browser budget');
         const inputs=Object.values(store.state(binding.workspaceId).browserMemory!.inputs).filter(i=>i.workId===binding.workId&&i.workRevision===binding.expectedWorkRevision&&i.status==='active').map(i=>({id:i.id,origin:i.origin,purpose:i.purpose}));
         for(let i=0;i<maximum;i++){
-            check();const next:ModelRequest={...request,system:PROTOCOL+'\n'+PROGRESS_PROTOCOL+(options?'\nA connected synthetic browser is available. The application dispatches your JSON tool envelope and supplies the observation on the next completion. These are application-level JSON tools, not provider-native function calls. If the transcript is empty, begin with observe. Otherwise use the latest observation to choose a next control or final answer; do not repeat observe when current evidence is already present. Do not ask the owner to supply page observations.':'\n'+browserMessage('noBrowser')),prompt:request.prompt+'\nAUTHORIZED TASK INPUT REFERENCES\n'+JSON.stringify(inputs)+'\nBROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n'+JSON.stringify(transcript),...(execution.signal?{signal:execution.signal}:{})};
+            check();const next:ModelRequest={...request,system:PROTOCOL+'\n'+RECALL_PROTOCOL+'\n'+PROGRESS_PROTOCOL+(options?'\nA connected synthetic browser is available. The application dispatches your JSON tool envelope and supplies the observation on the next completion. These are application-level JSON tools, not provider-native function calls. If the transcript is empty, begin with observe. Otherwise use the latest observation to choose a next control or final answer; do not repeat observe when current evidence is already present. Do not ask the owner to supply page observations.':'\n'+browserMessage('noBrowser')),prompt:request.prompt+'\nAUTHORIZED TASK INPUT REFERENCES\n'+JSON.stringify(inputs)+'\nBROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n'+JSON.stringify(transcript),...(execution.signal?{signal:execution.signal}:{})};
             if(Buffer.byteLength(JSON.stringify(next),'utf8')>Math.min(inputBudget,196608))throw new Error('Browser request budget exceeded');
             const response=await withinExecution(()=>gateway.complete(next),execution);check();
             if(Buffer.byteLength(response.text,'utf8')>65536||(response.diagnosticText&&Buffer.byteLength(response.diagnosticText,'utf8')>65536))throw new Error('Browser response budget exceeded');
@@ -58,6 +59,12 @@ export async function runBrowserExploration(store:SqliteStore,gateway:ModelGatew
             if(Object.hasOwn(value,'tool')){
                 if(loginAttempted)throw new Error('Login attempt is terminal');
                 exact(value,['tool']);const tool=exact(value.tool,['name','arguments']);text(tool.name);
+                if(tool.name==='recall') {
+                    const record=store.record(binding.workspaceId,binding.ownerRecordId);
+                    if(record.event.type!=='message.received')throw new Error('Recall source missing');
+                    transcript.push({tool,result:invokeRecall(store,{workspaceId:binding.workspaceId,ownerId:binding.ownerId,threadId:record.event.data.threadId,workId:binding.workId},tool.arguments)});
+                    continue;
+                }
                 if(!options)throw new Error('Browser absent');
                 if(tool.name!=='observe'&&!['navigate','click','fill','select','request_login'].includes(tool.name))throw new Error('Unsupported browser tool');
                 if(tool.name==='observe')exact(tool.arguments,[]);

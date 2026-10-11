@@ -94,9 +94,13 @@ for(const oversized of ['reply','diagnostic'])test(`admitted continuity rejects 
 test('admitted reasoning budgets the complete request envelope, not only context text',async()=>{
  const {SqliteStore}=await import('../dist/storage/sqlite-store.js');const {buildContext}=await import('../dist/memory/context.js');const store=new SqliteStore(':memory:',{serviceQueue:{upgradeExisting:false}});let calls=0;
  try{
- store.createWorkspace('personal','owner');const at=new Date().toISOString();const text=input.text+' '+ 'x'.repeat(10000);const budget=23000;
+ store.createWorkspace('personal','owner');const at=new Date().toISOString();const text=input.text+' '+ 'x'.repeat(10000);const budget=14000;
  store.admitOwnerTurnJob({workspaceId:'personal',ownerId:'owner',source:'owner:service',requestId:'r',envelope:{kind:'owner_turn',threadId:'im',text},accepted:{threadId:'im',model:input.model,windowTokens:budget+8000,outputReserve:8000,capability:'prepare_only'},instanceId:'test',at});
- const job=store.claimServiceJob('personal','worker',at);const service=new AgentService(store,{complete:async()=>{calls++;return {text:JSON.stringify(calls===1?intake:{reply:'UNEXPECTED_SECOND_INFERENCE',workProposals:[],factProposals:[]})};}},undefined,undefined,{taskContinuity:true});
+ const job=store.claimServiceJob('personal','worker',at);
+ // Retry after intake was committed with a larger budget: test only the reasoning envelope.
+ const {processTaskIntake}=await import('../dist/runtime/task-intake.js');
+ await processTaskIntake(store,{complete:async()=>{calls++;return {text:JSON.stringify(intake)};}},input.model,{workspaceId:'personal',ownerId:'owner',threadId:'im',ownerRecordId:job.parameters.ownerRecordId},{deadline:Date.now()+5000},64000);
+ const service=new AgentService(store,{complete:async()=>{calls++;return {text:JSON.stringify({reply:'UNEXPECTED_SECOND_INFERENCE',workProposals:[],factProposals:[]})};}},undefined,undefined,{taskContinuity:true});
  await assert.rejects(()=>service.processAdmittedOwnerTurn({workspaceId:'personal',ownerId:'owner',job,fence:{serviceGeneration:'synthetic',deadline:Date.now()+5000,signal:new AbortController().signal,assertCurrent:async()=>{},assertDispatchCurrent:()=>{},assertSettlementCurrent:()=>{}}}));
  const receipt=Object.values(store.state('personal').taskContinuity.intakes)[0];assert.ok(receipt);const context=buildContext(store,{workspaceId:'personal',ownerId:'owner',workId:receipt.workId,threadId:'im',currentRecordId:receipt.ownerRecordId,windowTokens:budget+8000,outputReserve:8000});assert.ok(context.estimatedTokens<=budget);assert.equal(calls,1);assert.equal(store.inbox('personal').length,1);
  }finally{store.close();}

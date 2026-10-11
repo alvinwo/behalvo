@@ -55,7 +55,10 @@ legacy/external messages remain readable by the owner in history but are exclude
 from automatic focused context and model recall. The explicitly supplied current
 owner input is always pinned, including intake clarification. Unfocused contexts
 admit only receipts with null work. Pre-continuity stores retain their legacy
-behavior until upgraded.
+behavior until upgraded. A trusted `historyMode: legacy_thread` compatibility
+request is also used by AgentService when task continuity is disabled, retaining
+the earlier external-source evaluation contract. Default context, recall, and the
+normal continuity-enabled CLI are strict; no public/model option selects legacy.
 
 Focused context admits only the selected task's attributed messages in this
 thread. A summary is eligible only when all its sources pass this same test.
