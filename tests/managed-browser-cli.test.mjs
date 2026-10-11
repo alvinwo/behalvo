@@ -21,3 +21,10 @@ test('gesture review requires a fresh interactive answer, exact display, and ref
  assert.equal(await reviewBrowserGesture({...io,interactive:false},action,detail),'reject');
  const abort=new AbortController();abort.abort();assert.equal(await reviewBrowserGesture(io,action,detail,abort.signal),'reject');
 });
+test('failed trusted commands settle their source once without leaving processable owner messages',async t=>{
+ const f=await fixture(t);createWork(f);const output=[];const options={store:f.store,scope:{workspaceId:'personal',ownerId:'owner',threadId:'im',workId:'w'},io:{interactive:true,write:line=>output.push(line)},controller:{async open(){throw new Error('Invalid URL or unknown launch');},input(){throw new Error('Stale field');}}};
+ for(const command of ['/browser open http://localhost/','/browser open https://example.test/','/browser input missing Cedar'])await handleBrowserCommand(command,options);
+ const sources=f.store.journal('personal').filter(r=>r.event.type==='message.received'&&r.event.data.source==='owner:managed-browser');assert.equal(sources.length,3);
+ assert.ok(sources.every(r=>!f.store.inbox('personal').some(i=>i.id===r.id)));
+ const handled=f.store.journal('personal').filter(r=>r.event.type==='inbox.handled');for(const source of sources)assert.equal(handled.filter(r=>r.event.data.recordId===source.id).length,1);
+});

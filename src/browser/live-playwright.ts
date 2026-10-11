@@ -1,15 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Browser, ElementHandle, Page } from 'playwright';
+import { request as playwrightRequest, type APIRequestContext, type Browser, type Page } from 'playwright';
 import type { BrowserActionCommand } from '../kernel/browser-action.js';
 import { parseBrowserCommand, resolveControl, sameScope, validateObservation } from '../kernel/browser-contract.js';
 import type { BrowserGestureExecution, BrowserGestureResult } from '../runtime/browser-actions.js';
 import { assertExecutionActive, withinExecution } from '../operations/execution-context.js';
 import { PlaywrightProcessOwner, type PlaywrightOwnerDependencies } from './playwright-process-owner.js';
 import { PublicNetworkGate, publicHttpsUrl } from './public-network.js';
-import { describeLiveControl, liveVisibleText } from './live-dom.js';
+import { LiveWorld, type WorldControl } from './live-world.js';
 import type { BrowserCommand, BrowserControl, BrowserExecution, BrowserObservation, BrowserScope } from './semantic-types.js';
 
-export interface LiveReviewDetail { operation:string; origin:string; name:string; value?:string }
+export interface LiveReviewDetail { operation:string; origin:string; name:string; value?:string; option?:string; destination?:string; form?:{action:string;method:string;target:string} }
 export interface LivePlaywrightOptions {
     sessionId:string;threadId:string;network:PublicNetworkGate;assertSession():void;
     perform<T>(context:BrowserExecution,command:BrowserActionCommand,detail:LiveReviewDetail,gesture:Omit<BrowserGestureExecution<T>,'review'>):Promise<BrowserGestureResult<T>>;
@@ -18,14 +18,14 @@ export interface LivePlaywrightDependencies extends PlaywrightOwnerDependencies 
     /** Trusted synthetic TLS fixture seam; never exposed by product configuration. */
     ignoreHTTPSErrors?:boolean;
 }
-interface Entry {handle:ElementHandle;fingerprint:string;options:Map<string,number>;purpose:string}
+interface Entry {nodeId:number;descriptor:WorldControl['descriptor'];fingerprint:string;options:Map<string,number>;purpose:string}
 interface InputDescriptor {ref:string;name:string;origin:string;purpose:string;fingerprint:string}
 const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 /** A session-owned page; executable handles exist only inside the current lease. */
 export class LivePlaywright {
     readonly #owner:PlaywrightProcessOwner;readonly #abort=new AbortController();
-    #page:Page|undefined;#current:BrowserExecution|undefined;#scope:BrowserScope|undefined;#observation:BrowserObservation|undefined;
+    #page:Page|undefined;#world:LiveWorld|undefined;#requests:APIRequestContext|undefined;#current:BrowserExecution|undefined;#scope:BrowserScope|undefined;#observation:BrowserObservation|undefined;
     #entries=new Map<string,Entry>();#catalog=new Map<string,InputDescriptor>();#inputEpoch=1;#documentId=randomUUID();
     #busy=false;#human=false;#closed=false;#closePromise:Promise<{confirmed:boolean}>|undefined;
     constructor(private readonly options:LivePlaywrightOptions,private readonly dependencies:LivePlaywrightDependencies={}) {
@@ -36,7 +36,7 @@ export class LivePlaywright {
     get location():string|undefined{if(!this.#page)return;try{const u=publicHttpsUrl(this.#page.url());return u.origin+u.pathname;}catch{return;}}
     #assertSession():void{if(this.#closed)throw new Error('Browser closed');this.options.assertSession();}
     #assert():void{this.#assertSession();if(this.#human||!this.#current)throw new Error('Browser lease absent');assertExecutionActive(this.#current.execution);this.#current.assertCurrent();if(this.#scope)sameScope(this.#scope,this.#current);}
-    async #clearRefs():Promise<void>{const entries=[...this.#entries.values()];this.#entries.clear();this.#observation=undefined;await Promise.all(entries.map(e=>e.handle.dispose().catch(()=>{})));}
+    async #clearRefs(clearWorld=true):Promise<void>{this.#entries.clear();this.#observation=undefined;if(clearWorld)await this.#world?.clear();}
     #invalidateInputs():void{this.#catalog.clear();this.#inputEpoch++;}
     invalidateInputs():void{this.#invalidateInputs();}
     async #run<T>(context:BrowserExecution,operation:()=>Promise<T>):Promise<T>{
@@ -47,6 +47,11 @@ export class LivePlaywright {
     }
     async #start(browser:Browser):Promise<Page>{
         const context=await browser.newContext({serviceWorkers:'block',acceptDownloads:false,ignoreHTTPSErrors:this.dependencies.ignoreHTTPSErrors===true});
+        this.#assertSession();
+        // Never use the browser's shared APIRequestContext: it overrides Chromium's
+        // Cookie omission and imports Set-Cookie before browser credential policy runs.
+        const requests=await playwrightRequest.newContext({proxy:{server:this.options.network.proxyUrl},ignoreHTTPSErrors:this.dependencies.ignoreHTTPSErrors===true,timeout:10000});
+        if(this.#closed){await requests.dispose();throw new Error('Browser closed during startup');}this.#requests=requests;
         let page:Page|undefined;
         context.on('page',candidate=>{if(page&&candidate!==page)void candidate.close().catch(()=>{});});
         await context.clearPermissions();
@@ -57,7 +62,8 @@ export class LivePlaywright {
                 if(!page||request.frame().page()!==page)throw new Error('Popup denied');
                 this.options.network.assertAllowed(request.url());
                 // Fulfill one hop at a time: continue() silently follows redirects past routing guards.
-                response=await route.fetch({maxRedirects:0,maxRetries:0,timeout:10000});
+                const headers=await request.allHeaders();this.#assertSession();
+                response=await requests.fetch(request,{headers:{...headers,cookie:headers.cookie??''},maxRedirects:0,maxRetries:0,timeout:10000});
                 this.#assertSession();if(!this.options.network.allows(request.url()))throw new Error('Origin revoked');
                 if(/attachment/i.test(response.headers()['content-disposition']??''))throw new Error('Download denied');
                 await route.fulfill({response});
@@ -65,7 +71,8 @@ export class LivePlaywright {
         });
         await context.routeWebSocket('**/*',socket=>{void socket.close().catch(()=>{});});
         page=await context.newPage();
-        page.on('framenavigated',frame=>{if(frame===page!.mainFrame()){this.#documentId=randomUUID();this.#invalidateInputs();void this.#clearRefs();}});
+        const cdp=await context.newCDPSession(page);await cdp.send('Page.enable');this.#world=new LiveWorld(cdp,page);
+        page.on('framenavigated',frame=>{if(frame===page!.mainFrame()){this.#documentId=randomUUID();this.#invalidateInputs();this.#world?.reset();void this.#clearRefs(false);}});
         page.on('download',download=>{void download.cancel().catch(()=>{});});
         page.on('filechooser',()=>{/* Interception leaves uploads without files. */});
         page.on('dialog',dialog=>{void dialog.dismiss().catch(()=>{});});
@@ -86,13 +93,12 @@ export class LivePlaywright {
         this.#assert();if(!this.#page)throw new Error('Browser absent');const documentId=this.#documentId;const page=this.#page;
         const url=publicHttpsUrl(page.url());if(!this.options.network.allows(url.href))throw new Error('Origin denied');
         const check=()=>{this.#assert();if(this.#documentId!==documentId)throw new Error('Document changed');};
-        const text=await page.evaluate(liveVisibleText);check();
-        const handles=await page.$$('a,button,input,textarea,select,[role="button"]');check();
+        const captured=await this.#world!.capture();check();const text=captured.text;
         const entries=new Map<string,Entry>(),controls:BrowserControl[]=[];const fields=new Map<string,{name:string;count:number}>();
         const candidate:BrowserObservation={...this.#scope!,id:randomUUID(),documentId,origin:url.origin,location:url.pathname,observedAt:new Date().toISOString(),text,controls};
         while(Buffer.byteLength(JSON.stringify(candidate))>16000)candidate.text=candidate.text.slice(0,Math.floor(candidate.text.length*.8));
-        try{if(handles.length>1000)throw new Error('Page control budget exceeded');for(const handle of handles){
-            const data=await handle.evaluate(describeLiveControl);check();
+        for(const data of captured.controls){
+            check();
             if(!data.visible||!data.eligible||!data.role)continue;
             const fingerprint=hash(data.descriptor);const purpose=this.#purpose(url.origin,fingerprint);
             if(data.role==='textbox'){const old=fields.get(fingerprint);fields.set(fingerprint,{name:data.name,count:(old?.count??0)+1});}
@@ -101,16 +107,16 @@ export class LivePlaywright {
             const action={link:'navigate',button:'click',textbox:'fill',combobox:'select'} as const;
             controls.push({ref,role:data.role,name:data.name,actions:[action[data.role]],options:exposed});
             if(Buffer.byteLength(JSON.stringify(candidate))>32768){controls.pop();continue;}
-            entries.set(ref,{handle,fingerprint,options,purpose});
+            entries.set(ref,{nodeId:data.nodeId,descriptor:data.descriptor,fingerprint,options,purpose});
         }
-        check();const result=validateObservation(candidate,this.#scope!);await this.#clearRefs();check();
+        check();const result=validateObservation(candidate,this.#scope!);await this.#clearRefs(false);check();
         this.#entries=entries;this.#observation=result;
         for(const [ref,item] of this.#catalog)if(fields.get(item.fingerprint)?.count!==1)this.#catalog.delete(ref);
         for(const [fingerprint,data] of fields)if(data.count===1&&[...entries.values()].some(e=>e.fingerprint===fingerprint)&&![...this.#catalog.values()].some(c=>c.fingerprint===fingerprint)){
             const ref=randomUUID();this.#catalog.set(ref,{ref,name:data.name,origin:url.origin,fingerprint,purpose:this.#purpose(url.origin,fingerprint)});
         }
         return result;
-        }finally{const retained=new Set([...this.#entries.values()].map(e=>e.handle));await Promise.all(handles.filter(h=>!retained.has(h)).map(h=>h.dispose().catch(()=>{})));}
+
     }
     inputs():Array<{ref:string;name:string;origin:string}>{this.#assertSession();if(this.#human)return [];return [...this.#catalog.values()].map(({ref,name,origin})=>({ref,name,origin}));}
     inputPurpose(ref:string):string{this.#assertSession();if(this.#human)throw new Error('Manual browser');const item=this.#catalog.get(ref);if(!item)throw new Error('Stale field');return item.purpose;}
@@ -121,27 +127,25 @@ export class LivePlaywright {
         const observationId=this.#observation.id,documentId=this.#documentId,origin=this.#observation.origin,revision=this.options.network.revision;
         const check=()=>{this.#assert();if(this.#documentId!==documentId||this.#observation?.id!==observationId||this.options.network.revision!==revision||!this.options.network.allows(origin))throw new Error('Stale browser action');};
         let value:string|undefined;
-        const validate=async()=>{check();const now=await entry.handle.evaluate(describeLiveControl);check();if(!now.visible||!now.eligible||hash(now.descriptor)!==entry.fingerprint)throw new Error('Stale control');
+        const validate=async()=>{check();const now=await this.#world!.describe(entry.nodeId);check();if(!now.visible||!now.eligible||hash(now.descriptor)!==entry.fingerprint)throw new Error('Stale control');
             if(command.kind==='navigate'){const target=publicHttpsUrl(now.descriptor.href);if(!this.options.network.allows(target.href))throw new Error('Origin not granted');}
             if(command.kind==='fill'){
                 if(![...this.#catalog.values()].some(c=>c.fingerprint===entry.fingerprint&&c.purpose===entry.purpose))throw new Error('Ambiguous input');
-                const fields=await this.#page!.$$('input,textarea');let matches=0;
-                try{if(fields.length>1000)throw new Error('Page control budget exceeded');for(const field of fields){const data=await field.evaluate(describeLiveControl);check();if(data.visible&&data.eligible&&hash(data.descriptor)===entry.fingerprint)matches++;}}
-                finally{await Promise.all(fields.map(field=>field.dispose().catch(()=>{})));}
-                check();if(matches!==1)throw new Error('Ambiguous input');
                 const resolved=context.resolveInput(command.taskInputId,origin,entry.purpose);if(value!==undefined&&value!==resolved)throw new Error('Input changed');value=resolved;
             }
         };
         await validate();
         const result=await this.options.perform(context,{kind:'browser.gesture',version:1,operation:'interact',threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin,documentId,controlFingerprint:entry.fingerprint,gesture:command},
-            {operation:command.kind,origin,name:control.name,...(value===undefined?{}:{value})},{validate,
+            {operation:command.kind,origin,name:control.name,...(value===undefined?{}:{value}),
+                ...(command.kind==='select'?{option:control.options.find(o=>o.ref===command.optionRef)!.name}:{}),
+                ...(command.kind==='navigate'?{destination:entry.descriptor.href}:{}),
+                ...(entry.descriptor.form?{form:{action:entry.descriptor.formAction||entry.descriptor.form.action,method:entry.descriptor.formMethod||entry.descriptor.form.method,target:entry.descriptor.formTarget||entry.descriptor.form.target}}:{})},{validate,
                 // The broker checks lease authority after settlement too. A successful gesture
                 // deliberately replaces its old observation; only pre-dispatch checks bind that ref.
                 assertCurrent:()=>{this.#assert();if(this.options.network.revision!==revision)throw new Error('Origin grant changed');},dispatch:async mark=>{
-                await validate();check();mark();const timeout=Math.max(1,context.execution.deadline-Date.now());
-                if(command.kind==='fill')await entry.handle.fill(value!,{timeout});
-                else if(command.kind==='select')await entry.handle.selectOption({index:entry.options.get(command.optionRef)!},{timeout});
-                else await entry.handle.click({timeout});
+                await this.#world!.prepare(entry.nodeId);await validate();check();mark();
+                await this.#world!.dispatch({nodeId:entry.nodeId,descriptor:entry.descriptor,kind:command.kind,deadline:context.execution.deadline,
+                    ...(value===undefined?{}:{value}),...(command.kind==='select'?{index:entry.options.get(command.optionRef)!}:{})});
                 return this.#capture();
             }});
         if(result.status==='handoff'){this.#human=true;this.#invalidateInputs();await this.#clearRefs();}
@@ -152,7 +156,8 @@ export class LivePlaywright {
     async resume():Promise<void>{this.#assertSession();if(this.#busy||!this.#human||!this.#page||!this.options.network.allows(this.#page.url()))throw new Error('Cannot resume browser');this.#human=false;await this.retire();}
     close():Promise<{confirmed:boolean}>{return this.#closePromise??=(async()=>{
         this.#closed=true;this.#invalidateInputs();this.#abort.abort();await this.#clearRefs();
-        const browser=await this.#owner.close(),network=await this.options.network.close();const confirmed=browser.confirmed&&network.confirmed;
+        let requestsClosed=true;try{await this.#requests?.dispose();}catch{requestsClosed=false;}
+        const browser=await this.#owner.close(),network=await this.options.network.close();const confirmed=requestsClosed&&browser.confirmed&&network.confirmed;
         this.#owner.finishReceipt(confirmed,null,confirmed);return{confirmed};
     })();}
 }

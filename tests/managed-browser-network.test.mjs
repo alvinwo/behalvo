@@ -1,4 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import net from 'node:net';
+import {execFile} from 'node:child_process';import {promisify} from 'node:util';
 const api=()=>import('../dist/browser/public-network.js');
 test('public address and URL policy reject private, mapped, reserved and non-HTTPS destinations',async()=>{
  const {isPublicAddress,publicHttpsUrl}=await api();
@@ -24,10 +25,14 @@ test('mixed DNS answers and ungranted origins deny before dialing; route limits 
  gate.allow('https://cdn.example.test');gate.assertAllowed('https://cdn.example.test/resource');
  for(let i=1;i<2048;i++)gate.assertAllowed('https://example.test/resource');assert.throws(()=>gate.assertAllowed('https://example.test/overflow'),/limit/i);
 });
-test('revocation drops active tunnels and expired authority cannot admit new requests',async t=>{
+test('expired authority cannot admit new requests',async t=>{
  const {PublicNetworkGate}=await api();let active=true;
  const gate=new PublicNetworkGate(['https://example.com'],()=>{if(!active)throw new Error('expired');});await gate.start();t.after(()=>gate.close());
  active=false;assert.throws(()=>gate.assertAllowed('https://example.com'));assert.throws(()=>gate.allow('https://cdn.example.com'));
+});
+test('closing during pending listen confirms only after the owned server is gone',async()=>{
+ const script=`import {PublicNetworkGate} from './dist/browser/public-network.js';const gate=new PublicNetworkGate(['https://example.com'],()=>{});const starting=gate.start().catch(()=>{});const result=await gate.close();await starting;if(!result.confirmed)throw new Error('Cleanup pending');`;
+ await promisify(execFile)(process.execPath,['--input-type=module','-e',script],{cwd:process.cwd(),timeout:2500});
 });
 test('owned Chromium receives only a loopback proxy and fixed anti-bypass settings',async t=>{
  const {browserFixture}=await import('./helpers/playwright-fixture.mjs');const {PlaywrightProcessOwner}=await import('../dist/browser/playwright-process-owner.js');
@@ -41,4 +46,10 @@ test('invalid proxy configuration fails before launch and does not invent an unk
  const f=browserFixture();t.after(f.dispose);
  const owner=new PlaywrightProcessOwner({signal:new AbortController().signal},{environment:{},networkProxy:'http://external.example:8080',loadChromium:async()=>f.chromium});
  await assert.rejects(()=>owner.start(async()=>null));assert.equal(f.counts().launches,0);assert.equal((await owner.close()).confirmed,true);owner.finishReceipt(true,null,true);
+});
+test('revoking an origin tears down its active tunnel and prevents another connection',async t=>{
+ const {PublicNetworkGate}=await api();const server=net.createServer(s=>s.on('data',b=>s.write(b)));await new Promise(r=>server.listen(0,'127.0.0.1',r));let dials=0;
+ const gate=new PublicNetworkGate(['https://example.test'],()=>{},{resolve:async()=>['8.8.8.8'],dial:()=>{dials++;return net.connect(server.address().port,'127.0.0.1');}});await gate.start();t.after(async()=>{await gate.close();await new Promise(r=>server.close(r));});
+ const {socket,response}=await connect(gate.proxyUrl,'example.test:443');assert.match(response,/200/);const closed=new Promise(r=>socket.once('close',r));gate.revoke('https://example.test');await closed;
+ const denied=await connect(gate.proxyUrl,'example.test:443');assert.doesNotMatch(denied.response,/200/);denied.socket.destroy();assert.equal(dials,1);
 });

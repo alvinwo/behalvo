@@ -31,3 +31,9 @@ test('scope isolation, capacity, task correction and idle expiry enforce session
 test('an expired or cancelled lease closes instead of reporting a retained session',async t=>{const f=await setup(t);await f.controller.open(f.binding,'https://example.test/',execution());
  const ctx=context(f.binding),abort=new AbortController();ctx.execution.signal=abort.signal;const port=await f.controller.borrow(ctx,f.binding);abort.abort();await assert.rejects(port.observe(ctx));const retirement=await port.retire(true);assert.equal(retirement.sessionDisposition,'closed');assert.equal(retirement.cleanupConfirmed,true);
 });
+test('human mode blocks only the bound chat and never lends its session to another chat',async t=>{
+ const f=await setup(t);await f.controller.open(f.binding,'https://example.test/',execution());await f.controller.handoff(f.binding);
+ assert.throws(()=>f.controller.beforeTurn(f.binding));assert.doesNotThrow(()=>f.controller.beforeTurn({...f.binding,threadId:'unrelated'}));
+ assert.equal(f.controller.available({...f.binding,threadId:'unrelated'}),false);await assert.rejects(f.controller.borrow(context(f.binding),{...f.binding,threadId:'unrelated'}));
+ assert.equal(f.controller.status(f.binding).state,'human');assert.equal(f.controller.status(f.binding).location,undefined);
+});

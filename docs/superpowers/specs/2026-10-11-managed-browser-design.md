@@ -48,6 +48,16 @@ Official sources inspected on 2026-10-11:
 - [Chromium proxy behavior](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md)
   distinguishes proxy resolution from direct resolution and documents implicit
   loopback bypass. The network gate must account for that bypass explicitly.
+- [Playwright element actions](https://playwright.dev/docs/api/class-elementhandle)
+  have separate actionability and input phases. The fixed atomic DOM helper is a
+  deliberate adaptation for approval integrity, not equivalent native input.
+- [Playwright API request contexts](https://playwright.dev/docs/api/class-apirequestcontext)
+  distinguish browser-shared cookies from isolated request storage; routed fetches
+  must preserve the browser's cookie decisions.
+- [Chromium isolated worlds](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-createIsolatedWorld)
+  provide the private execution context for fixed application code.
+  [HTML activation](https://html.spec.whatwg.org/multipage/interaction.html#dom-click)
+  defines programmatic click behavior without trusted user input.
 
 Three options were considered. More compiled fixture policies do not meet the
 goal. Unrestricted Playwright/CDP or model-authored scripts discard the existing
@@ -116,7 +126,10 @@ Retaining this catalog does not make a retired control reference executable.
 
 Normal turn completion retires the lease and preserves the window. Handoff also
 retires the lease and all references before returning control to the owner. There
-are no snapshots, model calls, or automated gestures while in `human` state.
+are no snapshots or automated gestures for that browser, and no model calls in
+its bound workspace/owner/chat, while in `human` state. Other isolated chats may
+continue; they cannot borrow or observe the human-controlled session, even when
+linked to the same work. This is a scoped handoff, not a workspace-wide model pause.
 Trusted resume checks the exact task/chat/session and current main-frame origin,
 then creates a new generation and obtains fresh observation. A model may request
 handoff but cannot resume it or approve an action.
@@ -143,6 +156,18 @@ redirects work; a new origin is blocked and surfaced for a trusted owner decisio
 No request body, cookie, authorization header, console output, or raw network
 trace is exposed to the model or included in diagnostics. Browser request routing
 does not bypass CSP or certificate validation.
+
+When routing fetches one response hop before fulfillment, use a separate
+session-owned APIRequestContext through the same gate/proxy. Never use the
+browser's shared request context, import its storage state, or supply independent
+HTTP credentials. Forward the browser request's actual headers, method and body;
+always supply a Cookie header explicitly, empty when Chromium omitted it, so the
+request context cannot synthesize a cookie from its own jar. Follow zero redirects
+and perform zero retries. Fulfill the original response so Chromium alone applies
+its cookie acceptance policy, including `credentials: omit`, SameSite and
+third-party restrictions. Dispose every response and the isolated request context
+with session cleanup. A routing helper must not grant cookies that the browser
+withheld or import a rejected Set-Cookie response into the browser jar.
 
 Use a small per-session loopback CONNECT proxy as an application-owned network
 gate. It accepts only authorities matching granted HTTPS origins, resolves the
@@ -208,6 +233,36 @@ and immediately before dispatch. Document navigation or replacement invalidates
 references. A fresh observation returns after every completed interaction.
 JavaScript applications can still change hidden server/client state without a
 visible DOM change; this design does not claim semantic immutability of a website.
+
+The final descriptor validation and semantic activation must execute in one fixed,
+synchronous application-owned DOM function. A separate validation followed by a
+Playwright `click`, `fill` or `selectOption` is insufficient: its internal waits,
+scrolling, focus or keyboard phases allow the same node to change meaning before
+input arrives. `force`, `noWaitAfter`, short timeouts and trial actions do not
+establish this boundary. Use a private Chromium isolated world with application-
+owned node references and trusted DOM intrinsics; the managed page may provide
+a private CDPSession for that fixed helper. This introduces no model scripts,
+selectors, public CDP endpoint, attachment option or general script tool.
+
+In the same synchronous call, validate exact node/document identity, deadline,
+the complete canonical descriptor, eligibility and current click hit target. Fill
+also requires one matching eligible field; select requires the exact observed
+option identity/value/label/disabled state. Compare canonical data synchronously;
+do not insert an asynchronous hash computation. Then invoke native prototype
+activation or value/selection setters and fixed bubbling input/change events.
+No await, retry, focus, scroll or locator resolution may intervene between the
+final validation and first page effect. A covered or unavailable control rejects
+instead of waiting for a different meaning to become actionable. Bounded scrolling
+may prepare a control before the final atomic call and its fresh validation.
+
+These are programmatic semantic events, not a promise of trusted pointer/keyboard
+input or user activation. Sites requiring those mechanisms, custom pointer
+sequences or unsupported controls require manual handoff. Page handlers invoked
+by the approved event may themselves mutate state; that resulting page behavior
+is distinct from accepting a changed descriptor before dispatch. Arm passive
+navigation tracking before activation and obtain fresh state after any initiated
+main-document navigation reaches observation readiness. Do not capture the old
+document as evidence of completed navigation or repeat a gesture while waiting.
 
 Text fill uses an existing owner-sourced TaskInputBinding. For general sites the
 trusted owner binds it to the current observed field and exact origin, rather
@@ -302,7 +357,9 @@ data only; they cannot reconnect or become usable after lease retirement/restart
 
 For a model proposal, prepare the concrete action without interacting. A trusted
 interactive prompt displays operation, task, site, current control, and any
-source-bound value, then accepts approve, reject, or handoff. Page/model text
+source-bound value, then accepts approve, reject, or handoff. Review also shows
+the exact chosen option for select and resolved destination/form target for a
+navigation or submission control. Page/model text
 cannot answer this prompt. Noninteractive callers cannot approve. The exact
 initial `/browser open` command is already a trusted owner instruction and does
 not require a duplicate confirmation. Approval remains one-use and expires no
@@ -312,11 +369,15 @@ gesture.
 After approval, recheck work, clarification holds, grant revision, lease,
 document/control, input bindings, cancellation, and deadline. Commit
 `action.started` before invoking the gesture. Perform a synchronous final guard
-at the browser dispatch boundary. If source validation fails before any dispatch,
+at the browser dispatch boundary. Mark possible dispatch before sending the
+single atomic DOM RPC; never wait for its return to mark that an effect might
+have occurred. If source validation fails before any dispatch,
 cancel an unstarted action or record a proven no-dispatch failure. Once dispatch
 may have occurred, timeout, cancellation, lost response, process failure, or
 unavailable post-action observation is `unknown`, not failed. Never repeat a
-gesture to discover whether it worked.
+gesture to discover whether it worked. A fixed application-owned return proving
+that validation rejected before the first page effect may settle as no-dispatch;
+an exception or lost RPC reply is not that proof.
 
 `accepted` means the adapter observed completion of the approved browser gesture
 and captured fresh page state. It does not prove a booking, a remote account
@@ -346,7 +407,9 @@ never starts Chromium, a proxy, a prompt, or network traffic.
 - `browser/managed-session.ts`: controller, exact binding, origin grants, run
   borrow/release, handoff/resume, expiry and shutdown; operational resources only.
 - `browser/live-playwright.ts`: semantic snapshot/ref implementation and guarded
-  native interactions; consumes the controller's private lease and network gate.
+  atomic semantic interactions; consumes the controller's private lease and
+  network gate. Its fixed DOM helper owns isolated-world descriptors/references
+  and synchronous validation/activation, with no public script capability.
 - `browser/public-network.ts`: canonical origin/public-address validation and the
   bounded CONNECT gate; production defaults and trusted dependency seams.
 - `kernel/browser-action.ts`: versioned browser command shape and pure validation;
@@ -392,10 +455,15 @@ Write behavior tests first and observe failure before each implementation step.
    Owner input authorization between turns succeeds for one freshly matching
    descriptor; retired executable refs remain unusable. Changed/ambiguous fields,
    navigation and handoff invalidate matching before any value is disclosed.
+   Same-node link/form/input/option changes during actionability preparation cannot
+   change the approved gesture. Cover/uncover races, page-overridden DOM methods,
+   cancellation and document replacement cannot bypass the final atomic guard.
 5. Reject unapproved origins, redirects, private/literal/DNS/rebinding targets,
    unsupported protocols, service workers, WebSockets, files, downloads, and
    proxy bypass. Server-side counters prove no prohibited dispatch. Public CLI
    cannot invoke trusted test-only routing or certificate seams.
+   Cookie omission, SameSite/cross-origin restrictions and rejected Set-Cookie
+   remain browser decisions; positive synthetic login cookies still survive turns.
 6. A mutating gesture is withheld without owner confirmation, recorded started
    before its first request, and attempted once. A server applies it then drops
    the response: outcome is unknown, late completion cannot overwrite it, and

@@ -33,7 +33,7 @@ export interface PublicNetworkDependencies {
 /** TLS remains end-to-end; the gate sees no cookies, headers, bodies or page content. */
 export class PublicNetworkGate {
     readonly #origins=new Set<string>();readonly #blocked=new Set<string>();readonly #sockets=new Set<Socket>();readonly #tunnels=new Set<Socket>();
-    #server:Server|undefined;#proxyUrl:string|undefined;#closed=false;#revision=1;#requests=0;#bytes=0;
+    #server:Server|undefined;#listening:Promise<void>|undefined;#closing:Promise<{confirmed:boolean}>|undefined;#proxyUrl:string|undefined;#closed=false;#revision=1;#requests=0;#bytes=0;
     constructor(origins:readonly string[],private readonly assertActive:()=>void,private readonly dependencies:PublicNetworkDependencies={}) {
         if(!origins.length||origins.length>8)throw new Error('Invalid browser origin grant');
         for(const origin of origins){const url=publicHttpsUrl(origin);if(url.origin!==origin)throw new Error('Exact browser origin required');this.#origins.add(origin);}
@@ -72,7 +72,8 @@ export class PublicNetworkGate {
         });
         server.on('clientError',(_error,socket)=>socket.destroy());
         server.on('connect',(request,client,head)=>{void this.#connect(request.url??'',client as Socket,head);});
-        await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',()=>{server.off('error',reject);resolve();});});
+        this.#listening=new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',()=>{server.off('error',reject);resolve();});});
+        await this.#listening;
         server.on('error',()=>{void this.close();});
         this.#check();const address=server.address();if(!address||typeof address==='string')throw new Error('Browser network gate unavailable');
         this.#proxyUrl=`http://127.0.0.1:${address.port}`;
@@ -107,10 +108,13 @@ export class PublicNetworkGate {
             upstream?.destroy();
         }
     }
-    async close():Promise<{confirmed:boolean}> {
+    close():Promise<{confirmed:boolean}> {return this.#closing??=(async()=>{
         this.#closed=true;for(const socket of this.#sockets)socket.destroy();
+        // listen() can finish after close is requested. Await that owned attempt
+        // before claiming absence; otherwise a late listener survives confirmed cleanup.
+        try{await this.#listening;}catch{/* A failed bind owns no listening socket. */}
         const server=this.#server;if(!server?.listening)return {confirmed:true};
         await new Promise<void>(resolve=>server.close(()=>resolve()));
         return {confirmed:!server.listening&&[...this.#sockets].every(s=>s.destroyed)};
-    }
+    })();}
 }

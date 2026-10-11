@@ -81,3 +81,102 @@ test('duplicate semantic fields and a handoff epoch never recover prior input au
  try{const ctx=lease();ctx.resolveInput=()=>assert.fail('Ambiguous fields must not resolve owner input');const o=await ambiguous.open(ctx,'https://example.test/');assert.deepEqual(ambiguous.inputs(),[]);await assert.rejects(ambiguous.interact(ctx,{kind:'fill',observationId:o.id,ref:o.controls[0].ref,taskInputId:'old'}));}
  finally{assert.equal((await ambiguous.close()).confirmed,true);await other.close();}
 });
+test('forwarding preserves credentials omission and Chromium response cookie acceptance',{skip:!enabled,timeout:60000},async()=>{
+ const requests=[];let done;const finished=new Promise(resolve=>done=resolve);
+ const site=await managedSite((req,res)=>{requests.push({url:req.url,cookie:req.headers.cookie??''});res.setHeader('Content-Type','text/html');
+  if(req.url==='/'){res.setHeader('Set-Cookie','private=synthetic;Secure;HttpOnly;SameSite=Strict');res.end(`<h1>Cookie policy</h1><script>(async()=>{await fetch('/omit',{credentials:'omit'});await fetch('/read');})()</script>`);}
+  else{if(req.url==='/omit')res.setHeader('Set-Cookie','injected=synthetic;Secure;HttpOnly;SameSite=Strict');res.end('ok');if(req.url==='/read')done();}
+ });
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:direct},{ignoreHTTPSErrors:true});
+ try{await live.open(lease(),'https://example.test/');await Promise.race([finished,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Missing fixture requests')),5000).unref())]);
+  assert.equal(requests.find(r=>r.url==='/omit').cookie,'');assert.equal(requests.find(r=>r.url==='/read').cookie,'private=synthetic');
+ }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+});
+
+// The trusted fixture captures only its own synthetic page; no product CDP surface.
+async function captureChromium(capture) {
+ const {chromium}=await import('playwright');return {executablePath:()=>chromium.executablePath(),launchServer:o=>chromium.launchServer(o),connect:async(...args)=>{const browser=await chromium.connect(...args);browser.on('context',c=>c.on('page',capture));return browser;}};
+}
+test('covered controls cannot wait through a same-node destination change',{skip:!enabled,timeout:60000},async()=>{
+ let page;const site=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');res.end(req.url==='/'?'<a id="target" href="/approved">Reviewed destination</a><div id="cover" style="position:fixed;inset:0;background:white;z-index:100">Overlay</div>':'<h1>Unapproved destination</h1>');});
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:async(ctx,command,detail,gesture)=>{
+  await gesture.validate();if(command.operation==='interact')await page.evaluate(()=>setTimeout(()=>{document.querySelector('#target').href='/unapproved';document.querySelector('#cover').remove();},300));
+  return {status:'accepted',actionId:'test',observation:await gesture.dispatch(()=>gesture.assertCurrent())};
+ }},{ignoreHTTPSErrors:true,loadChromium:()=>captureChromium(p=>page=p)});
+ try{const ctx=lease(),o=await live.open(ctx,'https://example.test/');await assert.rejects(live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls[0].ref}));assert.ok(!site.requests.some(r=>r.url==='/unapproved'));}
+ finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+});
+test('page prototype overrides cannot conceal same-node field or option changes',{skip:!enabled,timeout:60000},async()=>{
+ let page,kind;const site=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<label>Query<input name="q"></label><select aria-label="City"><option>Alpha</option><option>Beta</option></select>');});
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:async(ctx,command,detail,gesture)=>{
+  await gesture.validate();if(command.operation==='interact')await page.evaluate(kind=>{
+   if(kind==='fill'){document.querySelector('input').name='changed';Object.defineProperty(HTMLInputElement.prototype,'name',{get(){return 'q'}});}
+   else{document.querySelector('option').value='changed';Object.defineProperty(HTMLOptionElement.prototype,'value',{get(){return this.text}});}
+  },kind);
+  await gesture.validate();return {status:'accepted',actionId:'test',observation:await gesture.dispatch(()=>gesture.assertCurrent())};
+ }},{ignoreHTTPSErrors:true,loadChromium:()=>captureChromium(p=>page=p)});
+ try{const ctx=lease();let o=await live.open(ctx,'https://example.test/');kind='fill';await assert.rejects(live.interact(ctx,{kind:'fill',observationId:o.id,ref:o.controls[0].ref,taskInputId:'input'}));
+  o=await live.observe(ctx);kind='select';const select=o.controls.find(c=>c.role==='combobox');await assert.rejects(live.interact(ctx,{kind:'select',observationId:o.id,ref:select.ref,optionRef:select.options[0].ref}));
+ }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+});
+test('cross-site fetch preserves SameSite cookie exclusion and rejected response cookies',{skip:!enabled,timeout:60000},async()=>{
+ const requests=[];let done;const finished=new Promise(resolve=>done=resolve);
+ const site=await managedSite((req,res)=>{requests.push({url:req.url,cookie:req.headers.cookie??''});res.setHeader('Content-Type','text/html');
+  if(req.url==='/seed'){res.setHeader('Set-Cookie','strict=synthetic;Secure;HttpOnly;SameSite=Strict');return res.end('<a href="https://example.test/">Main site</a>');}
+  if(req.url==='/'){return res.end(`<h1>Main</h1><a href="https://other.test/read">Read cookies</a><script>fetch('https://other.test/cross',{credentials:'include'}).then(()=>fetch('/done'))</script>`);}
+  if(req.url==='/cross'){res.setHeader('Access-Control-Allow-Origin','https://example.test');res.setHeader('Access-Control-Allow-Credentials','true');res.setHeader('Set-Cookie','rejected=synthetic;Secure;HttpOnly;SameSite=Strict');}
+  res.end('<h1>Read</h1><a href="/final">Same-site read</a>');if(req.url==='/done')done();
+ });site.gate.allow('https://other.test');
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:direct},{ignoreHTTPSErrors:true});
+ try{const ctx=lease();let o=await live.open(ctx,'https://other.test/seed');o=await live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls[0].ref});
+  await Promise.race([finished,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Missing cross-site request')),5000).unref())]);assert.equal(requests.find(r=>r.url==='/cross').cookie,'');
+  o=await live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls[0].ref});
+  // Strict cookies are excluded on the cross-site navigation, too. A same-site read
+  // then proves that the response cookie was not secretly imported by the forwarder.
+  await live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls[0].ref});
+  assert.equal(requests.find(r=>r.url==='/final').cookie,'strict=synthetic');
+  assert.ok(requests.every(r=>!r.cookie.includes('rejected=')));
+ }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+});
+test('assets and allowed redirects work; approvals identify options and mutating GET destinations; files stay unavailable',{skip:!enabled,timeout:60000},async()=>{
+ let effects=0;const reviews=[];const site=await managedSite((req,res)=>{
+  if(req.url==='/style.css'){res.setHeader('Content-Type','text/css');return res.end('body{color:rgb(1,2,3)}');}
+  if(req.url==='/image.svg'){res.setHeader('Content-Type','image/svg+xml');return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>');}
+  if(req.url==='/redirect'){res.writeHead(302,{location:'/changed'});return res.end();}
+  if(req.url==='/attachment'){res.setHeader('Content-Disposition','attachment; filename=blocked.txt');return res.end('blocked');}
+  if(req.url==='/changed'){effects++;res.setHeader('Content-Type','text/html');return res.end('<h1>Changed once</h1><a href="/attachment">Attachment</a>');}
+  res.setHeader('Content-Type','text/html');res.end('<link rel="stylesheet" href="/style.css"><img src="/image.svg"><select aria-label="City"><option>Alpha</option><option>Beta</option></select><a href="/redirect">Apply change</a><a download href="/download">Download</a><input type="file" aria-label="Upload">');
+ });
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:async(ctx,command,detail,gesture)=>{reviews.push(detail);if(detail.name!=='Attachment')assert.equal(effects,0);return direct(ctx,command,detail,gesture);}},{ignoreHTTPSErrors:true});
+ try{const ctx=lease();let o=await live.open(ctx,'https://example.test/');assert.ok(!o.controls.some(c=>/Download|Upload/.test(c.name)));
+  const select=o.controls.find(c=>c.role==='combobox');o=await live.interact(ctx,{kind:'select',observationId:o.id,ref:select.ref,optionRef:select.options[1].ref});assert.equal(reviews.at(-1).option,'Beta');
+  o=await live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls.find(c=>c.name==='Apply change').ref});assert.equal(reviews.at(-1).destination,'https://example.test/redirect');assert.equal(effects,1);assert.match(o.text,/Changed once/);
+  for(const path of ['/style.css','/image.svg','/redirect','/changed'])assert.ok(site.requests.some(r=>r.url===path),path);assert.ok(!site.requests.some(r=>/download|upload/.test(r.url)));
+  await assert.rejects(live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls[0].ref}));
+ }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+});
+test('two managed browser sessions have separate cookie jars and controls',{skip:!enabled,timeout:60000},async()=>{
+ const handler=(req,res)=>{res.setHeader('Content-Type','text/html');if(req.url==='/seed')res.setHeader('Set-Cookie','account=synthetic;Secure;HttpOnly');res.end('<h1>'+(req.headers.cookie?'Authenticated':'Anonymous')+'</h1><a href="/read">Read</a>');};
+ const one=await managedSite(handler),two=await managedSite(handler);
+ const first=new LivePlaywright({sessionId:'session',threadId:'one',network:one.gate,assertSession(){},perform:direct},{ignoreHTTPSErrors:true});
+ const second=new LivePlaywright({sessionId:'other',threadId:'two',network:two.gate,assertSession(){},perform:direct},{ignoreHTTPSErrors:true});
+ try{const ctx=lease();let a=await first.open(ctx,'https://example.test/seed');a=await first.interact(ctx,{kind:'navigate',observationId:a.id,ref:a.controls[0].ref});assert.match(a.text,/Authenticated/);
+  const other={...lease(),sessionId:'other',workId:'other-work'};const b=await second.open(other,'https://example.test/read');assert.match(b.text,/Anonymous/);
+  await assert.rejects(second.interact(other,{kind:'navigate',observationId:a.id,ref:a.controls[0].ref}));
+ }finally{assert.equal((await first.close()).confirmed,true);assert.equal((await second.close()).confirmed,true);await one.close();await two.close();}
+});
+test('atomic dispatch rechecks same-node link, field, form and option semantics after the journal mark',{skip:!enabled,timeout:60000},async()=>{
+ const {chromium}=await import('playwright');let page,mutation;const reviews=[];
+ const site=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<a id="link" href="/reviewed">Link</a><form action="/reviewed"><label>Query<input name="q"></label><button>Submit</button></form><select aria-label="City"><option>Alpha</option><option>Beta</option></select>');});
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:async(...args)=>{reviews.push(args[2]);return direct(...args);}},{ignoreHTTPSErrors:true,loadChromium:async()=>({executablePath:()=>chromium.executablePath(),launchServer:o=>chromium.launchServer(o),connect:async(...args)=>{
+  const browser=await chromium.connect(...args);browser.on('context',context=>{context.on('page',p=>page=p);const original=context.newCDPSession.bind(context);context.newCDPSession=async p=>{const cdp=await original(p),send=cdp.send.bind(cdp);cdp.send=async(method,params)=>{
+   if(method==='Runtime.callFunctionOn'&&params.arguments?.[0]?.value==='dispatch'&&mutation){const change=mutation;mutation=undefined;await page.evaluate(change);}
+   return send(method,params);
+  };return cdp;};});return browser;
+ }})});
+ try{const ctx=lease();await live.open(ctx,'https://example.test/');
+  const cases=[['navigate','Link',()=>document.querySelector('#link').href='/unreviewed'],['fill','Query',()=>document.querySelector('input').name='different'],['click','Submit',()=>document.querySelector('form').action='/unreviewed'],['select','City',()=>document.querySelector('option').value='different']];
+  for(const [kind,name,change] of cases){const o=await live.observe(ctx),control=o.controls.find(c=>c.name===name);mutation=change;await assert.rejects(live.interact(ctx,{kind,observationId:o.id,ref:control.ref,...(kind==='fill'?{taskInputId:'input'}:{}),...(kind==='select'?{optionRef:control.options[0].ref}:{})}));}
+  assert.ok(site.requests.every(r=>r.url==='/'));assert.equal(reviews.find(r=>r.operation==='click').form.action,'https://example.test/reviewed');
+ }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+});

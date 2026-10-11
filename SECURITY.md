@@ -28,10 +28,15 @@ A checked-IP CONNECT proxy prevents a second DNS resolution after validation;
 context routing also guards redirects and dependencies. There is no direct
 fallback, personal profile, remote CDP attachment or public boundary override.
 Popups, downloads, uploads, service workers, WebSockets and permissions are denied.
+Browser descriptors and semantic dispatch use fixed code in a private Chromium
+isolated world. Final validation and activation run synchronously; page-prototype
+overrides cannot change the helper. Events are programmatic; sites requiring
+trusted input use manual handoff. Request forwarding uses an isolated request
+context and preserves Chromium cookie omission and response-cookie policy.
 These are application controls, not an OS sandbox.
 
-Manual handoff pauses model calls and invalidates references while preserving
-cookies. Resume obtains fresh observations. Sensitive fields, input values,
+Manual handoff pauses model calls in the bound chat and invalidates its browser
+references while preserving cookies. Other chats cannot borrow that session. Resume obtains fresh observations. Sensitive fields, input values,
 hidden fields, cookies and raw HTML are omitted. This cannot redact secrets that
 a website reflects elsewhere in visible text; the owner acknowledges visible-page
 disclosure before resume. Healthy turns retire executable references without

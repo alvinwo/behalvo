@@ -58,10 +58,17 @@ export async function handleBrowserCommand(raw:string,options:{store:SqliteStore
         if(value!==undefined&&(!value.trim()||Buffer.byteLength(value)>4096))throw new Error('Invalid input');
         // Store the exact non-secret input as its own owner source; command syntax is not source text.
         const source=store.ingest(scope.workspaceId,{source:'owner:managed-browser',externalId:randomUUID(),threadId:scope.threadId,senderId:scope.ownerId,senderRole:'owner',text:value??raw.trim()});
+        try{
         const binding={...scope,ownerRecordId:source.id,expectedWorkRevision:work.revision};
         if(command==='input')io.write(liveMessage('inputSaved')+controller.input(binding,words[2]!,value!));
         else{
             const signal=AbortSignal.timeout(120000);await controller.open(binding,words[2]!,{deadline:Date.now()+120000,signal});io.write(liveMessage('opened'));
+        }
+        }finally{
+            // A trusted command is never a deferred model prompt, including when its
+            // independent browser action has an unknown remote outcome.
+            if(store.inbox(scope.workspaceId).some(record=>record.id===source.id))
+                store.completeInbox(scope.workspaceId,source.id,store.state(scope.workspaceId).version,[]);
         }
     }catch{io.write(liveMessage('failed'));}
     return true;

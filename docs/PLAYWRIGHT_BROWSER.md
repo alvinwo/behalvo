@@ -19,12 +19,12 @@ buttons, text/search fields, textareas and selects; no visa workflow is hardcode
 Opening grants that exact origin permission to run its web application, including
 JavaScript and background requests. This is not read-only access: GET can mutate
 and POST can read. Each agent-selected gesture separately displays its task,
-site, control and authorized non-secret text for a fresh `approve`, `reject` or
+site, control, selected option, navigation/form destination and authorized non-secret text for a fresh `approve`, `reject` or
 `handoff` response. The initial owner-authored open command needs no duplicate
 approval. A successful gesture does not verify a remote business outcome.
 
 1. Use `/browser handoff` to enter login and verification codes in the browser.
-   Agent turns pause during handoff.
+   Agent turns in this chat pause during handoff; other chats cannot use its browser.
 2. Use `/browser resume`, then confirm `resume`, to share visible page content
    with the selected model. Sensitive fields are omitted, but websites can display
    account details elsewhere on the page.
@@ -53,6 +53,9 @@ redirects. Popups, uploads, downloads, WebSockets, service workers, browser
 permissions and model-selected frame controls are unsupported. Limits are
 2,048 routed requests, 32 tunnels and 128 MiB of tunneled bytes per session.
 There is no public proxy/profile/CDP/certificate override or direct fallback.
+Actions use fixed semantic activation in a private isolated browser context.
+Controls covered by another element are rejected. Events are programmatic;
+use manual handoff for sites that require trusted keyboard or pointer input.
 This is an application boundary, not an OS sandbox.
 
 The vault's automated browser integration remains the synthetic login fixture;
