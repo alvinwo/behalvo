@@ -11,6 +11,10 @@ type Waiter = {
 };
 
 export class NodeLineIo implements ReplIo {
+  get interactive(): boolean {
+    return (this.input as Readable & {isTTY?: boolean}).isTTY === true &&
+      (this.output as Writable & {isTTY?: boolean}).isTTY === true;
+  }
   #rl: Interface;
   #resetting = false;
   readonly #queue: string[] = [];
@@ -61,6 +65,11 @@ export class NodeLineIo implements ReplIo {
       this.#cleanup(waiter);
       waiter.resolve(line);
     });
+    rl.on('SIGINT', () => {
+      if (!this.#secret && !this.#waiters.some(waiter => waiter.authentication)) return;
+      this.discardSensitiveInput();
+      for (const waiter of this.#waiters.splice(0)) { this.#cleanup(waiter); waiter.resolve(null); }
+    });
     rl.on('close', () => {
       input.removeListener('end', onEnd);
       if (this.#resetting) return;
@@ -98,6 +107,13 @@ export class NodeLineIo implements ReplIo {
     } finally {
       this.#secret = false;
     }
+  }
+
+  discardSensitiveInput(): void {
+    this.#queue.length = 0;
+    this.#discardPartialLine();
+    this.#discardingAuthLine = false;
+    this.#resetEditor();
   }
 
   #discardPartialLine(): void {

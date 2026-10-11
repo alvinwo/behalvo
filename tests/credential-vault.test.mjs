@@ -115,3 +115,10 @@ test('vault limits reject invalid bytes and metadata without publishing',{skip:!
  for(const bad of [{...input(),label:'bad\nlabel'},{...input(),label:'x'.repeat(129)},{...input(),username:Buffer.alloc(1025,65)},{...input(),password:Buffer.alloc(16385,65)},{...input(),password:Buffer.from([0xff])},{...input(),password:Buffer.alloc(0)},{...input(),extra:'forbidden'}])await assert.rejects(()=>f.vault.add(scope,bad,guard));
  assert.deepEqual(readFileSync(f.path),original);
 });
+
+test('cancelled initialization and removal refuse publication',{skip:!posix},async t=>{
+ const f=fixture(t);const controller=new AbortController();controller.abort();
+ await assert.rejects(()=>f.vault.initialize(scope,{signal:controller.signal,...guard}));
+ await f.vault.initialize(scope);const m=await f.vault.add(scope,input(),guard);
+ await assert.rejects(()=>f.vault.remove(scope,m.id,m.revision,{signal:controller.signal,...guard}));assert.equal((await f.vault.list(scope)).length,1);
+});

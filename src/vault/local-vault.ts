@@ -75,15 +75,17 @@ export class LocalCredentialVault {
   }
   lock(): void { this.#invalidate(); this.#file?.dispose(); this.#file = undefined; }
 
-  async initialize(scope: VaultScope): Promise<void> {
+  async initialize(scope: VaultScope, options: VaultOperationOptions = { assertCurrent: noop }): Promise<void> {
     let file: PrivateEncryptedJsonFile<Document> | undefined;
     try {
       vaultScope(scope); if (this.#file) throw vaultError();
-      const epoch = this.#epoch; file = this.#newFile();
+      const epoch = this.#epoch;
+      const check = () => { if (this.#epoch !== epoch || options.signal?.aborted) throw vaultError(); options.assertCurrent(); };
+      check(); file = this.#newFile();
       await file.update(async current => {
         if (current.initialized) throw vaultError();
         return { next: { ...current, initialized: true }, result: undefined };
-      }, { beforePublish: () => { if (this.#epoch !== epoch) throw vaultError(); } });
+      }, { ...(options.signal ? { signal: options.signal } : {}), beforePublish: check });
       if (this.#epoch !== epoch) throw vaultError();
       this.#file = file; file = undefined;
     } catch { throw vaultError(); }
@@ -142,9 +144,10 @@ export class LocalCredentialVault {
       }, { signal: op.signal, beforePublish: op.check });
     } catch { throw vaultError(); }
   }
-  async remove(rawScope: VaultScope, id: string, expectedRevision: number): Promise<void> {
+  async remove(rawScope: VaultScope, id: string, expectedRevision: number,
+    options: VaultOperationOptions = { assertCurrent: noop }): Promise<void> {
     try {
-      const scope = vaultScope(rawScope); this.#cancelUses(); const op = this.#operation();
+      const scope = vaultScope(rawScope); this.#cancelUses(); const op = this.#operation(options);
       await op.file.update(async current => {
         op.check(); const old = entry(current, scope, id, expectedRevision);
         if (old.revision >= Number.MAX_SAFE_INTEGER) throw vaultError();

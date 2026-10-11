@@ -16,6 +16,9 @@ import type { TerminalPromptIo } from './terminal-prompt.js';
 import { ModelSettingsStore, settingsPathForDatabase } from './model-settings.js';
 import { loadStorageKeyFile } from '../storage/key-file.js';
 import type { ModelStateProtectionOptions } from '../storage/model-state-codec.js';
+import { configuredVault, parseVaultConfiguration, type VaultConfiguration } from './vault-config.js';
+import { vaultMessage } from '../vault/messages.js';
+import type { LocalCredentialVault } from '../vault/local-vault.js';
 import {
   assertModelStatePathSeparation,
   loadModelStateProtection,
@@ -23,6 +26,7 @@ import {
 } from './model-state-config.js';
 
 export interface CliArgs {
+  vault?: VaultConfiguration;
   offline: boolean;
   syntheticOperations: boolean;
   teachingMode?: boolean;
@@ -79,7 +83,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   const semanticSite=valueAfter(argv,'--synthetic-browser');
   if(semanticSite&&(!['appointments-a','appointments-b','classes'].includes(semanticSite)||offline||argv.includes('--synthetic-operations')))throw new Error(browserMessage('invalidFixture'));
   const model = parseModel(valueAfter(argv, '--model') ?? process.env.BEHALVO_MODEL ?? process.env.OPERATOR_MODEL);
-  return {
+  const parsed: CliArgs = {
     offline,
     ...(semanticSite?{semanticSite:semanticSite as SemanticSite,teachingMode:true}:{}),
     ...(argv.includes('--task-teachings') ? {teachingMode:true} : {}),
@@ -92,6 +96,14 @@ export function parseCliArgs(argv: string[]): CliArgs {
     ...(configuredStorageKey ? { storageKeyPath: resolve(configuredStorageKey) } : {}),
     ...(modelStateKeyPath ? { modelStateKeyPath } : {})
   };
+  const settingsPath = settingsPathForDatabase(parsed.dbPath);
+  const reserved = [parsed.dbPath, `${parsed.dbPath}-wal`, `${parsed.dbPath}-shm`, `${parsed.dbPath}-journal`,
+    `${parsed.dbPath}.behalvo-lock`, parsed.authPath, `${parsed.authPath}.behalvo-model-state-lock`,
+    settingsPath, `${settingsPath}.behalvo-model-state-lock`,
+    ...(parsed.storageKeyPath ? [parsed.storageKeyPath] : []), ...(parsed.modelStateKeyPath ? [parsed.modelStateKeyPath] : [])];
+  if (parsed.syntheticOperations) for (const suffix of ['', '-wal', '-shm', '-journal']) reserved.push(`${parsed.dbPath}.synthetic.sqlite${suffix}`);
+  const vault = parseVaultConfiguration(argv, reserved);
+  return { ...parsed, ...(vault ? { vault } : {}) };
 }
 
 async function terminalIo(): Promise<NodeLineIo | TerminalPromptIo> {
@@ -110,6 +122,7 @@ async function main(): Promise<void> {
   let pi: PiModelGateway | undefined;
   let settings: ModelSettingsStore | undefined;
   let fixture: Awaited<ReturnType<typeof startSemanticFixture>> | undefined;
+  let vault: LocalCredentialVault | undefined;
   const browser: BrowserExplorationOptions | undefined=args.semanticSite?{open:async context=>{
     fixture??=await startSemanticFixture(args.semanticSite!);
     return new SemanticPlaywright(fixture.policy,context.execution.signal ?? new AbortController().signal);
@@ -189,6 +202,10 @@ async function main(): Promise<void> {
   let io: NodeLineIo | TerminalPromptIo | undefined;
   try {
     io = await terminalIo();
+    if (args.vault) {
+      vault = configuredVault(args.vault);
+      io.write(vaultMessage('locked'));
+    }
     if(args.semanticSite)io.write(browserMessage('synthetic'));
     if (args.syntheticOperations) io.write('SYNTHETIC OPERATIONS ONLY — simulated account data; no real account effects.');
     if (args.offline) {
@@ -221,10 +238,12 @@ async function main(): Promise<void> {
       io,
       workspaceId: args.workspaceId,
       ownerId: args.ownerId,
+      ...(vault ? { vault } : {}),
       ...(!args.offline && settings ? { onModelSelected: (selected: { provider: string; model: string }) =>
         settings.write(args.workspaceId, selected) } : {})
     });
   } finally {
+    vault?.lock();
     io?.close();
     app.close();
     await fixture?.close();
