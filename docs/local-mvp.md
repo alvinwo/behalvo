@@ -42,6 +42,28 @@ npm run mvp:demo
 
 The demo creates a WorkItem and Fact, closes SQLite, reopens it in a fresh app instance, starts a different thread, and verifies that the second turn uses durable state without loading the previous thread's raw transcript. The original raw message remains retrievable from history.
 
+## Multiline prompts
+
+Type `/paste` at `You >` to compose one message across multiple lines. Paste your
+text or type each line, then enter `/send` on its own line to submit:
+
+```text
+You > /paste
+... > Remember for this task:
+... > - Only consider morning sessions.
+... > - Ask before making changes.
+... > /send
+```
+
+`/cancel` on its own line discards the draft. Blank lines and indentation are
+preserved. Other slash commands inside a draft are message text, not terminal
+commands. To include a literal `/send` or `/cancel` line, prefix it with a backslash
+(`\/send` or `\/cancel`). End-of-input discards an unfinished draft. Drafts are
+limited to 64 KiB of UTF-8 text, including newlines; overflow discards the entire
+draft through its terminating `/send` or `/cancel`. No model call or journal write
+occurs until submission. Single-line prompts still submit with Enter. This mode
+is for chat prompts, not login or secret-input prompts.
+
 ## Use real models through Pi
 
 Behalvo owns the agent runtime. Pi is only the replaceable model/provider transport layer.

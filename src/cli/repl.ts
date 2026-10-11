@@ -1,3 +1,4 @@
+import { inputMessage } from './input-messages.js';
 import { authorizeTaskInput, revokeTaskInput } from '../runtime/browser-learning.js';
 import { browserMessage } from '../runtime/browser-messages.js';
 import { isOperationCommand } from '../operations/validation.js';
@@ -67,21 +68,48 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   let workId: string | undefined;
 
   io.write(`Behalvo — workspace ${workspaceId} — thread ${threadId}`);
-  io.write('Use /help for commands.');
+  io.write(inputMessage('hint'));
 
   for (;;) {
     const raw = await io.readLine('You > ');
     if (raw === null) return { reason: 'eof', threadId, ...(workId ? { workId } : {}) };
-    const line = raw.trim();
+    let line = raw.trim();
     if (!line) continue;
+    const multiline = line === '/paste';
+    if (multiline) {
+      io.write(inputMessage('start'));
+      const lines: string[] = [];
+      let bytes = 0;
+      let discarded = false;
+      for (;;) {
+        const next = await io.readLine(inputMessage('continuation'));
+        if (next === null) {
+          io.write(inputMessage('cancelled'));
+          return { reason: 'eof', threadId, ...(workId ? { workId } : {}) };
+        }
+        if (next === '/cancel') { discarded = true; break; }
+        if (next === '/send') break;
+        if (discarded) continue;
+        const content = next === '\\/send' || next === '\\/cancel' ? next.slice(1) : next;
+        bytes += Buffer.byteLength(content, 'utf8') + (lines.length ? 1 : 0);
+        if (bytes > 65536) {
+          discarded = true;
+          lines.length = 0;
+          io.write(inputMessage('oversized'));
+        } else lines.push(content);
+      }
+      if (discarded) { io.write(inputMessage('cancelled')); continue; }
+      line = lines.join('\n');
+      if (!line.trim()) { io.write(inputMessage('empty')); continue; }
+    }
 
-    if (line.startsWith('/')) {
+    if (!multiline && line.startsWith('/')) {
       const [command, ...args] = line.split(/\s+/);
       try {
         if (command === '/quit')
           return { reason: 'quit', threadId, ...(workId ? { workId } : {}) };
         if (command === '/help') {
-          io.write(HELP+'\n'+browserMessage('help'));
+          io.write(HELP+'\n'+inputMessage('help')+'\n'+browserMessage('help'));
           continue;
         }
         if(command==='/browser-input'||command==='/browser-revoke') {
