@@ -15,6 +15,7 @@ import type { PiCredential } from '../model/pi-auth-store.js';
 import type { ModelRef } from '../model/types.js';
 
 export interface ReplIo {
+  readPrompt?(prompt?: string): Promise<string | null>;
   readLine(prompt?: string, signal?: AbortSignal): Promise<string | null>;
   readSecret?(prompt?: string, signal?: AbortSignal): Promise<string | null>;
   write(line?: string): void;
@@ -71,37 +72,11 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   io.write(inputMessage('hint'));
 
   for (;;) {
-    const raw = await io.readLine('You > ');
+    const raw = await (io.readPrompt ? io.readPrompt('You > ') : io.readLine('You > '));
     if (raw === null) return { reason: 'eof', threadId, ...(workId ? { workId } : {}) };
-    let line = raw.trim();
+    const multiline = /[\r\n]/.test(raw);
+    const line = raw.trim();
     if (!line) continue;
-    const multiline = line === '/paste';
-    if (multiline) {
-      io.write(inputMessage('start'));
-      const lines: string[] = [];
-      let bytes = 0;
-      let discarded = false;
-      for (;;) {
-        const next = await io.readLine(inputMessage('continuation'));
-        if (next === null) {
-          io.write(inputMessage('cancelled'));
-          return { reason: 'eof', threadId, ...(workId ? { workId } : {}) };
-        }
-        if (next === '/cancel') { discarded = true; break; }
-        if (next === '/send') break;
-        if (discarded) continue;
-        const content = next === '\\/send' || next === '\\/cancel' ? next.slice(1) : next;
-        bytes += Buffer.byteLength(content, 'utf8') + (lines.length ? 1 : 0);
-        if (bytes > 65536) {
-          discarded = true;
-          lines.length = 0;
-          io.write(inputMessage('oversized'));
-        } else lines.push(content);
-      }
-      if (discarded) { io.write(inputMessage('cancelled')); continue; }
-      line = lines.join('\n');
-      if (!line.trim()) { io.write(inputMessage('empty')); continue; }
-    }
 
     if (!multiline && line.startsWith('/')) {
       const [command, ...args] = line.split(/\s+/);
@@ -275,7 +250,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         ownerId,
         threadId,
         externalId: `local-${randomUUID()}`,
-        text: line,
+        text: raw,
         model: selected,
         ...(workId ? { workId } : {})
       });

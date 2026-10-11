@@ -12,6 +12,7 @@ import { PiCredentialFileStore } from '../model/pi-auth-store.js';
 import { openLocalAgent } from './local-app.js';
 import { runRepl } from './repl.js';
 import { NodeLineIo } from './node-io.js';
+import type { TerminalPromptIo } from './terminal-prompt.js';
 import { ModelSettingsStore, settingsPathForDatabase } from './model-settings.js';
 import { loadStorageKeyFile } from '../storage/key-file.js';
 import type { ModelStateProtectionOptions } from '../storage/model-state-codec.js';
@@ -93,8 +94,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
   };
 }
 
-function terminalIo(): NodeLineIo {
-  return new NodeLineIo(stdin, stdout);
+async function terminalIo(): Promise<NodeLineIo | TerminalPromptIo> {
+  if (!stdin.isTTY || !stdout.isTTY) return new NodeLineIo(stdin, stdout);
+  const { TerminalPromptIo } = await import('./terminal-prompt.js');
+  return new TerminalPromptIo(stdin, stdout);
 }
 
 async function main(): Promise<void> {
@@ -182,8 +185,9 @@ async function main(): Promise<void> {
     encryptionKey?.fill(0);
     protection.encryptionKey?.fill(0);
   }
-  const io = terminalIo();
+  let io: NodeLineIo | TerminalPromptIo | undefined;
   try {
+    io = await terminalIo();
     if(args.semanticSite)io.write(browserMessage('synthetic'));
     if (args.syntheticOperations) io.write('SYNTHETIC OPERATIONS ONLY — simulated account data; no real account effects.');
     if (args.offline) {
@@ -220,7 +224,7 @@ async function main(): Promise<void> {
         settings.write(args.workspaceId, selected) } : {})
     });
   } finally {
-    io.close();
+    io?.close();
     app.close();
     await fixture?.close();
   }

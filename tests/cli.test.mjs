@@ -197,34 +197,15 @@ test('cancelled partial OAuth input never becomes a durable owner message', asyn
     assert.doesNotMatch(f.store.readArtifact('personal', record.event.data.artifactId), /SYNTHETIC/);
 });
 
-async function multilineRepl(t, lines, nodeInput = false) {
+
+for (const text of ['  hello  ', '  /quit\nRemember:\n\n  - morning sessions\n/send\n/cancel  '])
+test(`natural prompt preserves owner text and only standalone commands execute: ${JSON.stringify(text)}`, async t => {
   const f = await fixture(t);
   const registry = new f.ModelRegistry([new f.FakeModelGateway([{provider:'fake',model:'test'}], () => ({text:JSON.stringify({reply:'Received.',workProposals:[],factProposals:[]})}))]);
   await registry.select('fake','test');
-  let io = new ScriptedIo(lines);
-  if (nodeInput) {
-    const { PassThrough } = await import('node:stream');
-    const input = new PassThrough(); const output = new PassThrough(); output.resume();
-    io = new f.NodeLineIo(input,output); t.after(()=>io.close());
-    setImmediate(()=>input.end(lines.join('\n')+'\n'));
-  }
-  const result=await f.runRepl({store:f.store,registry,service:new f.AgentService(f.store,registry),io,workspaceId:'personal',ownerId:'owner',initialThreadId:'multiline'});
+  const lines = [text, '/quit'];
+  const io = {readPrompt:async()=>lines.shift()??null,readLine:async()=>{throw new Error('Owner prompt used authentication input');},write(){}};
+  const result=await f.runRepl({store:f.store,registry,service:new f.AgentService(f.store,registry),io,workspaceId:'personal',ownerId:'owner',initialThreadId:'natural'});
   const messages=f.store.journal('personal').filter(r=>r.event.type==='message.received'&&r.event.data.senderRole==='owner').map(r=>f.store.readArtifact('personal',r.event.data.artifactId));
-  return {messages,result};
-}
-for (const nodeInput of [false,true]) test(`multiline draft submits one exact message including blank lines and command text (${nodeInput?'stream':'scripted'})`,async t=>{
- const r=await multilineRepl(t,['/paste','  Remember:', '- morning','', '/quit', '  last line  ','/send','/quit'],nodeInput);
- assert.deepEqual(r.messages,['  Remember:\n- morning\n\n/quit\n  last line  ']);assert.equal(r.result.reason,'quit');
-});
-test('cancelled, empty and unfinished multiline drafts never submit',async t=>{
- const r=await multilineRepl(t,['/paste','discard me','/cancel','/paste','   ','/send','/paste','unfinished']);
- assert.deepEqual(r.messages,[]);assert.equal(r.result.reason,'eof');
-});
-test('multiline control markers can be included literally with a leading backslash',async t=>{
- const r=await multilineRepl(t,['/paste','\\/send','\\/cancel','/send','/quit']);
- assert.deepEqual(r.messages,['/send\n/cancel']);
-});
-test('oversized multiline drafts discard through the terminator without executing commands',async t=>{
- const r=await multilineRepl(t,['/paste','x'.repeat(65537),'/quit','/send','next message','/quit']);
- assert.deepEqual(r.messages,['next message']);
+  assert.deepEqual(messages,[text]);assert.equal(result.reason,'quit');
 });

@@ -44,25 +44,35 @@ The demo creates a WorkItem and Fact, closes SQLite, reopens it in a fresh app i
 
 ## Multiline prompts
 
-Type `/paste` at `You >` to compose one message across multiple lines. Paste your
-text or type each line, then enter `/send` on its own line to submit:
+In an interactive terminal, paste text directly into the input editor. A multiline
+paste stays in one editable draft; press **Enter** to submit the entire message.
+There is no paste mode or send command to remember.
 
-```text
-You > /paste
-... > Remember for this task:
-... > - Only consider morning sessions.
-... > - Ask before making changes.
-... > /send
-```
+- **Ctrl+J** or **Alt+Enter** inserts a newline while typing.
+- **Shift+Enter** also inserts a newline when the terminal reports it distinctly.
+  If it acts like Enter in your terminal, use Ctrl+J instead.
+- Arrow keys move through the draft; Backspace/Delete edit it.
+- **Ctrl+C** clears a draft; with an empty draft it exits. **Ctrl+D** exits an empty prompt.
 
-`/cancel` on its own line discards the draft. Blank lines and indentation are
-preserved. Other slash commands inside a draft are message text, not terminal
-commands. To include a literal `/send` or `/cancel` line, prefix it with a backslash
-(`\/send` or `\/cancel`). End-of-input discards an unfinished draft. Drafts are
-limited to 64 KiB of UTF-8 text, including newlines; overflow discards the entire
-draft through its terminating `/send` or `/cancel`. No model call or journal write
-occurs until submission. Single-line prompts still submit with Enter. This mode
-is for chat prompts, not login or secret-input prompts.
+The editor requests bracketed-paste support so embedded newlines do not submit
+individual lines. A terminal that strips these markers cannot provide the same
+paste guarantee. Blank lines and surrounding spaces are preserved. The editor
+normalizes CRLF/CR to LF and tabs to four spaces, and removes terminal control
+sequences from pasted text. Multiline messages containing
+slash commands are sent as message text, never executed as terminal commands.
+
+Drafts are limited to 64 KiB of UTF-8 text. An oversized draft cannot be submitted;
+Ctrl+C clears it so you can enter a shorter message. Closing input discards an
+unfinished draft. The journal and model receive text only on submission.
+
+The interactive editor uses pinned `@earendil-works/pi-tui`, the component library
+used by [OpenClaw's editor](https://github.com/openclaw/openclaw/blob/main/src/tui/components/custom-editor.ts).
+Its Enter/newline/paste interaction also follows the
+[Hermes CLI conventions](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/cli.md).
+Behalvo retains its own agent runtime. Piped input remains line-oriented, and
+login prompts retain the separate hidden-input path. Editor undo/history does not
+carry authentication input into chat. Pi TUI output/debug logging must be disabled
+for this interface (`PI_TUI_WRITE_LOG`, `PI_TUI_DEBUG`, `PI_TUI_DEBUG_REDRAW`).
 
 ## Use real models through Pi
 

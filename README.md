@@ -128,7 +128,7 @@ see the [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md).
 | Opt-in authenticated payload encryption for new SQLite databases | Whole-file encryption or rollback detection |
 | Verified encrypted SQLite backup and restore CLI | Encrypted evaluation reports or coordinated model-state/SQLite backups |
 | Opt-in protected Pi credentials and saved model settings on POSIX | Plaintext migration, model-state key rotation or secure erasure |
-| Local inspection commands for state/history/context | Production security review |
+| Interactive multiline editor with direct paste, keyboard submission, and local state/history/context inspection | Production security review |
 | Versioned prepared operations with exact connection/resource bindings | Real account handlers, remote authentication or universal account discovery |
 | Opt-in persistent synthetic contact/subscription operations with readback | Production credential protection or provider write verification |
 | Bounded structured operation loop and trusted `/actions` / `/approve` commands | Autonomous retries or startup recovery of running effects |
