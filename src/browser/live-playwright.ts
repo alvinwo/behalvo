@@ -79,13 +79,19 @@ export class LivePlaywright {
         page.on('dialog',dialog=>{void dialog.dismiss().catch(()=>{});});
         return page;
     }
-    async open(context:BrowserExecution,url:string):Promise<BrowserObservation>{return this.#run(context,async()=>{
-        if(this.#page)throw new Error('Browser already opened');const target=publicHttpsUrl(url);this.options.network.assertAllowed(target.href);
-        const ready=await this.#owner.start(browser=>this.#start(browser));this.#page=ready.value;this.#assert();
+    open(context:BrowserExecution,url:string):Promise<BrowserObservation>{return this.#navigate(context,url,'open');}
+    visit(context:BrowserExecution,url:string):Promise<BrowserObservation>{return this.#navigate(context,url,'visit');}
+    async #navigate(context:BrowserExecution,url:string,operation:'open'|'visit'):Promise<BrowserObservation>{return this.#run(context,async()=>{
+        if(operation==='open'&&this.#page)throw new Error('Browser already opened');const target=publicHttpsUrl(url);this.options.network.assertAllowed(target.href);
+        if(!this.#page){const ready=await this.#owner.start(browser=>this.#start(browser));this.#page=ready.value;}this.#assert();
         const revision=this.options.network.revision;
         const check=()=>{this.#assert();if(this.options.network.revision!==revision||!this.options.network.allows(target.href))throw new Error('Origin changed');};
-        const result=await this.options.perform(context,{kind:'browser.gesture',version:1,operation:'open',threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin:target.origin,url:target.href},
-            {operation:'open',origin:target.origin,name:target.href},{validate:async()=>check(),assertCurrent:check,dispatch:async mark=>{check();mark();await this.#page!.goto(target.href,{waitUntil:'domcontentloaded',timeout:Math.max(1,context.execution.deadline-Date.now())});return this.#capture();}});
+        const result=await this.options.perform(context,{kind:'browser.gesture',version:1,operation,threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin:target.origin,url:target.href},
+            {operation,origin:target.origin,name:target.href,destination:target.href},{validate:async()=>check(),assertCurrent:check,dispatch:async mark=>{
+                // Explicit visits retire field authority even for same-document fragments.
+                this.#invalidateInputs();await this.#clearRefs();check();mark();
+                await this.#page!.goto(target.href,{waitUntil:'domcontentloaded',timeout:Math.max(1,context.execution.deadline-Date.now())});return this.#capture();}});
+        if(result.status==='handoff'){this.#human=true;this.#invalidateInputs();await this.#clearRefs();}
         if(result.status!=='accepted')throw new Error('Browser opening stopped');return result.observation;
     });}
     async observe(context:BrowserExecution):Promise<BrowserObservation>{return this.#run(context,()=>this.#capture());}

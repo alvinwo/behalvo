@@ -150,7 +150,7 @@ async function main(): Promise<void> {
     return new VaultLoginBroker({ ...(vault ? { vault } : {}), io }).use(
       { workspaceId: binding.workspaceId, ownerId: binding.ownerId }, challenge, execution, use,
       loginFixture.authority.secretAuthority);
-  }}:args.liveBrowser?{mode:'live',beforeTurn:scope=>managed?.beforeTurn(scope),available:scope=>managed?.available(scope)??false,open:(context,binding)=>{
+  }}:args.liveBrowser?{mode:'live',sessionState:scope=>{if(!managed)throw new Error(liveMessage('unavailable'));return managed.sessionState(scope);},beforeTurn:scope=>managed?.beforeTurn(scope),available:scope=>managed?.available(scope)??false,open:(context,binding)=>{
     if(!managed)throw new Error(liveMessage('unavailable'));return managed.exploration().open(context,binding);
   }}:undefined;
   try {

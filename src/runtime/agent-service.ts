@@ -166,7 +166,7 @@ export class AgentService {
     const continuityEnabled = this.continuityEnabled;
     const teachingEvents: DomainEvent[] = [];
     const hasNotes = !!input.workId && Object.values(this.store.state(input.workspaceId).browserMemory?.notes ?? {}).some(n=>n.workId===input.workId&&n.status==='candidate');
-    const browserAvailable=()=>!!input.workId&&!!this.features.browser&&(!this.features.browser.available||this.features.browser.available({workspaceId:input.workspaceId,ownerId:input.ownerId,threadId:input.threadId,workId:input.workId}));
+    const browserAvailable=()=>!!input.workId&&!!this.features.browser&&(this.features.browser.mode==='live'||!this.features.browser.available||this.features.browser.available({workspaceId:input.workspaceId,ownerId:input.ownerId,threadId:input.threadId,workId:input.workId}));
     let explorationEnabled = browserAvailable();
     const teachingEnabled = continuityEnabled || this.features.teachingMode === true || explorationEnabled || hasNotes;
     const browserEvents: DomainEvent[] = [];

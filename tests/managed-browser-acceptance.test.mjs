@@ -12,16 +12,16 @@ const tool=(name,args={})=>({text:JSON.stringify({tool:{name,arguments:args}})})
 const final=o=>({text:JSON.stringify({reply:'Observed '+o.text,notes:[{text:'Synthetic result was visible.',sourceIds:[o.id]}],progress:{summary:'Inspected the synthetic result',nextStep:'Ask owner what to do next',blocker:null,references:[{kind:'browser_observation',id:o.id}]}})});
 function intake(request){if(!request.system.includes('owner-only task intake'))return;
  const value=JSON.parse(request.prompt);return{text:JSON.stringify({task:value.candidates.length?{kind:'keep'}:{kind:'create',title:'Synthetic catalog',goal:'Compare synthetic catalog entries',sourceQuote:value.currentOwnerText},teachings:{outcome:'none'}})};}
-async function appFixture(t,site,gateway){
- const dir=mkdtempSync(join(tmpdir(),'managed-acceptance-'));let controller,captured;const output=[];
- const io={interactive:true,discardSensitiveInput(){},readLine:async prompt=>prompt?.includes('Type resume')?'resume':'approve',write:line=>output.push(line)};
- const key=Buffer.alloc(32,7);const app=openLocalAgent({dbPath:join(dir,'agent.db'),encryptionKey:key,workspaceId:'w',ownerId:'o',taskContinuity:true,gateways:[{...gateway,listModels:async()=>[model]}],browser:{mode:'live',available:s=>controller?.available(s)??false,beforeTurn:s=>controller?.beforeTurn(s),open:(c,b)=>controller.exploration().open(c,b)}});
+async function appFixture(t,site,gateway,decision='approve'){
+ const dir=mkdtempSync(join(tmpdir(),'managed-acceptance-'));let controller,captured;const output=[],prompts=[];
+ const io={interactive:true,discardSensitiveInput(){},readLine:async prompt=>{prompts.push(prompt);return prompt?.includes('Type resume')?'resume':decision;},write:line=>output.push(line)};
+ const key=Buffer.alloc(32,7);const app=openLocalAgent({dbPath:join(dir,'agent.db'),encryptionKey:key,workspaceId:'w',ownerId:'o',taskContinuity:true,gateways:[{...gateway,listModels:async()=>[model]}],browser:{mode:'live',sessionState:s=>controller?.sessionState(s)??'absent',available:s=>controller?.available(s)??false,beforeTurn:s=>controller?.beforeTurn(s),open:(c,b)=>controller.exploration().open(c,b)}});
  controller=new ManagedBrowserController(app.store,(a,d,s)=>reviewBrowserGesture(io,a,d,s),{network:()=>site.gate,browser:options=>new LivePlaywright(options,{ignoreHTTPSErrors:true,loadChromium:async()=>({executablePath:()=>chromium.executablePath(),launchServer:options=>chromium.launchServer(options),connect:async(...args)=>{captured=await chromium.connect(...args);return captured;}})})});
  await app.registry.select(model.provider,model.model);
  const scope=()=>({workspaceId:'w',ownerId:'o',threadId:'chat',workId:Object.keys(app.store.state('w').works)[0]});
  const run=async steps=>runRepl({store:app.store,registry:app.registry,service:app.service,operations:app.operations,managedBrowser:controller,workspaceId:'w',ownerId:'o',initialThreadId:'chat',io:{...io,readPrompt:async()=>{const step=steps.shift();return typeof step==='function'?await step():step??null;}}});
  t.after(async()=>{assert.equal((await controller.shutdown()).confirmed,true);app.close();await site.close();rmSync(dir,{recursive:true,force:true});});
- return{app,controller,scope,run,output,dir,key,page:()=>captured.contexts()[0].pages()[0]};
+ return{app,controller,scope,run,output,prompts,dir,key,page:()=>captured.contexts()[0].pages()[0]};
 }
 for(const layout of ['directory','inventory'])test(`full chat and owner-review path on dynamic ${layout}`,{skip:!enabled,timeout:60000},async t=>{
  let searches=0;const site=await managedSite((req,res)=>{
@@ -31,6 +31,7 @@ for(const layout of ['directory','inventory'])test(`full chat and owner-review p
    `<main><h2>Inventory lookup</h2><form action="/search" method="post"><textarea name="query" aria-label="Search"></textarea><input type="submit" aria-label="Find"></form></main>`);
  },()=>{},false);
  const f=await appFixture(t,site,{complete:async request=>{const extracted=intake(request);if(extracted)return extracted;
+  if(request.system.includes('No page is open'))return{text:JSON.stringify({reply:'Ready.',notes:[]})};
   if(!request.prompt.includes('BROWSER TOOL TRANSCRIPT'))return{text:JSON.stringify({reply:'Task ready. Open the browser.',workProposals:[],factProposals:[]})};
   const transcript=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]);const o=transcript.at(-1)?.observation;if(!o)return tool('observe');
   if(o.text.includes('Cedar result'))return final(o);
@@ -47,7 +48,7 @@ for(const layout of ['directory','inventory'])test(`full chat and owner-review p
 });
 test('lost mutation response is unknown once, survives replay, and blocks a new browser until owner reconciliation',{skip:!enabled,timeout:60000},async t=>{
  let effects=0;const site=await managedSite((req,res)=>{if(req.url==='/change'){effects++;req.socket.destroy();return;}res.setHeader('Content-Type','text/html');res.end('<h1>Unknown outcome fixture</h1><form method="post" action="/change"><button>Apply</button></form>');},()=>{},false);
- const f=await appFixture(t,site,{complete:async request=>{const parsed=intake(request);if(parsed)return parsed;if(!request.prompt.includes('BROWSER TOOL TRANSCRIPT'))return{text:JSON.stringify({reply:'Ready',workProposals:[],factProposals:[]})};
+ const f=await appFixture(t,site,{complete:async request=>{const parsed=intake(request);if(parsed)return parsed;if(request.system.includes('No page is open'))return{text:JSON.stringify({reply:'Ready.',notes:[]})};if(!request.prompt.includes('BROWSER TOOL TRANSCRIPT'))return{text:JSON.stringify({reply:'Ready',workProposals:[],factProposals:[]})};
   const o=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]).at(-1)?.observation;return o?tool('click',{observationId:o.id,ref:o.controls[0].ref}):tool('observe');
  }});
  await f.run(['Apply one synthetic change.','/browser open https://example.test/','Apply the change once.','/quit']);assert.equal(effects,1);
@@ -61,6 +62,7 @@ test('manual synthetic login keeps cookies across later agent turns without expo
   res.end(req.headers.cookie?.includes('auth=synthetic')?'<h1>Signed in synthetic account</h1>':`<h1>Manual login</h1><form method="post" action="/login"><label>Username<input name="username"></label><label>Password<input name="password" type="password"></label><button>Sign in</button></form>`);
  },()=>{},false);
  let calls=0;const f=await appFixture(t,site,{complete:async request=>{calls++;assert.doesNotMatch(request.prompt,/PRIVATE_SYNTHETIC_PASSWORD/);const parsed=intake(request);if(parsed)return parsed;
+  if(request.system.includes('No page is open'))return{text:JSON.stringify({reply:'Ready.',notes:[]})};
   if(!request.prompt.includes('BROWSER TOOL TRANSCRIPT'))return{text:JSON.stringify({reply:'Ready',workProposals:[],factProposals:[]})};
   const o=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]).at(-1)?.observation;return o?{text:JSON.stringify({reply:o.text,notes:[]})}:tool('observe');
  }});
@@ -69,4 +71,37 @@ test('manual synthetic login keeps cookies across later agent turns without expo
  await f.page().getByLabel('Username').fill('synthetic-user');await f.page().getByLabel('Password').fill('PRIVATE_SYNTHETIC_PASSWORD');await f.page().getByRole('button',{name:'Sign in'}).click();
  await f.run(['/browser resume','Inspect the signed-in page.','Inspect again.','/quit']);assert.ok(f.output.some(line=>line.includes('Signed in synthetic account')));assert.equal(f.controller.status(f.scope()).state,'idle');
  assert.equal(Object.keys(f.app.store.state('w').actions).length,1);
+});
+
+test('natural task visits, later URL reuses cookies, and replay never repeats navigation',{skip:!enabled,timeout:60000},async t=>{
+ let f,requests=0,stage=0;const site=await managedSite((req,res)=>{
+  if(req.url==='/favicon.ico'){res.end();return;}requests++;
+  assert.ok(Object.values(f.app.store.state('w').actions).some(a=>a.status==='running'&&a.command.operation==='visit'));
+  res.setHeader('Content-Type','text/html');res.setHeader('Set-Cookie','retained=synthetic;Secure;HttpOnly');
+  res.end(req.url==='/later'&&req.headers.cookie?.includes('retained=synthetic')?'<h1>Retained synthetic session</h1>':'<h1>First synthetic visit</h1>');
+ },()=>{},false);
+ f=await appFixture(t,site,{complete:async request=>{const parsed=intake(request);if(parsed)return parsed;
+  const o=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]).at(-1)?.observation;
+  if(o){stage++;return final(o);}return tool('visit',{url:'https://example.test/'+(stage?'later':'')});
+ }});
+ await f.run(['Inspect https://example.test/ for my task.','/quit']);const first=f.controller.status(f.scope()).sessionId;
+ await f.run(['Now inspect https://example.test/later.','/quit']);assert.equal(f.controller.status(f.scope()).sessionId,first);
+ assert.ok(f.output.some(line=>line.includes('Retained synthetic session')));assert.equal(requests,2);
+ const state=f.app.store.state('w');assert.deepEqual(Object.values(state.actions).map(a=>[a.command.operation,a.status]),[['visit','accepted'],['visit','accepted']]);
+ assert.equal(f.prompts.filter(line=>line.includes('Review this one browser gesture')).length,2);
+ assert.deepEqual(f.app.store.rebuild('w'),state);await f.app.store.backup(join(f.dir,'visit-backup'));assert.equal(requests,2);
+});
+for(const decision of ['reject','handoff'])test(`agent initial visit ${decision} preserves zero target traffic`,{skip:!enabled,timeout:60000},async t=>{
+ const site=await managedSite((_req,res)=>res.end('<h1>Should not load</h1>'),()=>{},false);
+ const f=await appFixture(t,site,{complete:async request=>intake(request)??tool('visit',{url:'https://example.test/'})},decision);
+ await f.run(['Inspect https://example.test/.','/quit']);assert.equal(site.requests.length,0);
+ const actions=Object.values(f.app.store.state('w').actions);assert.equal(actions.length,1);assert.equal(actions[0].command.operation,'visit');assert.equal(actions[0].status,'cancelled');
+ if(decision==='handoff')assert.equal(f.controller.status(f.scope()).state,'human');else assert.equal(f.controller.available(f.scope()),false);
+});
+test('unknown explicit visit is dispatched once and blocks another visit after replay',{skip:!enabled,timeout:60000},async t=>{
+ let requests=0;const site=await managedSite((req,res)=>{requests++;req.socket.destroy();},()=>{},false);
+ const f=await appFixture(t,site,{complete:async request=>intake(request)??tool('visit',{url:'https://example.test/'})});
+ await f.run(['Inspect https://example.test/.','/quit']);const state=f.app.store.state('w');assert.equal(requests,1);
+ assert.equal(Object.values(state.actions)[0].status,'unknown');assert.deepEqual(f.app.store.rebuild('w'),state);
+ await f.run(['Try inspecting the site again.','/quit']);assert.equal(requests,1);assert.equal(Object.keys(f.app.store.state('w').actions).length,1);
 });

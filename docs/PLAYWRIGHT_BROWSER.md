@@ -10,15 +10,20 @@ npx playwright install chromium
 npm run agent -- --browser live --model openai-codex/gpt-6-astra
 ```
 
-Describe your goal in chat. Once its task exists, use
-`/browser open https://site.example/path` with the intended HTTPS URL, then ask
-the agent to inspect it. This opens a new visible Chromium window, without an
-extension or personal Chrome profile. The model discovers semantic links,
-buttons, text/search fields, textareas and selects; no visa workflow is hardcoded.
+Describe your goal in chat, including a website if you have one. The agent decides
+whether browsing is needed and chooses a public HTTPS URL (or a search page) to
+visit. Review the proposed URL and type `approve` to navigate. No `/browser open`
+command is required. A text-only answer does not launch a browser.
+
+The first visit opens a new visible Chromium window, without an extension or
+personal Chrome profile. Later visits reuse the task/chat window and its cookies.
+The model discovers semantic links, buttons, text/search fields, textareas and
+selects; no visa workflow is hardcoded. `/browser open <https-url>` remains an
+optional manual shortcut for the focused task.
 
 Public HTTPS sites, redirects, scripts, images and content APIs load without
 per-domain approval, including JavaScript and background requests. This is not
-read-only access: GET can mutate and POST can read. Each agent-selected gesture separately displays its task,
+read-only access: GET can mutate and POST can read. Each agent-selected gesture, including an initial or later URL visit, separately displays its task,
 site, control, selected option, navigation/form destination and authorized non-secret text for a fresh `approve`, `reject` or
 `handoff` response. The initial owner-authored open command needs no duplicate
 approval. A successful gesture does not verify a remote business outcome.
@@ -44,7 +49,7 @@ no extra access.
 Cookies survive ordinary turns in the same task/chat. Executable references do
 not; each turn observes again. Input authorization binds task revision, session,
 document, origin and semantic field. Navigation, handoff, correction or closure
-invalidates it. There are at most two windows and ten idle minutes per session.
+invalidates it. An explicit visit also expires references when only the URL fragment changes. There are at most two windows and ten idle minutes per session.
 Owner commands/new leases refresh this timer; background traffic does not.
 Cookies and profiles are not resumed after restart.
 
@@ -65,7 +70,8 @@ authorized value; it cannot restrict how the receiving website uses that value.
 Real H-1B portal compatibility, automatic booking verification and unattended monitoring have not been established. See
 [sessions and memory](HARNESS_SESSIONS.md) and the
 [harness verification](verification/2026-10-11-harness-browser.md) and
-[public HTTPS verification](verification/2026-10-11-public-https.md).
+[public HTTPS verification](verification/2026-10-11-public-https.md), plus
+[agent navigation verification](verification/2026-10-11-agent-browser-navigation.md).
 
 Explicit visible acceptance uses synthetic accounts only:
 
