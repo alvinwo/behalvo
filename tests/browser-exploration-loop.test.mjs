@@ -48,3 +48,22 @@ test('live model receives public HTTPS policy separately from gesture review',as
  try{await f.run();assert.match(systems[1],/public HTTPS.*without per-origin approval/i);assert.doesNotMatch(systems[1],/origin access grant/i);assert.match(systems[1],/Every gesture is reviewed privately by the owner/);assert.match(systems[1],/Private networks and local files remain blocked/);}
  finally{f.store.close();}
 });
+
+for(const firstTool of ['observe','handoff'])test(`live task can recover from absent ${firstTool} and visit without an owner command`,async()=>{
+ const f=fixture([{outcome:'none'},{tool:{name:firstTool,arguments:{}}},{tool:{name:'visit',arguments:{url:'https://example.test/catalog'}}},{reply:'Observed catalog.',notes:[]}]);
+ let state='absent',opens=0,visits=[];const requests=[],original=f.browser.open,complete=f.gateway.complete;
+ Object.assign(f.browser,{mode:'live',available:()=>false,sessionState:()=>state,open:async ctx=>{opens++;const port=await original(ctx);return{...port,visit:async(c,url)=>{visits.push(url);state='connected';return port.observe(c);}};}});
+ f.gateway.complete=async request=>{requests.push(request);return complete(request);};
+ try{const result=await f.run();assert.equal(result.turn.reply,'Observed catalog.');assert.equal(opens,1);assert.deepEqual(visits,['https://example.test/catalog']);
+  assert.match(requests[1].system,/No page is open/);assert.doesNotMatch(requests[1].system,/begin with observe/);assert.match(requests[1].system,/visit:.*url/);
+  assert.match(requests[2].prompt,/browser_page_absent/);assert.match(requests[3].system,/connected live browser/);assert.equal(f.counts().closed,1);
+ }finally{f.store.close();}
+});
+test('live direct answer needs no browser allocation even when no session exists',async()=>{
+ const f=fixture([{outcome:'none'},{reply:'Here is the explanation.',notes:[]}]);let opens=0;Object.assign(f.browser,{mode:'live',available:()=>false,sessionState:()=> 'absent',open:async()=>{opens++;throw new Error('Unexpected browser');}});
+ try{const result=await f.run();assert.equal(result.turn.reply,'Here is the explanation.');assert.equal(opens,0);}finally{f.store.close();}
+});
+for(const [mode,args] of [['synthetic',{url:'https://example.test/'}],['live',{url:'http://localhost/'}],['live',{url:'https://example.test/',extra:true}],['live',{url:'https://user:pass@example.test/'}]])test(`invalid ${mode} visit is rejected before resource acquisition: ${JSON.stringify(args)}`,async()=>{
+ const f=fixture([{outcome:'none'},{tool:{name:'visit',arguments:args}}]);let opens=0;Object.assign(f.browser,{mode,sessionState:()=> 'absent',open:async()=>{opens++;throw new Error('Unexpected allocation');}});
+ try{const result=await f.run();assert.match(result.turn.reply,/stopped/);assert.equal(opens,0);assert.equal(Object.keys(f.store.state('w').actions).length,0);}finally{f.store.close();}
+});
