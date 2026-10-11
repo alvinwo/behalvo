@@ -1,3 +1,4 @@
+import { emptyBrowserMemory, validateBrowserSources, type BrowserLearningEvent } from '../kernel/browser-learning.js';
 import { validateTeachingSource, type TeachingEvent } from '../kernel/teachings.js';
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
@@ -225,12 +226,12 @@ export class SqliteStore {
     }
     projectionVersion(workspaceId: string): number {
         const row = this.#db.prepare('SELECT projection_version FROM projections WHERE workspace_id=?').get(workspaceId);
-        if (!row || ![1,2].includes(Number(row.projection_version))) throw new Error('Unsupported projection version');
+        if (!row || ![1,2,3].includes(Number(row.projection_version))) throw new Error('Unsupported projection version');
         return Number(row.projection_version);
     }
     upgradeTeachingProjection(workspaceId: string): void {
         this.#transaction(() => {
-            if (this.projectionVersion(workspaceId) === 2) return;
+            if (this.projectionVersion(workspaceId) >= 2) return;
             if (this.#cipher) verifyEncryptedDatabase(this.#db,this.#cipher);
             const state = this.#replay(workspaceId);
             if (!isDeepStrictEqual(state,this.state(workspaceId))) throw new Error('Projection does not match journal');
@@ -238,12 +239,24 @@ export class SqliteStore {
             this.#save(state, 2);
         });
     }
+    upgradeBrowserProjection(workspaceId: string): void {
+        this.#transaction(() => {
+            const version=this.projectionVersion(workspaceId);
+            if(version===3)return;
+            if(version!==2)throw new Error('Upgrade teachings to projection v2 first');
+            if(this.#cipher)verifyEncryptedDatabase(this.#db,this.#cipher);
+            const state=this.#replay(workspaceId);
+            if(!isDeepStrictEqual(state,this.state(workspaceId)))throw new Error('Projection does not match journal');
+            state.browserMemory=emptyBrowserMemory();this.#save(state,3);
+        });
+    }
     #teachingSource(state: State, event: DomainEvent): void {
+        if(event.type.startsWith('browser.'))validateBrowserSources(state,event as BrowserLearningEvent,id=>this.record(state.workspaceId,id),id=>this.readArtifact(state.workspaceId,id));
         if (event.type.startsWith('teaching.')) validateTeachingSource(state, event as TeachingEvent,
             id => this.record(state.workspaceId,id), id => this.readArtifact(state.workspaceId,id));
     }
     #save(s: State, version?: number): void {
-        const projectionVersion = version ?? Number(this.#db.prepare('SELECT projection_version FROM projections WHERE workspace_id=?').get(s.workspaceId)?.projection_version ?? 2);
+        const projectionVersion = version ?? Number(this.#db.prepare('SELECT projection_version FROM projections WHERE workspace_id=?').get(s.workspaceId)?.projection_version ?? 3);
         this.#db.prepare(`INSERT INTO projections VALUES (?,?,?,?) ON CONFLICT(workspace_id)
       DO UPDATE SET version=excluded.version,projection_version=excluded.projection_version,state_json=excluded.state_json`)
             .run(s.workspaceId, s.version, projectionVersion, seal(JSON.stringify(s), projectionContext(s.workspaceId, s.version, projectionVersion), this.#cipher));

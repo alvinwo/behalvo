@@ -10,7 +10,7 @@ test('old projection remains v1 through ordinary writes until explicit effect-fr
  const dir=mkdtempSync(join(tmpdir(),'bhv-teach-')); const path=join(dir,'db'); let store;
  try {
  store=new SqliteStore(path); store.createWorkspace('w','o'); store.close();
- const db=new DatabaseSync(path); const row=db.prepare('SELECT * FROM projections').get(); const state=JSON.parse(row.state_json); delete state.teachingMemory;
+ const db=new DatabaseSync(path); const row=db.prepare('SELECT * FROM projections').get(); const state=JSON.parse(row.state_json); delete state.teachingMemory;delete state.browserMemory;
  db.prepare('UPDATE projections SET projection_version=1,state_json=?').run(JSON.stringify(state)); db.close();
  store=new SqliteStore(path); assert.equal(store.state('w').teachingMemory,undefined);
  new Operator(store).createWork('w','o',{id:'task',title:'task',goal:'synthetic',threadId:'t'});
@@ -32,7 +32,7 @@ test('upgrade refuses corrupt old message source and preserves the old projectio
  const dir=mkdtempSync(join(tmpdir(),'teach-corrupt-'));const path=join(dir,'db');let store;
  try{
  store=new SqliteStore(path);store.createWorkspace('w','o');store.ingest('w',{source:'owner',externalId:'x',threadId:'t',senderId:'o',senderRole:'owner',text:'Synthetic source'});store.close();
- const db=new DatabaseSync(path);const old=JSON.parse(db.prepare('SELECT state_json FROM projections').get().state_json);delete old.teachingMemory;db.prepare('UPDATE projections SET projection_version=1,state_json=?').run(JSON.stringify(old));db.exec("UPDATE artifacts SET body=''");db.close();
+ const db=new DatabaseSync(path);const old=JSON.parse(db.prepare('SELECT state_json FROM projections').get().state_json);delete old.teachingMemory;delete old.browserMemory;db.prepare('UPDATE projections SET projection_version=1,state_json=?').run(JSON.stringify(old));db.exec("UPDATE artifacts SET body=''");db.close();
  store=new SqliteStore(path);assert.throws(()=>store.upgradeTeachingProjection('w'));assert.equal(store.projectionVersion('w'),1);
  }finally{store?.close();rmSync(dir,{recursive:true,force:true});}
 });
@@ -41,7 +41,7 @@ test('encrypted v1 backup upgrades explicitly and restores v2 without changing j
  const dir=mkdtempSync(join(tmpdir(),'teach-encrypted-'));const path=join(dir,'db');const key=randomBytes(32);let store;
  try{
  store=new SqliteStore(path,{encryptionKey:key});store.createWorkspace('w','o');store.ingest('w',{source:'owner',externalId:'x',threadId:'t',senderId:'o',senderRole:'owner',text:'Synthetic old instruction'});store.close();
- const db=new DatabaseSync(path);const cipher=validateStorage(db,key);const row=db.prepare('SELECT * FROM projections').get();const state=JSON.parse(cipher.open(row.state_json,projectionContext('w',row.version,2)));delete state.teachingMemory;db.prepare('UPDATE projections SET projection_version=1,state_json=?').run(cipher.seal(JSON.stringify(state),projectionContext('w',row.version,1)));db.close();
+ const db=new DatabaseSync(path);const cipher=validateStorage(db,key);const row=db.prepare('SELECT * FROM projections').get();const state=JSON.parse(cipher.open(row.state_json,projectionContext('w',row.version,row.projection_version)));delete state.teachingMemory;delete state.browserMemory;db.prepare('UPDATE projections SET projection_version=1,state_json=?').run(cipher.seal(JSON.stringify(state),projectionContext('w',row.version,1)));db.close();
  store=new SqliteStore(path,{encryptionKey:key});const journal=store.journal('w');await store.backup(join(dir,'old-backup'));store.close();
  store=new SqliteStore(join(dir,'old-backup'),{encryptionKey:key});assert.equal(store.projectionVersion('w'),1);store.upgradeTeachingProjection('w');assert.equal(store.projectionVersion('w'),2);assert.deepEqual(store.journal('w'),journal);await store.backup(join(dir,'v2-backup'));const expected=store.state('w');store.close();
  store=new SqliteStore(join(dir,'v2-backup'),{encryptionKey:key});assert.deepEqual(store.rebuild('w'),expected);assert.deepEqual(store.journal('w'),journal);
@@ -52,7 +52,7 @@ test('corrupt encrypted v1 source cannot be upgraded or rewrite projection ciphe
  const dir=mkdtempSync(join(tmpdir(),'teach-encrypted-bad-'));const path=join(dir,'db');const key=randomBytes(32);let store;
  try{
  store=new SqliteStore(path,{encryptionKey:key});store.createWorkspace('w','o');store.ingest('w',{source:'owner',externalId:'x',threadId:'t',senderId:'o',senderRole:'owner',text:'Synthetic source'});store.close();
- const db=new DatabaseSync(path);const cipher=validateStorage(db,key);const row=db.prepare('SELECT * FROM projections').get();const state=JSON.parse(cipher.open(row.state_json,projectionContext('w',row.version,2)));delete state.teachingMemory;const old=cipher.seal(JSON.stringify(state),projectionContext('w',row.version,1));db.prepare('UPDATE projections SET projection_version=1,state_json=?').run(old);db.exec("UPDATE artifacts SET body='corrupt'");db.close();
+ const db=new DatabaseSync(path);const cipher=validateStorage(db,key);const row=db.prepare('SELECT * FROM projections').get();const state=JSON.parse(cipher.open(row.state_json,projectionContext('w',row.version,row.projection_version)));delete state.teachingMemory;delete state.browserMemory;const old=cipher.seal(JSON.stringify(state),projectionContext('w',row.version,1));db.prepare('UPDATE projections SET projection_version=1,state_json=?').run(old);db.exec("UPDATE artifacts SET body='corrupt'");db.close();
  store=new SqliteStore(path,{encryptionKey:key});assert.throws(()=>store.upgradeTeachingProjection('w'));assert.equal(store.projectionVersion('w'),1);store.close();
  const check=new DatabaseSync(path);assert.equal(check.prepare('SELECT state_json FROM projections').get().state_json,old);check.close();
  }finally{store?.close();key.fill(0);rmSync(dir,{recursive:true,force:true});}

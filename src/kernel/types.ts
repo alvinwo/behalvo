@@ -1,3 +1,4 @@
+import type { BrowserMemory, BrowserLearningEvent } from './browser-learning.js';
 import type { TeachingMemory, TeachingEvent } from './teachings.js';
 /** Domain data is transport- and model-independent. No provider session owns it. */
 import type { Connection, OperationCommand, VerificationState } from '../operations/types.js';
@@ -67,6 +68,7 @@ export interface Fact {
 }
 export interface State {
     teachingMemory?: TeachingMemory;
+    browserMemory?: BrowserMemory;
     workspaceId: string;
     ownerId: string;
     version: number;
@@ -86,7 +88,7 @@ export interface MessageInput {
     senderRole: 'owner' | 'external' | 'agent';
     text: string;
 }
-export type DomainEvent = TeachingEvent | {
+export type DomainEvent = BrowserLearningEvent | TeachingEvent | {
     type: 'workspace.created';
     data: {
         ownerId: string;

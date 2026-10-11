@@ -1,3 +1,4 @@
+import { browserMessage } from '../runtime/browser-messages.js';
 import { acquireLocalProcessLock } from '../storage/process-lock.js';
 import { teachingMessage } from '../runtime/teaching-messages.js';
 import { pathToFileURL } from 'node:url';
@@ -6,6 +7,7 @@ import { createStorageKeyFile, loadStorageKeyFile } from '../storage/key-file.js
 import { SqliteStore } from '../storage/sqlite-store.js';
 
 const USAGE = `Usage:
+  npm run storage -- upgrade-browser --db <database> --workspace <workspace> [--key-file <key-file>]
   npm run storage -- upgrade-teachings --db <database> --workspace <workspace> [--key-file <key-file>]
   npm run storage -- keygen --out <key-file>
   npm run storage -- backup --db <source-db> --out <backup-db> --key-file <key-file>
@@ -16,6 +18,7 @@ class StorageArgumentError extends Error {}
 
 type StorageCommand =
   | { verb: 'upgrade-teachings'; db: string; workspace: string; keyFile?: string }
+  | { verb: 'upgrade-browser'; db: string; workspace: string; keyFile?: string }
   | { verb: 'usage' }
   | { verb: 'keygen'; out: string }
   | { verb: 'backup'; db: string; out: string; keyFile: string }
@@ -38,7 +41,7 @@ function parseOptions(argv: string[], names: readonly string[]): Map<string, str
 export function parseStorageArgs(argv: string[]): StorageCommand {
   if (argv.length === 0 || argv.includes('--help')) return { verb: 'usage' };
   const [verb, ...options] = argv;
-  if (verb === 'upgrade-teachings') {
+  if (verb === 'upgrade-teachings' || verb === 'upgrade-browser') {
     const names = ['--db','--workspace', ...(options.includes('--key-file') ? ['--key-file'] : [])];
     const values = parseOptions(options,names);
     return {verb,db:values.get('--db')!,workspace:values.get('--workspace')!,...(values.has('--key-file')?{keyFile:values.get('--key-file')!}:{})};
@@ -83,12 +86,12 @@ export async function runStorageCli(argv: string[]): Promise<number> {
     return 0;
   }
   try {
-    if (command.verb === 'upgrade-teachings') {
+    if (command.verb === 'upgrade-teachings' || command.verb === 'upgrade-browser') {
       const lock = acquireLocalProcessLock(command.db); let store: SqliteStore | undefined; let key: Uint8Array | undefined;
       try { key = command.keyFile ? loadStorageKeyFile(command.keyFile) : undefined;
         store = new SqliteStore(lock.dbPath,key ? {encryptionKey:key} : {});
-        store.upgradeTeachingProjection(command.workspace);
-        stdout.write(teachingMessage('upgraded')+'\n');
+        if(command.verb==='upgrade-browser')store.upgradeBrowserProjection(command.workspace);else store.upgradeTeachingProjection(command.workspace);
+        stdout.write((command.verb==='upgrade-browser'?browserMessage('upgraded'):teachingMessage('upgraded'))+'\n');
       } finally { store?.close(); key?.fill(0); lock.release(); }
     } else if (command.verb === 'keygen') {
       await createStorageKeyFile(command.out);
@@ -102,7 +105,7 @@ export async function runStorageCli(argv: string[]): Promise<number> {
     }
     return 0;
   } catch {
-    if (command.verb === 'upgrade-teachings') { stderr.write(teachingMessage('upgradeFailed')+'\n'); return 1; }
+    if (command.verb === 'upgrade-teachings' || command.verb === 'upgrade-browser') { stderr.write((command.verb==='upgrade-browser'?browserMessage('upgradeFailed'):teachingMessage('upgradeFailed'))+'\n'); return 1; }
     const operation = command.verb === 'keygen' ? 'key generation' : command.verb;
     stderr.write(command.verb === 'keygen'
       ? 'Storage key generation failed.\n'
