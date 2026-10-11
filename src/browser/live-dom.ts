@@ -19,11 +19,15 @@ export function describeLiveControl(node: Element) {
     else if(tag==='SELECT'&&!(node as HTMLSelectElement).multiple)role='combobox';
     const form=input.form;
     const options=tag==='SELECT'?Array.from((node as HTMLSelectElement).options).map((o,index)=>({index,name:o.text.slice(0,400),value:o.value,disabled:o.disabled||o.parentElement?.hasAttribute('disabled')})):[];
+    const selectableNames=options.filter(o=>!o.disabled&&o.name.trim()).map(o=>o.name.trim().replace(/\s+/g,' '));
+    const unambiguousOptions=new Set(selectableNames).size===selectableNames.length;
     const descriptor={tag,type,aria,name,id:e.id,field:input.name??'',autocomplete,disabled:input.disabled===true||e.getAttribute('aria-disabled')==='true',readOnly:input.readOnly===true,
         href:tag==='A'?(node as HTMLAnchorElement).href:'',target:e.getAttribute('target')??'',checked:['checkbox','radio'].includes(type)?input.checked:null,
-        form:form?{id:form.id,name:form.name,action:form.action,method:form.method,target:form.target}:null,
+        controlValue:tag==='BUTTON'||tag==='INPUT'&&['button','submit','reset','checkbox','radio'].includes(type)?input.value:null,
+        form:form?{id:form.id,name:form.name,action:form.action,method:form.method,target:form.target,enctype:form.enctype,noValidate:form.noValidate}:null,
+        formNoValidate:input.formNoValidate===true,formEnctype:e.getAttribute('formenctype')??'',
         formAction:e.hasAttribute('formaction')?(input as HTMLInputElement).formAction:'',formMethod:e.getAttribute('formmethod')??'',formTarget:e.getAttribute('formtarget')??'',options};
-    return {visible,eligible:!!role && !sensitive && !!name && !descriptor.disabled && !descriptor.readOnly && options.length<=100,role,
+    return {visible,eligible:!!role && !sensitive && !!name && !descriptor.disabled && !descriptor.readOnly && options.length<=100 && unambiguousOptions,role,
         name:descriptor.checked===null?name:`${name} (${descriptor.checked?'checked':'unchecked'})`,descriptor,
         options:options.filter(o=>!o.disabled&&o.name.trim())};
 }

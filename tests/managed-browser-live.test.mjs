@@ -167,7 +167,7 @@ test('two managed browser sessions have separate cookie jars and controls',{skip
 });
 test('atomic dispatch rechecks same-node link, field, form and option semantics after the journal mark',{skip:!enabled,timeout:60000},async()=>{
  const {chromium}=await import('playwright');let page,mutation;const reviews=[];
- const site=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<a id="link" href="/reviewed">Link</a><form action="/reviewed"><label>Query<input name="q"></label><button>Submit</button></form><select aria-label="City"><option>Alpha</option><option>Beta</option></select>');});
+ const site=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<a id="link" href="/reviewed">Link</a><form action="/reviewed"><label>Query<input name="q"></label><button name="op" value="preview">Submit</button></form><label><input type="checkbox" name="flag" value="preview">Toggle</label><select aria-label="City"><option>Alpha</option><option>Beta</option></select>');});
  const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:async(...args)=>{reviews.push(args[2]);return direct(...args);}},{ignoreHTTPSErrors:true,loadChromium:async()=>({executablePath:()=>chromium.executablePath(),launchServer:o=>chromium.launchServer(o),connect:async(...args)=>{
   const browser=await chromium.connect(...args);browser.on('context',context=>{context.on('page',p=>page=p);const original=context.newCDPSession.bind(context);context.newCDPSession=async p=>{const cdp=await original(p),send=cdp.send.bind(cdp);cdp.send=async(method,params)=>{
    if(method==='Runtime.callFunctionOn'&&params.arguments?.[0]?.value==='dispatch'&&mutation){const change=mutation;mutation=undefined;await page.evaluate(change);}
@@ -175,8 +175,14 @@ test('atomic dispatch rechecks same-node link, field, form and option semantics 
   };return cdp;};});return browser;
  }})});
  try{const ctx=lease();await live.open(ctx,'https://example.test/');
-  const cases=[['navigate','Link',()=>document.querySelector('#link').href='/unreviewed'],['fill','Query',()=>document.querySelector('input').name='different'],['click','Submit',()=>document.querySelector('form').action='/unreviewed'],['select','City',()=>document.querySelector('option').value='different']];
+  const cases=[['navigate','Link',()=>document.querySelector('#link').href='/unreviewed'],['fill','Query',()=>document.querySelector('input').name='different'],['click','Submit',()=>document.querySelector('form').action='/unreviewed'],['select','City',()=>document.querySelector('option').value='different'],['click','Submit',()=>document.querySelector('button').value='delete'],['click','Toggle (unchecked)',()=>document.querySelector('[name=flag]').value='delete']];
   for(const [kind,name,change] of cases){const o=await live.observe(ctx),control=o.controls.find(c=>c.name===name);mutation=change;await assert.rejects(live.interact(ctx,{kind,observationId:o.id,ref:control.ref,...(kind==='fill'?{taskInputId:'input'}:{}),...(kind==='select'?{optionRef:control.options[0].ref}:{})}));}
   assert.ok(site.requests.every(r=>r.url==='/'));assert.equal(reviews.find(r=>r.operation==='click').form.action,'https://example.test/reviewed');
  }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+});
+test('duplicate visible option names do not expose ambiguous selection authority',{skip:!enabled,timeout:60000},async()=>{
+ const site=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<select aria-label="City"><option value="a">Same city</option><option value="b">Same city</option></select>');});
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:direct},{ignoreHTTPSErrors:true});
+ try{const o=await live.open(lease(),'https://example.test/');assert.ok(!o.controls.some(c=>c.role==='combobox'));}
+ finally{assert.equal((await live.close()).confirmed,true);await site.close();}
 });
