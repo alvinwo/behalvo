@@ -35,3 +35,13 @@ test('REPL keeps multiline vault input and all captured values out of journal an
  const records=app.store.journal('w');const artifacts=records.filter(r=>r.event.type==='message.received').map(r=>app.store.readArtifact('w',r.event.data.artifactId));
  assert.doesNotMatch(JSON.stringify({requests,records,artifacts,output}),/SYNTHETIC-(?:MULTILINE-SECRET|USERNAME|PASSWORD)/);
 });
+
+test('CLI capture checks elapsed time even when the abort timer has not fired',{skip:process.platform==='win32'},async t=>{
+ const {handleVaultCommand}=await import('../dist/cli/vault-commands.js');
+ const root=mkdtempSync(join(tmpdir(),'vault-expiry-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const vault=new api.LocalCredentialVault({path:join(root,'vault'),loadKey:()=>Buffer.alloc(32,13)});t.after(()=>vault.lock());await vault.initialize(scope);
+ const original=Date.now,start=Date.now(),answers=['https://example.test','Expired account'];let secrets=0;
+ const io={interactive:true,discardSensitiveInput(){},write(){},readLine:async()=>answers.shift(),readSecret:async()=>{if(++secrets===2)Date.now=()=>start+120001;return 'synthetic';}};
+ try{await handleVaultCommand('/vault add',{vault,io,scope});assert.deepEqual(await vault.list(scope),[]);}
+ finally{Date.now=original;}
+});

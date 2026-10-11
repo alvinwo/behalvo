@@ -25,6 +25,7 @@ const en = {
   stopped: 'Login stopped before dispatch. The browser session is closed.',
   unavailableLogin: 'Private login is unavailable. Configure and unlock the vault in an interactive terminal.',
   fixture: 'Synthetic login fixture. This page does not access a real account.',
+  fixtureUsername: 'Username', fixturePassword: 'Password', fixtureSubmit: 'Sign in',
   loginControl: 'Sign in to the synthetic account'
 } as const;
 export function vaultMessage(key: keyof typeof en, values: Record<string, string> = {}): string {

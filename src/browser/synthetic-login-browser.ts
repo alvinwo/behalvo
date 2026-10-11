@@ -125,7 +125,8 @@ export class SyntheticLoginBrowser implements SemanticBrowserPort {
           ref: command.ref, origin: this.authority.origin }, async (login, guard): Promise<BrowserLoginOutcome> => {
           try {
             checkUse(); guard(); await this.#validForm(); checkUse(); guard();
-            const username = new TextDecoder().decode(login.username), password = new TextDecoder().decode(login.password);
+            const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+            const username = decoder.decode(login.username), password = decoder.decode(login.password);
             this.#permit = { body: new URLSearchParams({ username, password }).toString(), check: () => { checkUse(); guard(); }, used: false };
             const navigation = this.#page!.waitForURL(this.authority.origin + '/login', { waitUntil: 'domcontentloaded', timeout: this.#timeout() });
             void navigation.catch(() => {});

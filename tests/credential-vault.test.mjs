@@ -4,6 +4,8 @@ import { mkdtempSync, readFileSync, writeFileSync, chmodSync, symlinkSync, linkS
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import * as api from '../dist/index.js';
+import fs from 'node:fs';
+import {syncBuiltinESMExports} from 'node:module';
 
 const posix=process.platform!=='win32';
 const scope={workspaceId:'synthetic-workspace',ownerId:'synthetic-owner'};
@@ -121,4 +123,20 @@ test('cancelled initialization and removal refuse publication',{skip:!posix},asy
  await assert.rejects(()=>f.vault.initialize(scope,{signal:controller.signal,...guard}));
  await f.vault.initialize(scope);const m=await f.vault.add(scope,input(),guard);
  await assert.rejects(()=>f.vault.remove(scope,m.id,m.revision,{signal:controller.signal,...guard}));assert.equal((await f.vault.list(scope)).length,1);
+});
+
+test('authority expiring during staging prevents both vault creation and replacement publication',{skip:!posix},async t=>{
+ const f=fixture(t);const original=fs.fsyncSync;
+ for(const create of [true,false]){
+  if(!create)await f.vault.initialize(scope);
+  const before=create?undefined:readFileSync(f.path);let current=true,count=0;
+  fs.fsyncSync=fd=>{const result=original(fd);if(++count===2)current=false;return result;};syncBuiltinESMExports();
+  try{
+   const options={assertCurrent(){if(!current)throw Error('Synthetic deadline expired');}};
+   await assert.rejects(()=>create?f.vault.initialize(scope,options):f.vault.add(scope,input(),options));
+   assert.ok(count>=2);
+   if(create)assert.equal(fs.existsSync(f.path),false);else assert.deepEqual(readFileSync(f.path),before);
+   assert.deepEqual(fs.readdirSync(f.root),create?[]:['vault.json']);
+  }finally{fs.fsyncSync=original;syncBuiltinESMExports();}
+ }
 });

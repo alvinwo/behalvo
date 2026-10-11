@@ -241,10 +241,11 @@ export class PrivateEncryptedJsonFile<T> {
       this.#throwIfCancelledBeforeCallback(options.signal);
       const changed = await change(snapshot.value);
       if (this.#disposed) throw new ModelStateError('unavailable');
-      if (options.beforePublish) {
+      const assertPublication = options.beforePublish ? () => {
         this.#throwIfCancelledBeforeCallback(options.signal);
-        options.beforePublish();
-      }
+        options.beforePublish!();
+      } : undefined;
+      assertPublication?.();
       let next: T | undefined;
       let result: R;
       try {
@@ -266,7 +267,7 @@ export class PrivateEncryptedJsonFile<T> {
         } catch {
           throw new ModelStateError('update');
         }
-        this.#publishCiphertextWithOwnedIdentities(bytes, snapshot, lock);
+        this.#publishCiphertextWithOwnedIdentities(bytes, snapshot, lock, assertPublication);
         this.#observed = true;
       }
       completed = true;
@@ -376,7 +377,8 @@ export class PrivateEncryptedJsonFile<T> {
     });
   }
 
-  #publishCiphertextWithOwnedIdentities(bytes: Buffer, snapshot: Loaded<T>, lock: OwnedLock): void {
+  #publishCiphertextWithOwnedIdentities(bytes: Buffer, snapshot: Loaded<T>, lock: OwnedLock,
+    assertPublication?: () => void): void {
     let stage: Stage | undefined;
     let failed = false;
     try {
@@ -414,6 +416,7 @@ export class PrivateEncryptedJsonFile<T> {
         throw new Error('replaced stage');
       if (snapshot.target) {
         if (!sameIdentity(this.#path, snapshot.target, 'file')) throw new Error('replaced target');
+        assertPublication?.();
         renameSync(stage.payloadPath, this.#path);
         this.#observed = true;
         if (!stage.payload || !sameIdentity(this.#path, stage.payload, 'file'))
@@ -421,6 +424,7 @@ export class PrivateEncryptedJsonFile<T> {
         delete stage.payload;
       } else {
         if (!absent(this.#path)) throw new Error('created target');
+        assertPublication?.();
         linkSync(stage.payloadPath, this.#path);
         this.#observed = true;
         if (!stage.payload || !sameOwnedPayload(stage.payloadPath, stage.payload) ||

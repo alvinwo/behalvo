@@ -22,8 +22,8 @@ export async function handleVaultCommand(raw: string, options: {
       for (const entry of entries) io.write(`${entry.id} — ${JSON.stringify(entry.label)} — ${entry.origin} — v${entry.revision}`);
       return true;
     }
-    const signal = AbortSignal.timeout(120000), epoch = vault.epoch;
-    const check = () => { if (signal.aborted || vault.epoch !== epoch) throw new Error(); };
+    const deadline = Date.now() + 120000, signal = AbortSignal.timeout(120000), epoch = vault.epoch;
+    const check = () => { if (signal.aborted || Date.now() >= deadline || vault.epoch !== epoch) throw new Error(); };
     await privatePrompt(io, async () => {
       if (command === 'init') {
         const answer = await io.readLine(vaultMessage('init'), signal); check();

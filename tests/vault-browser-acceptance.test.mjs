@@ -9,7 +9,7 @@ test('visible vault login captures privately, reopens encrypted storage and asks
  const fixtureModule=await import('../dist/browser/synthetic-login-fixture.js').catch(()=>({}));assert.equal(typeof fixtureModule.startSyntheticLoginFixture,'function');
  const {SyntheticLoginBrowser}=await import('../dist/browser/synthetic-login-browser.js');
  const root=mkdtempSync(join(tmpdir(),'vault-visible-'));const key=Buffer.alloc(32,41);const path=join(root,'vault');const make=()=>new LocalCredentialVault({path,loadKey:()=>Buffer.from(key)});let vault=make();
- const username='SYNTHETIC-VISIBLE-USERNAME',password='SYNTHETIC-VISIBLE-PASSWORD';const fixture=await fixtureModule.startSyntheticLoginFixture({username,password});
+ const username='\uFEFFSYNTHETIC-VISIBLE-USERNAME',password='\uFEFFSYNTHETIC-VISIBLE-PASSWORD';const fixture=await fixtureModule.startSyntheticLoginFixture({username,password});
  const scope={workspaceId:'w',ownerId:'o'};const outputs=[];
  try{
   await vault.initialize(scope);

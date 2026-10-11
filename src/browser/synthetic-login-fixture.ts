@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { SYNTHETIC_LOGIN_ORIGIN, syntheticLoginAuthority } from '../vault/types.js';
+import { vaultMessage } from '../vault/messages.js';
 
 export interface SyntheticLoginFixtureAuthority {
   readonly origin: typeof SYNTHETIC_LOGIN_ORIGIN;
@@ -11,7 +12,7 @@ export function assertOwnedLoginFixture(authority: SyntheticLoginFixtureAuthorit
   if (!owned.has(authority)) throw new Error('Synthetic login unavailable');
   authority.assertCurrent();
 }
-const FORM = '<!doctype html><html><body><form id="behalvo-login" method="post" action="/login" autocomplete="off"><label>Username<input name="username" type="text" autocomplete="off"></label><label>Password<input name="password" type="password" autocomplete="off"></label><button type="submit">Sign in</button></form></body></html>';
+const FORM = `<!doctype html><html><body><form id="behalvo-login" method="post" action="/login" autocomplete="off"><label>${vaultMessage('fixtureUsername')}<input name="username" type="text" autocomplete="off"></label><label>${vaultMessage('fixturePassword')}<input name="password" type="password" autocomplete="off"></label><button type="submit">${vaultMessage('fixtureSubmit')}</button></form></body></html>`;
 
 /** Owned fixture only. Parameters are synthetic test data, never an actual account. */
 export async function startSyntheticLoginFixture(credentials = { username: 'behalvo-demo', password: 'synthetic-only-password' }) {
