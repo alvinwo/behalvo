@@ -102,6 +102,8 @@ export class AgentService {
     const initial = this.store.state(input.workspaceId);
     assertOwner(initial, input.ownerId);
 
+    this.features.browser?.beforeTurn?.(input);
+
     const ownerRecord = this.store.ingest(input.workspaceId, {
       source: 'owner:local',
       externalId: input.externalId,
@@ -132,6 +134,7 @@ export class AgentService {
       throw new Error('Agent service workspace binding mismatch');
     const initial = this.store.state(input.workspaceId);
     assertOwner(initial, input.ownerId);
+    if(input.job.parameters.kind==='owner_turn')this.features.browser?.beforeTurn?.({workspaceId:input.workspaceId,ownerId:input.ownerId,threadId:input.job.parameters.threadId});
     const job = input.job;
     if (job.workspaceId !== input.workspaceId || job.status !== 'running' || !job.claim ||
         job.kind !== 'owner_turn' || job.parameters.kind !== 'owner_turn')
@@ -163,7 +166,8 @@ export class AgentService {
     const continuityEnabled = this.continuityEnabled;
     const teachingEvents: DomainEvent[] = [];
     const hasNotes = !!input.workId && Object.values(this.store.state(input.workspaceId).browserMemory?.notes ?? {}).some(n=>n.workId===input.workId&&n.status==='candidate');
-    let explorationEnabled = !!input.workId && !!this.features.browser;
+    const browserAvailable=()=>!!input.workId&&!!this.features.browser&&(!this.features.browser.available||this.features.browser.available({workspaceId:input.workspaceId,ownerId:input.ownerId,threadId:input.threadId,workId:input.workId}));
+    let explorationEnabled = browserAvailable();
     const teachingEnabled = continuityEnabled || this.features.teachingMode === true || explorationEnabled || hasNotes;
     const browserEvents: DomainEvent[] = [];
     let browserCommitGuard: (()=>void) | undefined;
@@ -194,7 +198,7 @@ export class AgentService {
         extracted=intake.completionsUsed===1;
         if(intake.receipt.workId!==null) input.workId=intake.receipt.workId; else delete input.workId;
         if(intake.receipt.outcome==='clarify')teachingReply=intake.receipt.question!;
-        explorationEnabled=!!input.workId&&!!this.features.browser;
+        explorationEnabled=browserAvailable();
         if(input.workId&&teachingHold(this.store.state(input.workspaceId),input.workId))teachingReply??=teachingMessage('clarification');
       } catch { teachingReply=taskMessage('rejected'); }
     }
@@ -275,7 +279,7 @@ export class AgentService {
       const browserResult=await runBrowserExploration(this.store,this.gateway,request,
         browserBinding,
         execution!,this.features.browser,extracted?7:8,binding.inputBudgetBytes,context.includedBrowserSourceIds);
-      this.#browserCleanupPending=!browserResult.cleanupConfirmed;
+      this.#browserCleanupPending=!(browserResult.cleanupConfirmed===true||browserResult.leaseRetired===true);
       browserEvents.push(...browserResult.events);result=browserResult;
     }
     else if (this.#loop) result = await this.#loop.run(this.gateway, request, binding);
