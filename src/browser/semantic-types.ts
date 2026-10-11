@@ -14,6 +14,8 @@ export interface BrowserExecution extends BrowserScope {
       assertBrowserCurrent: () => void): Promise<LoginUseResult<BrowserLoginOutcome>>;
 }
 export interface SemanticBrowserPort {
+    /** Explicit public URL navigation, supported only by the managed live adapter. */
+    visit?(context: BrowserExecution, url: string): Promise<BrowserObservation>;
     observe(context: BrowserExecution): Promise<BrowserObservation>;
     interact(context: BrowserExecution, command: BrowserCommand): Promise<BrowserObservation>;
     close(): Promise<{ confirmed: boolean }>;

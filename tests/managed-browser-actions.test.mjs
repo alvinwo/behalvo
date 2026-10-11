@@ -4,6 +4,13 @@ import {commandDigest} from '../dist/kernel/policy.js';
 const command={kind:'browser.gesture',version:1,threadId:'im',sessionId:'session',generation:1,grantRevision:1,origin:'https://example.com',operation:'interact',documentId:'document',controlFingerprint:'a'.repeat(64),gesture:{kind:'click',observationId:'observation',ref:'ref'}};
 async function setup(t){const f=await fixture(t);createWork(f);const owner=f.store.ingest('personal',message('owner',{text:'Explore the synthetic website.'}));const {BrowserActionBroker}=await import('../dist/runtime/browser-actions.js');return {...f,broker:new BrowserActionBroker(f.store),binding:{workspaceId:'personal',ownerId:'owner',workId:'w',ownerRecordId:owner.id,expectedWorkRevision:1}};}
 const execution=()=>({deadline:Date.now()+30000,assertCurrent:()=>{}});
+test('explicit visit digests bind destination and remain distinct from legacy owner open',()=>{
+ const open={kind:'browser.gesture',version:1,threadId:'im',sessionId:'session',generation:1,grantRevision:1,origin:'https://example.com',operation:'open',url:'https://example.com/path?q=one'};
+ assert.equal(commandDigest('personal','w',1,open),'d1e65b9fa55a64b8afa18832e67a269f67a02715a535bf389e7ba89e8e86c609');
+ const visit={...open,operation:'visit'};const digest=commandDigest('personal','w',1,visit);
+ assert.notEqual(digest,commandDigest('personal','w',1,open));assert.notEqual(digest,commandDigest('personal','w',1,{...visit,url:'https://example.com/path?q=two'}));
+ for(const invalid of [{...visit,url:'https://other.test/'},{...visit,url:'http://example.com/'},{...visit,approved:true},{...visit,script:'alert(1)'}])assert.throws(()=>commandDigest('personal','w',1,invalid));
+});
 test('browser action digests bind every control and reject unsupported payload fields',()=>{
  const first=commandDigest('personal','w',1,command);
  assert.notEqual(commandDigest('personal','w',1,{...command,gesture:{...command.gesture,ref:'other'}}),first);

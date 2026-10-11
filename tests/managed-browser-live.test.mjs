@@ -10,6 +10,22 @@ function lease(generation = 1) { return { workspaceId: 'w', workId: 'task', work
 async function direct(context, command, detail, gesture) {
   await gesture.validate(); return { actionId: 'test', status: 'accepted', observation: await gesture.dispatch(() => gesture.assertCurrent()) };
 }
+test('explicit visits reuse the page and cookies but expire refs and input authority even for fragments',{skip:!enabled,timeout:60000},async()=>{
+ const visits=[];const site=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');if(req.url==='/')res.setHeader('Set-Cookie','session=synthetic;Secure;HttpOnly');res.end(`<h1>${req.headers.cookie?.includes('session=synthetic')?'Retained':'Initial'}</h1><label>Search<input name="q"></label><a href="/next">Continue</a>`);});
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:async(ctx,command,detail,gesture)=>{visits.push({command,detail});return direct(ctx,command,detail,gesture);}},{ignoreHTTPSErrors:true});
+ try{const ctx=lease();let o=await live.visit(ctx,'https://example.test/');const old=o,field=live.inputs()[0],purpose=live.inputPurpose(field.ref);
+  o=await live.visit(ctx,'https://example.test/#section');assert.throws(()=>live.inputPurpose(field.ref));assert.notEqual(live.inputPurpose(live.inputs()[0].ref),purpose);
+  await assert.rejects(live.interact(ctx,{kind:'navigate',observationId:old.id,ref:old.controls.find(c=>c.name==='Continue').ref}));
+  await live.retire();o=await live.visit(lease(2),'https://example.test/next');assert.match(o.text,/Retained/);
+  assert.ok(visits.every(v=>v.command.operation==='visit'));assert.equal(visits[1].detail.destination,'https://example.test/#section');assert.equal(visits.length,3);
+ }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+});
+for(const decision of ['reject','handoff'])test(`initial visit ${decision} sends no destination traffic`,{skip:!enabled,timeout:60000},async()=>{
+ const site=await managedSite((_req,res)=>res.end('Must not load'));let reviews=0;
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:async(_ctx,command,detail,gesture)=>{assert.equal(command.operation,'visit');assert.equal(detail.destination,'https://example.test/');await gesture.validate();reviews++;return {actionId:'test',status:decision};}},{ignoreHTTPSErrors:true});
+ try{await assert.rejects(live.visit(lease(),'https://example.test/'));assert.equal(reviews,1);assert.equal(site.requests.length,0);assert.equal(live.human,decision==='handoff');}
+ finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+});
 test('public cross-origin scripts, content APIs, images and redirects render without origin enrollment',{skip:!enabled,timeout:60000},async()=>{
  const site=await managedSite((req,res)=>{
   if(req.url==='/content'){res.setHeader('Access-Control-Allow-Origin','*');return res.end('Public content loaded');}
