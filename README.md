@@ -9,7 +9,7 @@ workflows. The project/runtime is **Behalvo**; an individual agent may have its 
 
 [Local MVP guide](docs/local-mvp.md) · [General operations guide](docs/general-operations.md) · [Agent evaluation guide](docs/AGENT_EVALUATION.md) · [中文 MVP 说明](docs/local-mvp.zh-CN.md) ·
 [Architecture overview](docs/architecture.md) ·
-[Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) · [Private storage guide](docs/PRIVATE_STORAGE.md) ·
+[Architecture specification](docs/superpowers/specs/2026-09-07-architecture-v0.md) · [Private storage guide](docs/PRIVATE_STORAGE.md) · [Credential vault](docs/CREDENTIAL_VAULT.md) ·
 [Local service](docs/LOCAL_SERVICE.md) · [Monitored actions](docs/MONITORED_ACTIONS.md) · [Visa discovery](docs/VISA_DISCOVERY.md) ·
 [中文架构导读](docs/architecture.zh-CN.md) ·
 [Brand](docs/BRAND.md) · [Roadmap](docs/ROADMAP.md) · [Verification](docs/VERIFICATION.md) · [Local owner control](docs/OWNER_CONTROL.md)
@@ -128,6 +128,7 @@ see the [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md).
 | Opt-in authenticated payload encryption for new SQLite databases | Whole-file encryption or rollback detection |
 | Verified encrypted SQLite backup and restore CLI | Encrypted evaluation reports or coordinated model-state/SQLite backups |
 | Opt-in protected Pi credentials and saved model settings on POSIX | Plaintext migration, model-state key rotation or secure erasure |
+| Separate encrypted website-login vault, hidden capture, scoped management and owner-confirmed one-shot synthetic browser login | Live website login, external password-manager integration, TOTP or production credential protection |
 | Interactive multiline editor with direct paste, keyboard submission, and local state/history/context inspection | Production security review |
 | Versioned prepared operations with exact connection/resource bindings | Real account handlers, remote authentication or universal account discovery |
 | Opt-in persistent synthetic contact/subscription operations with readback | Production credential protection or provider write verification |

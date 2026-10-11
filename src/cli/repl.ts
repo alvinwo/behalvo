@@ -1,6 +1,9 @@
 import { restoreTaskThread, selectTaskThread } from '../runtime/task-continuity.js';
 import { taskStatusLines } from '../runtime/task-messages.js';
 import { inputMessage } from './input-messages.js';
+import { handleVaultCommand } from './vault-commands.js';
+import { vaultMessage } from '../vault/messages.js';
+import type { LocalCredentialVault } from '../vault/local-vault.js';
 import { authorizeTaskInput, revokeTaskInput } from '../runtime/browser-learning.js';
 import { browserMessage } from '../runtime/browser-messages.js';
 import { isOperationCommand } from '../operations/validation.js';
@@ -17,6 +20,8 @@ import type { PiCredential } from '../model/pi-auth-store.js';
 import type { ModelRef } from '../model/types.js';
 
 export interface ReplIo {
+  interactive?: boolean;
+  discardSensitiveInput?(): void;
   readPrompt?(prompt?: string): Promise<string | null>;
   readLine(prompt?: string, signal?: AbortSignal): Promise<string | null>;
   readSecret?(prompt?: string, signal?: AbortSignal): Promise<string | null>;
@@ -28,6 +33,7 @@ export interface ReplAuthenticator {
 }
 
 export interface ReplOptions {
+  vault?: LocalCredentialVault;
   store: SqliteStore;
   registry: ModelRegistry;
   service: AgentService;
@@ -78,6 +84,8 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   for (;;) {
     const raw = await (io.readPrompt ? io.readPrompt('You > ') : io.readLine('You > '));
     if (raw === null) return { reason: 'eof', threadId, ...(workId ? { workId } : {}) };
+    if (await handleVaultCommand(raw, { ...(options.vault ? { vault: options.vault } : {}), io,
+      scope: { workspaceId, ownerId } })) continue;
     const multiline = /[\r\n]/.test(raw);
     const line = raw.trim();
     if (!line) continue;
@@ -88,7 +96,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         if (command === '/quit')
           return { reason: 'quit', threadId, ...(workId ? { workId } : {}) };
         if (command === '/help') {
-          io.write(HELP+'\n'+inputMessage('help')+'\n'+browserMessage('help'));
+          io.write(HELP+'\n'+inputMessage('help')+'\n'+browserMessage('help')+'\n'+vaultMessage('help'));
           continue;
         }
         if(command==='/browser-input'||command==='/browser-revoke') {

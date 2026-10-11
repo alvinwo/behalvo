@@ -42,6 +42,13 @@ export class PayloadCipher {
   readonly #databaseId: string;
   readonly #encryptionKey: Buffer;
   readonly #lookupKey: Buffer;
+  #disposed = false;
+
+  dispose(): void {
+    this.#disposed = true;
+    this.#encryptionKey.fill(0);
+    this.#lookupKey.fill(0);
+  }
 
   constructor(key: Uint8Array, databaseId: string) {
     try {
@@ -63,6 +70,7 @@ export class PayloadCipher {
 
   seal(value: string, context: readonly ContextValue[]): string {
     try {
+      if (this.#disposed) throw new Error('disposed');
       // UTF-8 encoding replaces lone UTF-16 surrogates; reject instead of changing the payload.
       if (typeof value !== 'string' || toUSVString(value) !== value) throw new Error('invalid plaintext');
       const iv = randomBytes(12);
@@ -83,6 +91,7 @@ export class PayloadCipher {
 
   open(value: string, context: readonly ContextValue[]): string {
     try {
+      if (this.#disposed) throw new Error('disposed');
       if (typeof value !== 'string') throw new Error('invalid envelope');
       const parsed: unknown = JSON.parse(value);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
@@ -98,7 +107,8 @@ export class PayloadCipher {
       decipher.setAAD(aad(this.#databaseId, context));
       decipher.setAuthTag(tag);
       const plaintext = Buffer.concat([decipher.update(data), decipher.final()]);
-      return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(plaintext);
+      try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(plaintext); }
+      finally { plaintext.fill(0); }
     } catch {
       throw new Error('Unable to open encrypted payload.');
     }
@@ -106,6 +116,7 @@ export class PayloadCipher {
 
   lookup(purpose: string, workspaceId: string, values: readonly string[]): string {
     try {
+      if (this.#disposed) throw new Error('disposed');
       if (typeof purpose !== 'string' || purpose.length === 0 || typeof workspaceId !== 'string' || workspaceId.length === 0 ||
           !Array.isArray(values) || !values.every(value => typeof value === 'string'))
         throw new Error('invalid lookup context');

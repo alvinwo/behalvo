@@ -3,9 +3,9 @@ import { TextDecoder, toUSVString } from 'node:util';
 import { PayloadCipher } from './payload-cipher.js';
 
 export interface ModelStateProtectionOptions { encryptionKey?: Uint8Array }
-export interface ModelStateOperationOptions { signal?: AbortSignal }
+export interface ModelStateOperationOptions { signal?: AbortSignal; beforePublish?: () => void }
 export interface ModelStatePreflightOptions extends ModelStateOperationOptions { writable?: boolean }
-export type ModelStatePurpose = 'pi-credentials' | 'model-settings';
+export type ModelStatePurpose = 'pi-credentials' | 'model-settings' | 'credential-vault';
 export type ModelStateErrorCode =
   'configuration' | 'key' | 'unavailable' | 'busy' | 'cancelled' | 'update';
 
@@ -54,12 +54,15 @@ export function validModelStateIdentifier(value: unknown): value is string {
 }
 
 function validPurpose(value: unknown): value is ModelStatePurpose {
-  return value === 'pi-credentials' || value === 'model-settings';
+  return value === 'pi-credentials' || value === 'model-settings' || value === 'credential-vault';
 }
 
 export class ModelStateCodec {
   readonly #key: Uint8Array;
   readonly #purpose: ModelStatePurpose;
+  #disposed = false;
+
+  dispose(): void { this.#disposed = true; this.#key.fill(0); }
 
   constructor(key: Uint8Array, purpose: ModelStatePurpose) {
     if (!validPurpose(purpose)) throw new ModelStateError('configuration');
@@ -69,13 +72,16 @@ export class ModelStateCodec {
 
   seal(plaintext: string, documentId?: string): { documentId: string; bytes: Buffer } {
     try {
+      if (this.#disposed) throw new Error('disposed');
       if (typeof plaintext !== 'string' || toUSVString(plaintext) !== plaintext ||
           Buffer.byteLength(plaintext, 'utf8') > MODEL_STATE_LIMITS.plaintextBytes)
         throw new Error('invalid plaintext');
       const id = documentId ?? randomUUID();
       if (!UUID_V4.test(id)) throw new Error('invalid document id');
       const cipher = new PayloadCipher(this.#key, id);
-      const payload = cipher.seal(plaintext, ['behalvo/private-model-state/v1', this.#purpose, 1]);
+      let payload: string;
+      try { payload = cipher.seal(plaintext, ['behalvo/private-model-state/v1', this.#purpose, 1]); }
+      finally { cipher.dispose(); }
       const bytes = Buffer.from(JSON.stringify({
         format: FORMAT,
         version: 1,
@@ -92,6 +98,7 @@ export class ModelStateCodec {
 
   open(bytes: Uint8Array): { documentId: string; plaintext: string } {
     try {
+      if (this.#disposed) throw new Error('disposed');
       if (!(bytes instanceof Uint8Array) || bytes.byteLength > MODEL_STATE_LIMITS.outerBytes)
         throw new Error('invalid bytes');
       const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
@@ -106,8 +113,10 @@ export class ModelStateCodec {
           typeof document.payload !== 'string')
         throw new Error('invalid outer document');
       const cipher = new PayloadCipher(this.#key, document.documentId);
-      const plaintext = cipher.open(document.payload,
-        ['behalvo/private-model-state/v1', this.#purpose, 1]);
+      let plaintext: string;
+      try { plaintext = cipher.open(document.payload,
+        ['behalvo/private-model-state/v1', this.#purpose, 1]); }
+      finally { cipher.dispose(); }
       if (Buffer.byteLength(plaintext, 'utf8') > MODEL_STATE_LIMITS.plaintextBytes)
         throw new Error('plaintext too large');
       return { documentId: document.documentId, plaintext };

@@ -1,5 +1,8 @@
 import { startSemanticFixture, type SemanticSite } from '../browser/semantic-fixture-sites.js';
 import { SemanticPlaywright } from '../browser/semantic-playwright.js';
+import { startSyntheticLoginFixture } from '../browser/synthetic-login-fixture.js';
+import { SyntheticLoginBrowser } from '../browser/synthetic-login-browser.js';
+import { VaultLoginBroker } from '../vault/login-broker.js';
 import type { BrowserExplorationOptions } from '../runtime/browser-exploration.js';
 import { browserMessage } from '../runtime/browser-messages.js';
 import { mkdirSync } from 'node:fs';
@@ -16,6 +19,9 @@ import type { TerminalPromptIo } from './terminal-prompt.js';
 import { ModelSettingsStore, settingsPathForDatabase } from './model-settings.js';
 import { loadStorageKeyFile } from '../storage/key-file.js';
 import type { ModelStateProtectionOptions } from '../storage/model-state-codec.js';
+import { configuredVault, parseVaultConfiguration, type VaultConfiguration } from './vault-config.js';
+import { vaultMessage } from '../vault/messages.js';
+import type { LocalCredentialVault } from '../vault/local-vault.js';
 import {
   assertModelStatePathSeparation,
   loadModelStateProtection,
@@ -23,10 +29,11 @@ import {
 } from './model-state-config.js';
 
 export interface CliArgs {
+  vault?: VaultConfiguration;
   offline: boolean;
   syntheticOperations: boolean;
   teachingMode?: boolean;
-  semanticSite?: SemanticSite;
+  semanticSite?: SemanticSite | 'login';
   dbPath: string;
   authPath: string;
   workspaceId: string;
@@ -77,11 +84,11 @@ export function parseCliArgs(argv: string[]): CliArgs {
     !offline
   );
   const semanticSite=valueAfter(argv,'--synthetic-browser');
-  if(semanticSite&&(!['appointments-a','appointments-b','classes'].includes(semanticSite)||offline||argv.includes('--synthetic-operations')))throw new Error(browserMessage('invalidFixture'));
+  if(semanticSite&&(!['appointments-a','appointments-b','classes','login'].includes(semanticSite)||offline||argv.includes('--synthetic-operations')))throw new Error(browserMessage('invalidFixture'));
   const model = parseModel(valueAfter(argv, '--model') ?? process.env.BEHALVO_MODEL ?? process.env.OPERATOR_MODEL);
-  return {
+  const parsed: CliArgs = {
     offline,
-    ...(semanticSite?{semanticSite:semanticSite as SemanticSite,teachingMode:true}:{}),
+    ...(semanticSite?{semanticSite:semanticSite as SemanticSite | 'login',teachingMode:true}:{}),
     ...(argv.includes('--task-teachings') ? {teachingMode:true} : {}),
     syntheticOperations: argv.includes('--synthetic-operations'),
     dbPath: resolve(valueAfter(argv, '--db') ?? (argv.includes('--synthetic-operations') ? 'data/synthetic-agent.db' : process.env.BEHALVO_DB ?? process.env.OPERATOR_DB ?? 'data/agent.db')),
@@ -92,6 +99,14 @@ export function parseCliArgs(argv: string[]): CliArgs {
     ...(configuredStorageKey ? { storageKeyPath: resolve(configuredStorageKey) } : {}),
     ...(modelStateKeyPath ? { modelStateKeyPath } : {})
   };
+  const settingsPath = settingsPathForDatabase(parsed.dbPath);
+  const reserved = [parsed.dbPath, `${parsed.dbPath}-wal`, `${parsed.dbPath}-shm`, `${parsed.dbPath}-journal`,
+    `${parsed.dbPath}.behalvo-lock`, parsed.authPath, `${parsed.authPath}.behalvo-model-state-lock`,
+    settingsPath, `${settingsPath}.behalvo-model-state-lock`,
+    ...(parsed.storageKeyPath ? [parsed.storageKeyPath] : []), ...(parsed.modelStateKeyPath ? [parsed.modelStateKeyPath] : [])];
+  if (parsed.syntheticOperations) for (const suffix of ['', '-wal', '-shm', '-journal']) reserved.push(`${parsed.dbPath}.synthetic.sqlite${suffix}`);
+  const vault = parseVaultConfiguration(argv, reserved);
+  return { ...parsed, ...(vault ? { vault } : {}) };
 }
 
 async function terminalIo(): Promise<NodeLineIo | TerminalPromptIo> {
@@ -110,9 +125,21 @@ async function main(): Promise<void> {
   let pi: PiModelGateway | undefined;
   let settings: ModelSettingsStore | undefined;
   let fixture: Awaited<ReturnType<typeof startSemanticFixture>> | undefined;
+  let loginFixture: Awaited<ReturnType<typeof startSyntheticLoginFixture>> | undefined;
+  let vault: LocalCredentialVault | undefined;
+  let io: NodeLineIo | TerminalPromptIo | undefined;
   const browser: BrowserExplorationOptions | undefined=args.semanticSite?{open:async context=>{
-    fixture??=await startSemanticFixture(args.semanticSite!);
+    if (args.semanticSite === 'login') {
+      loginFixture ??= await startSyntheticLoginFixture();
+      return new SyntheticLoginBrowser(loginFixture.authority, context.execution.signal ?? new AbortController().signal);
+    }
+    fixture??=await startSemanticFixture(args.semanticSite as SemanticSite);
     return new SemanticPlaywright(fixture.policy,context.execution.signal ?? new AbortController().signal);
+  }, login: async (binding, challenge, execution, use) => {
+    if (!io || !loginFixture) return { status: 'unavailable' };
+    return new VaultLoginBroker({ ...(vault ? { vault } : {}), io }).use(
+      { workspaceId: binding.workspaceId, ownerId: binding.ownerId }, challenge, execution, use,
+      loginFixture.authority.secretAuthority);
   }}:undefined;
   try {
     encryptionKey = args.storageKeyPath ? loadStorageKeyFile(args.storageKeyPath) : undefined;
@@ -186,9 +213,12 @@ async function main(): Promise<void> {
     encryptionKey?.fill(0);
     protection.encryptionKey?.fill(0);
   }
-  let io: NodeLineIo | TerminalPromptIo | undefined;
   try {
     io = await terminalIo();
+    if (args.vault) {
+      vault = configuredVault(args.vault);
+      io.write(vaultMessage('locked'));
+    }
     if(args.semanticSite)io.write(browserMessage('synthetic'));
     if (args.syntheticOperations) io.write('SYNTHETIC OPERATIONS ONLY — simulated account data; no real account effects.');
     if (args.offline) {
@@ -221,13 +251,16 @@ async function main(): Promise<void> {
       io,
       workspaceId: args.workspaceId,
       ownerId: args.ownerId,
+      ...(vault ? { vault } : {}),
       ...(!args.offline && settings ? { onModelSelected: (selected: { provider: string; model: string }) =>
         settings.write(args.workspaceId, selected) } : {})
     });
   } finally {
+    vault?.lock();
     io?.close();
     app.close();
     await fixture?.close();
+    await loginFixture?.close();
   }
 }
 

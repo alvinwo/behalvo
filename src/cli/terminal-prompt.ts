@@ -16,6 +16,10 @@ class PromptScreen extends TuiMainScreen {
 
 /** Interactive chat editor only. Pipes and authentication retain NodeLineIo. */
 export class TerminalPromptIo implements ReplIo {
+  get interactive(): boolean {
+    return (this.input as Readable & {isTTY?: boolean}).isTTY === true &&
+      (this.output as Writable & {isTTY?: boolean}).isTTY === true;
+  }
   #auth: NodeLineIo | undefined;
   #finish: ((value: string | null) => void) | undefined;
   #closed = false;
@@ -38,6 +42,10 @@ export class TerminalPromptIo implements ReplIo {
     if (this.#closed) return Promise.resolve(null);
     this.#auth ??= new NodeLineIo(this.input, this.output);
     return this.#auth.readSecret(prompt, signal);
+  }
+
+  discardSensitiveInput(): void {
+    this.#auth?.discardSensitiveInput(); this.#auth?.close(); this.#auth = undefined;
   }
 
   readPrompt(prompt = 'You > '): Promise<string | null> {
