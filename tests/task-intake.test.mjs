@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {fixture,createWork,message} from './helpers.mjs';
+import {fixture,createWork,message,propose,approve} from './helpers.mjs';
 const model={provider:'fake',model:'synthetic'};
 const none={outcome:'none'};
 const intake = async(f,text,result,externalId='one',extra={})=>{
@@ -62,4 +62,21 @@ test('intake enforces request and response budgets and commit fence without chan
  for(const response of [{text:'x'.repeat(65537)},{text:'{}',diagnosticText:'x'.repeat(65537)}])await assert.rejects(()=>processTaskIntake(f.store,{complete:async()=>response},model,binding,{deadline:Date.now()+5000},56000),/budget/);
  await assert.rejects(()=>processTaskIntake(f.store,{complete:async()=>({text:JSON.stringify({task:{kind:'keep'},teachings:none})})},model,{...binding,assertCommitCurrent:()=>{throw new Error('fence changed')}},{deadline:Date.now()+5000},56000),/fence/);
  assert.equal(f.store.state('personal').taskContinuity.intakes[r.id],undefined);
+});
+test('clarification about explicitly named B cannot hold A or invalidate A approval',async t=>{
+ const f=await fixture(t);for(const [id,title] of [['a','Alpha task'],['b','Beta task']])f.operator.createWork('personal','owner',{id,title,goal:'Synthetic goal',threadId:'im'});
+ const {selectTaskThread}=await import('../dist/runtime/task-continuity.js');selectTaskThread(f.store,'personal','owner','im','a',true);const action=propose(f,{workId:'a'});approve(f,action);const before=f.store.state('personal');
+ await assert.rejects(()=>intake(f,'For Beta task change the date',{task:{kind:'clarify',sourceQuote:'For Beta task change the date',question:'Which date?'},teachings:none}),/named task|selection|routing/i);
+ const after=f.store.state('personal');assert.deepEqual(after.works,before.works);assert.deepEqual(after.actions,before.actions);assert.deepEqual(after.teachingMemory,before.teachingMemory);assert.deepEqual(after.taskContinuity,before.taskContinuity);
+});
+test('candidate IDs are bound to exact current-owner mentions without leaking unmentioned titles',async t=>{
+ const f=await fixture(t);for(const [id,title] of [['b','Beta'],['c','Gamma'],['d','UNMENTIONED_MODEL_TITLE']])f.operator.createWork('personal','owner',{id,title,goal:'UNTRUSTED_MODEL_GOAL',threadId:'im'});
+ const {request,output}=await intake(f,'Switch to Beta; we will discuss Gamma later.',{task:{kind:'select',workId:'b',sourceQuote:'Switch to Beta'},teachings:none});
+ const catalog=JSON.parse(request.prompt).candidates;assert.deepEqual(catalog.find(c=>c.id==='b').ownerMentions,['Beta']);assert.deepEqual(catalog.find(c=>c.id==='c').ownerMentions,['Gamma']);assert.equal(output.receipt.workId,'b');assert.doesNotMatch(request.prompt,/UNMENTIONED_MODEL_TITLE|UNTRUSTED_MODEL_GOAL/);
+});
+test('ambiguous named tasks create a clarification hold on the existing focus without guessing selection',async t=>{
+ const f=await fixture(t);for(const [id,title] of [['a','Alpha'],['b','Beta'],['c','Gamma']])f.operator.createWork('personal','owner',{id,title,goal:'Synthetic',threadId:'im'});
+ const {selectTaskThread}=await import('../dist/runtime/task-continuity.js');selectTaskThread(f.store,'personal','owner','im','a',true);
+ const {output}=await intake(f,'For Beta or Gamma change the date',{task:{kind:'clarify',sourceQuote:'For Beta or Gamma change the date',question:'Which task should change?'},teachings:none});
+ assert.equal(output.receipt.outcome,'clarify');assert.equal(output.receipt.workId,'a');assert.equal(f.store.state('personal').taskContinuity.focus.im.workId,'a');assert.equal(f.store.state('personal').works.b.revision,1);assert.equal(f.store.state('personal').works.c.revision,1);assert.equal(Object.values(f.store.state('personal').teachingMemory.clarifications)[0].workId,'a');
 });

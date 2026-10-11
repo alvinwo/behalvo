@@ -71,3 +71,33 @@ test('admitted continuity settles progress and reply atomically under the curren
  assert.equal(store.serviceJob('personal',job.id).status,'finished');assert.equal(store.inbox('personal').length,0);assert.equal(store.state('personal').taskContinuity.progress[result.workId].nextStep,'Inspect synthetic slots');assert.ok(checks>=2);
  }finally{store.close();}
 });
+test('application stop checkpoint cannot cross the deadline during its final artifact write',async t=>{
+ const f=await fixture(t);const {OperationRegistry}=await import('../dist/operations/registry.js');const {OperationService}=await import('../dist/operations/service.js');const registry=new OperationRegistry();
+ const originalNow=Date.now;let now=originalNow();let calls=0;const put=f.store.putArtifact.bind(f.store);
+ try{Date.now=()=>now;const service=new AgentService(f.store,{complete:async()=>{
+  calls++;if(calls===8)f.store.putArtifact=(...args)=>{const result=put(...args);now+=120001;f.store.putArtifact=put;return result;};
+  return {text:JSON.stringify(calls===1?intake:{tool:{name:'catalog',arguments:{}}})};
+ }},undefined,{registry,service:new OperationService(f.store,registry)},{taskContinuity:true});
+ const result=await service.runOwnerTurn(input);assert.equal(calls,8);assert.match(result.turn.reply,/deadline/);assert.equal(f.store.state('personal').taskContinuity.progress[result.workId],undefined);assert.equal(f.store.inbox('personal').length,0);
+ }finally{Date.now=originalNow;}
+});
+for(const oversized of ['reply','diagnostic'])test(`admitted continuity rejects oversized ${oversized} before final settlement`,async()=>{
+ const {SqliteStore}=await import('../dist/storage/sqlite-store.js');const store=new SqliteStore(':memory:',{serviceQueue:{upgradeExisting:false}});let calls=0;
+ try{
+ store.createWorkspace('personal','owner');const at=new Date().toISOString();store.admitOwnerTurnJob({workspaceId:'personal',ownerId:'owner',source:'owner:service',requestId:'r',envelope:{kind:'owner_turn',threadId:'im',text:input.text},accepted:{threadId:'im',model:input.model,windowTokens:64000,outputReserve:8000,capability:'prepare_only'},instanceId:'test',at});
+ const job=store.claimServiceJob('personal','worker',at);
+ const service=new AgentService(store,{complete:async()=>++calls===1?{text:JSON.stringify(intake)}:{text:JSON.stringify({reply:oversized==='reply'?'界'.repeat(30000):'Bounded reply',workProposals:[],factProposals:[]}),...(oversized==='diagnostic'?{diagnosticText:'x'.repeat(65537)}:{})}},undefined,undefined,{taskContinuity:true});
+ await assert.rejects(()=>service.processAdmittedOwnerTurn({workspaceId:'personal',ownerId:'owner',job,fence:{serviceGeneration:'synthetic',deadline:Date.now()+5000,signal:new AbortController().signal,assertCurrent:async()=>{},assertDispatchCurrent:()=>{},assertSettlementCurrent:()=>{}}}),/budget|finish|saved/i);
+ assert.equal(calls,2);assert.equal(store.inbox('personal').length,1);assert.equal(store.serviceJob('personal',job.id).status,'running');assert.equal(Object.keys(store.state('personal').taskContinuity.intakes).length,1);assert.equal(store.threadMessages('personal','im').filter(r=>r.event.data.senderRole==='agent').length,0);
+ }finally{store.close();}
+});
+test('admitted reasoning budgets the complete request envelope, not only context text',async()=>{
+ const {SqliteStore}=await import('../dist/storage/sqlite-store.js');const {buildContext}=await import('../dist/memory/context.js');const store=new SqliteStore(':memory:',{serviceQueue:{upgradeExisting:false}});let calls=0;
+ try{
+ store.createWorkspace('personal','owner');const at=new Date().toISOString();const text=input.text+' '+ 'x'.repeat(10000);const budget=23000;
+ store.admitOwnerTurnJob({workspaceId:'personal',ownerId:'owner',source:'owner:service',requestId:'r',envelope:{kind:'owner_turn',threadId:'im',text},accepted:{threadId:'im',model:input.model,windowTokens:budget+8000,outputReserve:8000,capability:'prepare_only'},instanceId:'test',at});
+ const job=store.claimServiceJob('personal','worker',at);const service=new AgentService(store,{complete:async()=>{calls++;return {text:JSON.stringify(calls===1?intake:{reply:'UNEXPECTED_SECOND_INFERENCE',workProposals:[],factProposals:[]})};}},undefined,undefined,{taskContinuity:true});
+ await assert.rejects(()=>service.processAdmittedOwnerTurn({workspaceId:'personal',ownerId:'owner',job,fence:{serviceGeneration:'synthetic',deadline:Date.now()+5000,signal:new AbortController().signal,assertCurrent:async()=>{},assertDispatchCurrent:()=>{},assertSettlementCurrent:()=>{}}}));
+ const receipt=Object.values(store.state('personal').taskContinuity.intakes)[0];assert.ok(receipt);const context=buildContext(store,{workspaceId:'personal',ownerId:'owner',workId:receipt.workId,threadId:'im',currentRecordId:receipt.ownerRecordId,windowTokens:budget+8000,outputReserve:8000});assert.ok(context.estimatedTokens<=budget);assert.equal(calls,1);assert.equal(store.inbox('personal').length,1);
+ }finally{store.close();}
+});

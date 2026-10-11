@@ -245,6 +245,12 @@ export class AgentService {
       const work=this.store.state(input.workspaceId).works[input.workId];
       if(!work||work.revision!==reasoningWorkRevision||(this.store.state(input.workspaceId).taskContinuity?.progress[input.workId]?.revision??0)!==reasoningProgressRevision+(progressAlreadyAppended?1:0)||['done','cancelled'].includes(work.phase))throw new OperationStoppedError();
     };
+    const completeFinal = async (context?:OperationExecutionContext) => {
+      if(continuityEnabled&&Buffer.byteLength(JSON.stringify(request),'utf8')>Math.min(binding.inputBudgetBytes,196608))throw new Error('Task reasoning input budget exceeded');
+      const response=await withinExecution(()=>this.gateway.complete(context?.signal?{...request,signal:context.signal}:request),context);
+      if(continuityEnabled&&(Buffer.byteLength(response.text,'utf8')>65536||(response.diagnosticText!==undefined&&Buffer.byteLength(response.diagnosticText,'utf8')>65536)))throw new Error('Task reasoning output budget exceeded');
+      return response;
+    };
     let result: OperationLoopResult;
     if (teachingReply !== undefined) result = {turn:{reply:teachingReply,workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution!.deadline};
     else if (explorationEnabled) {
@@ -262,9 +268,7 @@ export class AgentService {
     else if (this.#loop) result = await this.#loop.run(this.gateway, request, binding);
     else if (!admitted) {
       try {
-        if(continuityEnabled&&Buffer.byteLength(JSON.stringify(request),'utf8')>Math.min(binding.inputBudgetBytes,196608))throw new Error('Task reasoning input budget exceeded');
-        const response=await withinExecution(()=>this.gateway.complete(execution?.signal ? {...request,signal:execution.signal} : request),execution);
-        if(continuityEnabled&&(Buffer.byteLength(response.text,'utf8')>65536||(response.diagnosticText!==undefined&&Buffer.byteLength(response.diagnosticText,'utf8')>65536)))throw new Error('Task reasoning output budget exceeded');
+        const response=await completeFinal(execution);
         result={turn:parseAgentTurn(response.text),applicationAuthored:false,...(execution?{deadline:execution.deadline}:{}),...(response.providerResponseId?{providerResponseId:response.providerResponseId}:{})};
       } catch(error) { if(continuityEnabled)throw new Error(taskMessage('interrupted'));throw error; }
     }
@@ -272,16 +276,19 @@ export class AgentService {
       const context: OperationExecutionContext = { signal: admitted.fence.signal, deadline: execution?.deadline ?? admitted.fence.deadline,
         assertCurrent: () => admitted.fence.assertCurrent() };
       try {
-        const response = await withinExecution(() => this.gateway.complete({ ...request, signal: admitted.fence.signal }), context);
+        const response = await completeFinal(context);
         result = { turn: parseAgentTurn(response.text), applicationAuthored: false, deadline: context.deadline,
           ...(response.providerResponseId ? { providerResponseId: response.providerResponseId } : {}) };
       } catch (error) {
-        if (!(error instanceof OperationStoppedError)) throw error;
+        if (!(error instanceof OperationStoppedError)) {if(continuityEnabled)throw new Error(taskMessage('interrupted'));throw error;}
         result = { turn: { reply: 'Service inference stopped before a model result was committed.',
           workProposals: [], factProposals: [] }, applicationAuthored: true, deadline: context.deadline,
           stopReason: executionDeadlineReached(context, error) ? 'deadline' : 'cancelled' };
       }
     }
+    // Application-authored loop stops also share the intake deadline. Their
+    // result may omit it, but a progress checkpoint is still a guarded mutation.
+    if(execution)result.deadline=Math.min(result.deadline??Infinity,execution.deadline);
     let turn = result.turn;
     let applicationAuthored = result.applicationAuthored;
     let stopReason: ServiceStopReason = result.stopReason ?? 'completed';

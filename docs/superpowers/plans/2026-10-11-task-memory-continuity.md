@@ -51,8 +51,9 @@ Interface: `processTaskIntake(store, gateway, model, binding, execution, maxByte
 returns `{receipt, completionsUsed: 0|1}`. It first reuses a validated matching
 receipt, rejecting explicit retry retargeting. New intake sees only the current
 owner input and <=8 candidates limited to focus and exact current-owner naming.
-Each candidate supplies its own validated owner goal quotes, active teachings and
-open clarifications with exact sources. No model-authored title/goal, assistant
+Each candidate supplies exact current-owner mentions mapped to its ID, its own
+validated owner goal quotes, active teachings and
+open clarifications with exact sources. No unmentioned model-authored title/goal, assistant
 content, browser observation or unrelated task memory is included.
 
 Model shape: `{task, teachings}`. `task` is `{kind:'keep'}`,
@@ -60,8 +61,9 @@ Model shape: `{task, teachings}`. `task` is `{kind:'keep'}`,
 or `{kind:'clarify', sourceQuote, question}`. Selection quote must uniquely identify
 one eligible exact owner-named task by ID/title; creation generates its ID in the
 runtime. `teachings` retains the strict current protocol and selected-work target
-validation. Creation has no existing teaching IDs. Ambiguity creates a hold when
-there is focused work, or a clarification-only receipt without work.
+validation. Creation has no existing teaching IDs. A uniquely named nonfocused task must be selected before clarifying its teachings.
+Ambiguity among candidates creates a hold when there is focused work, or a
+clarification-only receipt without work.
 
 Prepare all events on a preview; extend teaching preparation with an explicit
 preview-state input without weakening its default persisted-state behavior.

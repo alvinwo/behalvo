@@ -84,13 +84,15 @@ candidate tasks, limited to current focus and exact owner-named candidates;
 unrelated task teachings are never included. Catalog
 entries contain IDs, validated original owner goal quotes when available, and
 that candidate's own active teachings/clarifications with exact owner sources.
-Model-derived task titles/goals are never supplied as teaching evidence. Exact
-title matching may locate candidates in application code, but adds no title text
-to the extraction input. Creation has no prior teaching targets. For selection
+Model-derived task titles/goals are never supplied as teaching evidence. Application
+code supplies an ID-to-mention mapping only when the exact title or ID bytes occur
+in the current owner text. These current-owner quotes provide routing context,
+not a separate instruction or authority; unmentioned titles/goals stay excluded. Creation has no prior teaching targets. For selection
 of B while focused on A, B's owner sources and revisioned teaching IDs are supplied
-under B; runtime validates every change/resolution exclusively against B. Missing
-candidates or ambiguous exact names require clarification, never silent fallback
-to A. The request remains bounded; mandatory source overflow stops safely. Intake
+under B; runtime validates every change/resolution exclusively against B. A uniquely named B must be selected before adding a clarification about B; a
+clarify result cannot mutate A in that case. Ambiguity among multiple candidates
+may hold the current focus without selecting one. Missing candidates require
+clarification, never silent fallback to A. The request remains bounded; mandatory source overflow stops safely. Intake
 never receives browser observations, learned notes, assistant replies or tool transcripts. Creation/selection is tied
 to an exact unique quote in the owner input. Ordinary questions need no new task.
 No special “remember” wording is required for useful task constraints/preferences.
