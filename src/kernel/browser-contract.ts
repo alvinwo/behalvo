@@ -24,7 +24,7 @@ export function validateObservation(raw: unknown, scope: BrowserScope): BrowserO
     if(!Array.isArray(v.controls)||v.controls.length>100)throw new Error('Invalid browser controls');
     const refs=new Set<string>();const ref=(r:string)=>{text(r);if(refs.has(r))throw new Error('Duplicate browser reference');refs.add(r);};
     for(const c of v.controls){exact(c,['ref','role','name','actions','options']);ref(c.ref);text(c.name,2048);
-        const allowed:Record<BrowserControl['role'],string>={link:'navigate',button:'click',textbox:'fill',combobox:'select'};
+        const allowed:Record<BrowserControl['role'],string>={link:'navigate',button:'click',textbox:'fill',combobox:'select',login:'request_login'};
         if(!Object.hasOwn(allowed,c.role)||!Array.isArray(c.actions)||c.actions.length!==1||c.actions[0]!==allowed[c.role]||!Array.isArray(c.options)||c.options.length>100)throw new Error('Invalid control shape');
         if(c.role!=='combobox'&&c.options.length)throw new Error('Unexpected options');
         for(const option of c.options){exact(option,['ref','name']);ref(option.ref);text(option.name,2048);}
@@ -34,7 +34,7 @@ export function validateObservation(raw: unknown, scope: BrowserScope): BrowserO
 export function parseBrowserCommand(raw: unknown): BrowserCommand {
     const kind=(raw as {kind?:unknown})?.kind;
     const keys=['kind','observationId','ref'];
-    if(kind==='fill')keys.push('taskInputId');else if(kind==='select')keys.push('optionRef');else if(kind!=='navigate'&&kind!=='click')throw new Error('Unsupported browser command');
+    if(kind==='fill')keys.push('taskInputId');else if(kind==='select')keys.push('optionRef');else if(kind!=='navigate'&&kind!=='click'&&kind!=='request_login')throw new Error('Unsupported browser command');
     const x=exact(raw,keys);for(const key of keys)text(x[key]);return structuredClone(raw) as BrowserCommand;
 }
 export function resolveControl(observation: BrowserObservation, scope: BrowserScope, raw: unknown): BrowserControl {

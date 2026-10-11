@@ -19,7 +19,9 @@ test('vault configuration rejects unpaired, duplicated and colliding paths',asyn
  for(const args of [['--vault','v'],['--vault-key-file','k'],['--vault=v','--vault-key-file','k'],['--vault','v','--vault','v','--vault-key-file','k'],['--vault','same','--vault-key-file','same']])assert.throws(()=>module.parseVaultConfiguration(args,[]));
  assert.equal(module.parseVaultConfiguration([],[]),undefined);
  assert.throws(()=>module.parseVaultConfiguration(['--vault','same','--vault-key-file','key'],['same']));
- const config=module.parseVaultConfiguration(['--vault','some-vault','--vault-key-file','some-key'],[]);assert.equal(config.path,join(process.cwd(),'some-vault'));
+ const valid=['--vault','some-vault','--vault-key-file','some-key'];
+ if(process.platform==='win32')assert.throws(()=>module.parseVaultConfiguration(valid,[]));
+ else assert.equal(module.parseVaultConfiguration(valid,[]).path,join(process.cwd(),'some-vault'));
 });
 
 test('REPL keeps multiline vault input and all captured values out of journal and model',{skip:process.platform==='win32'},async t=>{

@@ -1,5 +1,8 @@
 import { startSemanticFixture, type SemanticSite } from '../browser/semantic-fixture-sites.js';
 import { SemanticPlaywright } from '../browser/semantic-playwright.js';
+import { startSyntheticLoginFixture } from '../browser/synthetic-login-fixture.js';
+import { SyntheticLoginBrowser } from '../browser/synthetic-login-browser.js';
+import { VaultLoginBroker } from '../vault/login-broker.js';
 import type { BrowserExplorationOptions } from '../runtime/browser-exploration.js';
 import { browserMessage } from '../runtime/browser-messages.js';
 import { mkdirSync } from 'node:fs';
@@ -30,7 +33,7 @@ export interface CliArgs {
   offline: boolean;
   syntheticOperations: boolean;
   teachingMode?: boolean;
-  semanticSite?: SemanticSite;
+  semanticSite?: SemanticSite | 'login';
   dbPath: string;
   authPath: string;
   workspaceId: string;
@@ -81,11 +84,11 @@ export function parseCliArgs(argv: string[]): CliArgs {
     !offline
   );
   const semanticSite=valueAfter(argv,'--synthetic-browser');
-  if(semanticSite&&(!['appointments-a','appointments-b','classes'].includes(semanticSite)||offline||argv.includes('--synthetic-operations')))throw new Error(browserMessage('invalidFixture'));
+  if(semanticSite&&(!['appointments-a','appointments-b','classes','login'].includes(semanticSite)||offline||argv.includes('--synthetic-operations')))throw new Error(browserMessage('invalidFixture'));
   const model = parseModel(valueAfter(argv, '--model') ?? process.env.BEHALVO_MODEL ?? process.env.OPERATOR_MODEL);
   const parsed: CliArgs = {
     offline,
-    ...(semanticSite?{semanticSite:semanticSite as SemanticSite,teachingMode:true}:{}),
+    ...(semanticSite?{semanticSite:semanticSite as SemanticSite | 'login',teachingMode:true}:{}),
     ...(argv.includes('--task-teachings') ? {teachingMode:true} : {}),
     syntheticOperations: argv.includes('--synthetic-operations'),
     dbPath: resolve(valueAfter(argv, '--db') ?? (argv.includes('--synthetic-operations') ? 'data/synthetic-agent.db' : process.env.BEHALVO_DB ?? process.env.OPERATOR_DB ?? 'data/agent.db')),
@@ -122,10 +125,21 @@ async function main(): Promise<void> {
   let pi: PiModelGateway | undefined;
   let settings: ModelSettingsStore | undefined;
   let fixture: Awaited<ReturnType<typeof startSemanticFixture>> | undefined;
+  let loginFixture: Awaited<ReturnType<typeof startSyntheticLoginFixture>> | undefined;
   let vault: LocalCredentialVault | undefined;
+  let io: NodeLineIo | TerminalPromptIo | undefined;
   const browser: BrowserExplorationOptions | undefined=args.semanticSite?{open:async context=>{
-    fixture??=await startSemanticFixture(args.semanticSite!);
+    if (args.semanticSite === 'login') {
+      loginFixture ??= await startSyntheticLoginFixture();
+      return new SyntheticLoginBrowser(loginFixture.authority, context.execution.signal ?? new AbortController().signal);
+    }
+    fixture??=await startSemanticFixture(args.semanticSite as SemanticSite);
     return new SemanticPlaywright(fixture.policy,context.execution.signal ?? new AbortController().signal);
+  }, login: async (binding, challenge, execution, use) => {
+    if (!io || !loginFixture) return { status: 'unavailable' };
+    return new VaultLoginBroker({ ...(vault ? { vault } : {}), io }).use(
+      { workspaceId: binding.workspaceId, ownerId: binding.ownerId }, challenge, execution, use,
+      loginFixture.authority.secretAuthority);
   }}:undefined;
   try {
     encryptionKey = args.storageKeyPath ? loadStorageKeyFile(args.storageKeyPath) : undefined;
@@ -199,7 +213,6 @@ async function main(): Promise<void> {
     encryptionKey?.fill(0);
     protection.encryptionKey?.fill(0);
   }
-  let io: NodeLineIo | TerminalPromptIo | undefined;
   try {
     io = await terminalIo();
     if (args.vault) {
@@ -247,6 +260,7 @@ async function main(): Promise<void> {
     io?.close();
     app.close();
     await fixture?.close();
+    await loginFixture?.close();
   }
 }
 

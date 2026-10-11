@@ -11,6 +11,22 @@ auth file and the database-derived model-settings file into authenticated
 encryption. This local control is not a production credential-vault or readiness
 claim.
 
+The separate opt-in [website credential vault](docs/CREDENTIAL_VAULT.md) encrypts
+values and metadata under an independent configured key on POSIX. It starts locked,
+scopes entries by workspace/local owner and exact origin, and captures values only
+through interactive hidden prompts. The model can request a current observed login
+control, but receives no values or credential IDs. Every use requires fresh owner
+confirmation and current task/document/entry authority. The only browser integration
+is a compiled local synthetic login with one bounded attempt and disposable-profile
+closure. There is no live website login or production vault-security claim.
+
+This operational store is outside the domain journal and task replay. Credential
+removal/replacement serializes with active borrows; revocation cannot recall a
+dispatched request. Lock clears owned buffers, but cannot erase JavaScript strings
+or browser memory. The key file, backups and same-UID process trust need the same
+care as protected model state. No hardware custody, rollback detection, key rotation,
+secure deletion or external-manager integration is provided.
+
 SQLite payload protection and model-state protection are independent opt-ins.
 Neither key is inferred from the other, though an operator may explicitly select
 the same valid key file for both. Pi credentials are shared per provider in the

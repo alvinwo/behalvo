@@ -18,6 +18,7 @@ const en = {
   remove: 'Remove saved login {label} for {origin}? Type yes to remove: ',
   configuration: 'Invalid credential vault configuration.',
   unknown: 'Synthetic login outcome is unknown. The browser was closed; no retry was performed.',
+  cleanupPending: 'Login outcome is unknown. Browser cleanup is unconfirmed; do not retry.',
   signedIn: 'Synthetic login verified. The browser session is closed.',
   rejected: 'The synthetic website rejected this login. The browser session is closed.',
   skipped: 'Login skipped. The browser session is closed.',

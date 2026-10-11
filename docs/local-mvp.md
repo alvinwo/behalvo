@@ -44,6 +44,11 @@ The demo creates a WorkItem and Fact, closes SQLite, reopens it in a fresh app i
 
 ## Multiline prompts
 
+Website passwords have a separate opt-in [encrypted vault](CREDENTIAL_VAULT.md).
+Use private prompts for capture and `/vault` for local management. The agent can
+request an owner-confirmed synthetic login without receiving credentials. Live
+website login is not implemented; Pi provider login remains separate.
+
 In an interactive terminal, paste text directly into the input editor. A multiline
 paste stays in one editable draft; press **Enter** to submit the entire message.
 There is no paste mode or send command to remember.
@@ -59,7 +64,9 @@ individual lines. A terminal that strips these markers cannot provide the same
 paste guarantee. Blank lines and surrounding spaces are preserved. The editor
 normalizes CRLF/CR to LF and tabs to four spaces, and removes terminal control
 sequences from pasted text. Multiline messages containing
-slash commands are sent as message text, never executed as terminal commands.
+slash commands are sent as message text, never executed as terminal commands,
+except `/vault`-prefixed input, which is refused before chat ingestion to avoid
+recording accidentally pasted credentials.
 
 Drafts are limited to 64 KiB of UTF-8 text. An oversized draft cannot be submitted;
 Ctrl+C clears it so you can enter a shorter message. Closing input discards an
