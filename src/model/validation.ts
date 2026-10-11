@@ -1,4 +1,5 @@
 import { identifier, instant, nonempty } from '../kernel/types.js';
+import { parseProgressReport } from '../kernel/task-continuity.js';
 import type { AgentTurn, FactProposal, WorkProposal } from './types.js';
 
 function plainObject(value: unknown, label: string): Record<string, unknown> {
@@ -96,7 +97,7 @@ export function parseAgentTurn(text: string): AgentTurn {
     throw new Error('Model output is not valid JSON');
   }
   const object = plainObject(parsed, 'agent turn');
-  exactFields(object, ['reply', 'workProposals', 'factProposals'], 'agent turn');
+  exactFields(object, ['reply', 'workProposals', 'factProposals', 'progress'], 'agent turn');
   const reply = requiredString(object, 'reply');
   const workRaw = object.workProposals ?? [];
   const factRaw = object.factProposals ?? [];
@@ -107,6 +108,7 @@ export function parseAgentTurn(text: string): AgentTurn {
   return {
     reply,
     workProposals: workRaw.map(parseWork),
-    factProposals: factRaw.map(parseFact)
+    factProposals: factRaw.map(parseFact),
+    ...(Object.hasOwn(object,'progress')?{progress:parseProgressReport(object.progress)}:{})
   };
 }

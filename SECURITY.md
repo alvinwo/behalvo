@@ -263,3 +263,29 @@ browser turns in that agent instance and preserves process-owner receipts.
 Projection v3 requires explicit validated maintenance for existing databases.
 Synthetic acceptance does not establish live-site compatibility or credential
 custody; those remain T2 prerequisites, with consequential actions gated in T3.
+
+## Task continuity (projection v4)
+
+Normal model-backed CLI intake sees current owner text and exact validated owner
+sources for the focused task and explicitly named candidates only. It cannot promote
+browser observations, model-derived goals, assistant replies or progress into owner
+instructions. Candidate and source budgets fail closed. Corrections target only the
+resolved task; ambiguity stops action. New task IDs and revision/source bindings
+come from the runtime. Intake, teachings and receipt commit atomically, with deadline
+and service-fence checks after acquiring the SQLite writer lock. A pending delivery
+retry reuses its receipt without repeating mutations or restoring old focus.
+
+Progress is advisory and has an independent revision. Typed references resolve only
+within the workspace and task. Request provenance is not completion evidence. Progress
+never changes work phase, approval revision or action outcome; stale advice remains
+labeled even when carried forward into an application stop. Final progress and reply
+settle together, with current task/progress and deadline guards. Unconfirmed browser
+cleanup cannot produce progress or a browser stop checkpoint. Unknown effects retain
+the existing no-retry policy. Recall contains historical IDs, never reusable browser
+controls or session/document handles.
+
+Existing v1–v3 projections require explicit validated continuity maintenance; ordinary
+writes do not upgrade them. New workspaces use v4. Upgrade authenticates encrypted
+payloads, verifies the existing projection against read/reduce replay, and adds empty
+continuity state without inferring focus or executing effects. This is local synthetic
+continuity acceptance, not evidence of live portal or autonomous booking readiness.

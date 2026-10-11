@@ -1,3 +1,6 @@
+import { prepareProgressEvent, PROGRESS_PROTOCOL } from './task-continuity.js';
+import { processTaskIntake } from './task-intake.js';
+import { taskMessage } from './task-messages.js';
 import { assertBrowserWork } from './browser-learning.js';
 import { runBrowserExploration, type BrowserExplorationOptions } from './browser-exploration.js';
 import { browserMessage } from './browser-messages.js';
@@ -44,6 +47,8 @@ export interface AgentTurnResult {
   assistantRecordId: string;
   context: ContextPacket;
   turn: AgentTurn;
+  /** Resolved intake task; retry results do not change the persisted focus. */
+  workId?: string;
 }
 
 export interface AdmittedOwnerTurnInput {
@@ -70,7 +75,7 @@ export class AgentService {
     private readonly gateway: ModelGateway,
     clock: () => string = () => new Date().toISOString(),
     operations?: OperationLoopOptions,
-    private readonly features: { teachingMode?: boolean; browser?: BrowserExplorationOptions } = {}
+    private readonly features: { teachingMode?: boolean; taskContinuity?: boolean; browser?: BrowserExplorationOptions } = {}
   ) {
     this.#timeoutMs = operations?.timeoutMs ?? 120000;
     this.#operator = new Operator(store, clock);
@@ -78,6 +83,8 @@ export class AgentService {
     this.#workspaceId = operations?.workspaceId;
     this.#loop = operations ? new OperationLoop(store, operations) : undefined;
   }
+
+  get continuityEnabled(): boolean { return this.features.taskContinuity === true; }
 
   async runOwnerTurn(input: OwnerTurnInput): Promise<AgentTurnResult> {
     if (this.#workspaceId !== undefined && input.workspaceId !== this.#workspaceId)
@@ -102,7 +109,7 @@ export class AgentService {
       const work = state.works[input.workId];
       if (!work)
         throw new Error(`Work not found: ${input.workId}`);
-      if (!work.threadIds.includes(input.threadId) && (this.features.teachingMode || this.features.browser || Object.values(state.browserMemory?.notes ?? {}).some(n=>n.workId===work.id))) throw new Error('Thread must be explicitly linked to work');
+      if (!work.threadIds.includes(input.threadId) && (this.features.taskContinuity || this.features.teachingMode || this.features.browser || Object.values(state.browserMemory?.notes ?? {}).some(n=>n.workId===work.id))) throw new Error('Thread must be explicitly linked to work');
       if (!work.threadIds.includes(input.threadId))
         this.#operator.linkThread(input.workspaceId, input.ownerId, input.workId, input.threadId);
     }
@@ -142,13 +149,15 @@ export class AgentService {
   async #processOwnerRecord(input: OwnerTurnInput, ownerRecord: JournalRecord,
     admitted?: { job: ServiceJob; fence: TrustedExecutionFence }): Promise<AgentTurnResult> {
 
+    input = {...input};
+    const continuityEnabled = this.continuityEnabled;
     const teachingEvents: DomainEvent[] = [];
     const hasNotes = !!input.workId && Object.values(this.store.state(input.workspaceId).browserMemory?.notes ?? {}).some(n=>n.workId===input.workId&&n.status==='candidate');
-    const explorationEnabled = !!input.workId && (!!this.features.browser || hasNotes);
-    const teachingEnabled = this.features.teachingMode === true || explorationEnabled;
+    let explorationEnabled = !!input.workId && (!!this.features.browser || hasNotes);
+    const teachingEnabled = continuityEnabled || this.features.teachingMode === true || explorationEnabled;
     const browserEvents: DomainEvent[] = [];
     let browserCommitGuard: (()=>void) | undefined;
-    if (explorationEnabled && this.#browserCleanupPending) throw new Error('Previous browser cleanup remains unconfirmed');
+    if ((explorationEnabled || continuityEnabled && this.features.browser) && this.#browserCleanupPending) throw new Error('Previous browser cleanup remains unconfirmed');
     const controller = teachingEnabled && !admitted ? new AbortController() : undefined;
     const timer = controller ? setTimeout(()=>controller.abort(),this.#timeoutMs) : undefined;
     try {
@@ -158,7 +167,28 @@ export class AgentService {
     } : undefined;
     let teachingReply: string | undefined;
     let extracted = false;
-    if (teachingEnabled && input.workId) {
+    if (continuityEnabled) {
+      if (!this.store.state(input.workspaceId).taskContinuity) throw new Error(taskMessage('upgrade'));
+      try {
+        const intake = await processTaskIntake(this.store,this.gateway,input.model,{
+          workspaceId:input.workspaceId,ownerId:input.ownerId,threadId:input.threadId,ownerRecordId:ownerRecord.id,
+          ...(input.workId?{workId:input.workId}:{}),
+          ...(admitted?{assertCommitCurrent:()=>{
+            const check=admitted.fence.assertDispatchCurrent??admitted.fence.assertSettlementCurrent;
+            if(!check)throw new Error('Task intake requires a synchronous service fence');
+            check();
+            const current=this.store.serviceJob(input.workspaceId,admitted.job.id);
+            if(current.status!=='running'||current.claim?.claimId!==admitted.job.claim?.claimId||current.claim?.instanceId!==admitted.job.claim?.instanceId)throw new OperationStoppedError();
+          }}:{})
+        },execution!, (input.windowTokens??64000)-(input.outputReserve??8000));
+        extracted=intake.completionsUsed===1;
+        if(intake.receipt.workId!==null) input.workId=intake.receipt.workId; else delete input.workId;
+        if(intake.receipt.outcome==='clarify')teachingReply=intake.receipt.question!;
+        explorationEnabled=!!input.workId&&(!!this.features.browser||Object.values(this.store.state(input.workspaceId).browserMemory?.notes??{}).some(n=>n.workId===input.workId&&n.status==='candidate'));
+        if(input.workId&&teachingHold(this.store.state(input.workspaceId),input.workId))teachingReply??=teachingMessage('clarification');
+      } catch { teachingReply=taskMessage('rejected'); }
+    }
+    if (!continuityEnabled && teachingEnabled && input.workId) {
       const before = this.store.state(input.workspaceId);
       if (!before.teachingMemory) throw new Error(teachingMessage('upgrade'));
       const sourceText = (id:string):string => {
@@ -184,7 +214,7 @@ export class AgentService {
 
     const request = {
       model: input.model,
-      system: AGENT_SYSTEM,
+      system: AGENT_SYSTEM + (continuityEnabled ? '\nTask selection and owner memory have already been processed by intake. Continue the owner request using the committed context. Return empty workProposals and factProposals; never create work or revise owner teachings in this phase.\n'+PROGRESS_PROTOCOL : ''),
       prompt: '',
       sessionHint: `${input.workspaceId}:${input.threadId}`
     };
@@ -208,6 +238,19 @@ export class AgentService {
     });
 
     request.prompt = context.text;
+    const reasoningWorkRevision=input.workId?this.store.state(input.workspaceId).works[input.workId]?.revision:undefined;
+    const reasoningProgressRevision=input.workId?this.store.state(input.workspaceId).taskContinuity?.progress[input.workId]?.revision??0:0;
+    const continuityCommitGuard=(progressAlreadyAppended=false)=>{
+      if(!continuityEnabled||!input.workId||teachingReply!==undefined)return;
+      const work=this.store.state(input.workspaceId).works[input.workId];
+      if(!work||work.revision!==reasoningWorkRevision||(this.store.state(input.workspaceId).taskContinuity?.progress[input.workId]?.revision??0)!==reasoningProgressRevision+(progressAlreadyAppended?1:0)||['done','cancelled'].includes(work.phase))throw new OperationStoppedError();
+    };
+    const completeFinal = async (context?:OperationExecutionContext) => {
+      if(continuityEnabled&&Buffer.byteLength(JSON.stringify(request),'utf8')>Math.min(binding.inputBudgetBytes,196608))throw new Error('Task reasoning input budget exceeded');
+      const response=await withinExecution(()=>this.gateway.complete(context?.signal?{...request,signal:context.signal}:request),context);
+      if(continuityEnabled&&(Buffer.byteLength(response.text,'utf8')>65536||(response.diagnosticText!==undefined&&Buffer.byteLength(response.diagnosticText,'utf8')>65536)))throw new Error('Task reasoning output budget exceeded');
+      return response;
+    };
     let result: OperationLoopResult;
     if (teachingReply !== undefined) result = {turn:{reply:teachingReply,workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution!.deadline};
     else if (explorationEnabled) {
@@ -223,22 +266,29 @@ export class AgentService {
       browserEvents.push(...browserResult.events);result=browserResult;
     }
     else if (this.#loop) result = await this.#loop.run(this.gateway, request, binding);
-    else if (!admitted) result = await withinExecution(()=>this.gateway.complete(execution?.signal ? {...request,signal:execution.signal} : request),execution).then(response => ({ turn: parseAgentTurn(response.text),
-      applicationAuthored: false, ...(execution ? {deadline:execution.deadline} : {}), ...(response.providerResponseId ? { providerResponseId: response.providerResponseId } : {}) }));
+    else if (!admitted) {
+      try {
+        const response=await completeFinal(execution);
+        result={turn:parseAgentTurn(response.text),applicationAuthored:false,...(execution?{deadline:execution.deadline}:{}),...(response.providerResponseId?{providerResponseId:response.providerResponseId}:{})};
+      } catch(error) { if(continuityEnabled)throw new Error(taskMessage('interrupted'));throw error; }
+    }
     else {
       const context: OperationExecutionContext = { signal: admitted.fence.signal, deadline: execution?.deadline ?? admitted.fence.deadline,
         assertCurrent: () => admitted.fence.assertCurrent() };
       try {
-        const response = await withinExecution(() => this.gateway.complete({ ...request, signal: admitted.fence.signal }), context);
+        const response = await completeFinal(context);
         result = { turn: parseAgentTurn(response.text), applicationAuthored: false, deadline: context.deadline,
           ...(response.providerResponseId ? { providerResponseId: response.providerResponseId } : {}) };
       } catch (error) {
-        if (!(error instanceof OperationStoppedError)) throw error;
+        if (!(error instanceof OperationStoppedError)) {if(continuityEnabled)throw new Error(taskMessage('interrupted'));throw error;}
         result = { turn: { reply: 'Service inference stopped before a model result was committed.',
           workProposals: [], factProposals: [] }, applicationAuthored: true, deadline: context.deadline,
           stopReason: executionDeadlineReached(context, error) ? 'deadline' : 'cancelled' };
       }
     }
+    // Application-authored loop stops also share the intake deadline. Their
+    // result may omit it, but a progress checkpoint is still a guarded mutation.
+    if(execution)result.deadline=Math.min(result.deadline??Infinity,execution.deadline);
     let turn = result.turn;
     let applicationAuthored = result.applicationAuthored;
     let stopReason: ServiceStopReason = result.stopReason ?? 'completed';
@@ -246,10 +296,12 @@ export class AgentService {
     const current = this.store.state(input.workspaceId);
     const proposedWorkIds = new Set<string>();
     const events: DomainEvent[] = [...teachingEvents,...browserEvents];
+    let hasProgress=false;
 
     try {
+      if (continuityEnabled && turn.workProposals.length) throw new Error('Task creation requires owner intake');
       if (teachingEnabled && turn.factProposals.length) throw new Error('Task teaching mode does not accept legacy facts');
-      if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0)) && result.deadline !== undefined && Date.now() >= result.deadline)
+      if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0 || hasProgress)) && result.deadline !== undefined && Date.now() >= result.deadline)
         throw new Error('Run deadline');
       for (const proposal of turn.workProposals) {
         if (Object.hasOwn(current.works, proposal.id) || proposedWorkIds.has(proposal.id))
@@ -283,13 +335,23 @@ export class AgentService {
         events.push({ type: 'fact.recorded', data: { fact } });
       }
 
+      if(continuityEnabled&&input.workId&&teachingReply===undefined&&!this.#browserCleanupPending) {
+        const previous=current.taskContinuity?.progress[input.workId];
+        const report=turn.progress??(applicationAuthored?(previous?{summary:previous.summary,nextStep:previous.nextStep,blocker:previous.blocker,references:previous.references}:{summary:taskMessage('stoppedSummary'),nextStep:taskMessage('stoppedNextStep'),blocker:null,references:[]}):undefined);
+        if(report) {
+          assertExecutionActive(execution);continuityCommitGuard();
+          events.push(prepareProgressEvent(this.store,{workspaceId:input.workspaceId,ownerId:input.ownerId,workId:input.workId,ownerRecordId:ownerRecord.id,expectedWorkRevision:reasoningWorkRevision!},report,stopReason,
+            turn.progress?reasoningWorkRevision:previous?.workRevision??reasoningWorkRevision));hasProgress=true;
+        }
+      }
+      if(!applicationAuthored||hasProgress)continuityCommitGuard();
       let preview = current;
       for (const event of events) preview = reduce(preview, event, preview.version + 1);
-      if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0)) && result.deadline !== undefined && Date.now() >= result.deadline)
+      if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0 || hasProgress)) && result.deadline !== undefined && Date.now() >= result.deadline)
         throw new Error('Run deadline');
     } catch (error) {
       if (!this.#loop && !teachingEnabled) throw error;
-      events.length = 0;
+      events.length = 0;hasProgress=false;
       applicationAuthored = true;
       stopReason = 'invalid_model_result';
       turn = { reply: 'Operation run stopped: final proposals were rejected or the run deadline elapsed. No final proposals were committed. Inspect /actions for independently recorded operation outcomes.',
@@ -307,14 +369,15 @@ export class AgentService {
         reason: stopReason, at: this.#clock()
       }, () => {
         admitted.fence.assertSettlementCurrent?.();
+        if(!applicationAuthored||hasProgress)continuityCommitGuard(hasProgress);
         if(!applicationAuthored || browserEvents.length>0)browserCommitGuard?.();
-        if (!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0) || !admitted.fence.assertSettlementCurrent)
+        if (!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0 || hasProgress) || !admitted.fence.assertSettlementCurrent)
           assertExecutionActive({ signal: admitted.fence.signal, deadline: execution?.deadline ?? admitted.fence.deadline });
       });
       const assistantRecord = completed.records.find((record): record is JournalRecord =>
         record.event.type === 'message.received' && record.event.data.senderRole === 'agent');
       if (!assistantRecord) throw new Error('Assistant message was not committed');
-      return { ownerRecordId: ownerRecord.id, assistantRecordId: assistantRecord.id, context, turn };
+      return { ownerRecordId: ownerRecord.id, assistantRecordId: assistantRecord.id, context, turn, ...(input.workId?{workId:input.workId}:{}) };
     }
 
     const assistantArtifactId = this.store.putArtifact(input.workspaceId, turn.reply);
@@ -335,7 +398,7 @@ export class AgentService {
       applicationAuthored = true;
       turn = { reply: 'Operation run stopped at its deadline before final reply/proposal commit. Inspect /actions for independently recorded operation outcomes.',
         workProposals: [], factProposals: [] };
-      events.length = 0;
+      events.length = 0;hasProgress=false;
       assistantEvent.data.source = 'agent:application';
       assistantEvent.data.externalId = `agent-${randomUUID()}`;
       assistantEvent.data.artifactId = this.store.putArtifact(input.workspaceId, turn.reply);
@@ -343,13 +406,13 @@ export class AgentService {
     };
     const finalVersion = this.store.state(input.workspaceId).version;
     // Check before entry and after SQLite obtains its writer lock; lock waits may exceed the deadline.
-    if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0)) && result.deadline !== undefined && Date.now() >= result.deadline) deadlineStop();
+    if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0 || hasProgress)) && result.deadline !== undefined && Date.now() >= result.deadline) deadlineStop();
     let committed: JournalRecord[];
     try {
       committed = this.store.completeInbox(input.workspaceId, ownerRecord.id, finalVersion, events,
-        (!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0)) && result.deadline !== undefined ? () => {assertExecutionActive({ deadline: result.deadline!, ...(execution?.signal?{signal:execution.signal}:{}) });if(!applicationAuthored || browserEvents.length>0)browserCommitGuard?.();} : undefined);
+        (!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0 || hasProgress)) && result.deadline !== undefined ? () => {assertExecutionActive({ deadline: result.deadline!, ...(execution?.signal?{signal:execution.signal}:{}) });if(!applicationAuthored||hasProgress)continuityCommitGuard();if(!applicationAuthored || browserEvents.length>0)browserCommitGuard?.();} : undefined);
     } catch (error) {
-      if (!(error instanceof OperationStoppedError) || (applicationAuthored && teachingEvents.length===0 && browserEvents.length===0)) throw error;
+      if (!(error instanceof OperationStoppedError) || (applicationAuthored && teachingEvents.length===0 && browserEvents.length===0 && !hasProgress)) throw error;
       deadlineStop();
       committed = this.store.completeInbox(input.workspaceId, ownerRecord.id, this.store.state(input.workspaceId).version, events);
     }
@@ -357,7 +420,7 @@ export class AgentService {
     if (!assistantRecord)
       throw new Error('Assistant message was not committed');
 
-    return { ownerRecordId: ownerRecord.id, assistantRecordId: assistantRecord.id, context, turn };
+    return { ownerRecordId: ownerRecord.id, assistantRecordId: assistantRecord.id, context, turn, ...(input.workId?{workId:input.workId}:{}) };
     } finally { clearTimeout(timer); controller?.abort(); }
   }
 }

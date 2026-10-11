@@ -26,7 +26,7 @@ export function projectionContext(workspaceId: string, version: number, projecti
     return ['projections', 'state_json', workspaceId, version, projectionVersion];
 }
 export function decodeProjection(row: Row, cipher?: PayloadCipher): State {
-    if (![1,2,3].includes(Number(row.projection_version))) throw new Error('Unsupported projection version; rebuild required');
+    if (![1,2,3,4].includes(Number(row.projection_version))) throw new Error('Unsupported projection version; rebuild required');
     return JSON.parse(open(row.state_json, projectionContext(String(row.workspace_id), Number(row.version), Number(row.projection_version)), cipher)) as State;
 }
 export function artifactContext(workspaceId: string, id: string): Context { return ['artifacts', 'body', workspaceId, id]; }

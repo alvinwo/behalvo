@@ -175,6 +175,7 @@ async function main(): Promise<void> {
         workspaceId: args.workspaceId,
         ownerId: args.ownerId,
         gateways: [pi],
+        taskContinuity: true,
         syntheticOperations: args.syntheticOperations,
         ...(args.teachingMode ? {teachingMode:true} : {}),
         ...(browser?{browser}:{}),

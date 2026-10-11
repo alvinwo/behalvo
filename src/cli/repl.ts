@@ -1,3 +1,5 @@
+import { restoreTaskThread, selectTaskThread } from '../runtime/task-continuity.js';
+import { taskStatusLines } from '../runtime/task-messages.js';
 import { inputMessage } from './input-messages.js';
 import { authorizeTaskInput, revokeTaskInput } from '../runtime/browser-learning.js';
 import { browserMessage } from '../runtime/browser-messages.js';
@@ -65,8 +67,10 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   const { store, registry, service, io, workspaceId, ownerId } = options;
   const operator = new Operator(store);
   const review = options.operations ? new ActionReview(store, options.operations, workspaceId, ownerId, options.clock) : undefined;
-  let threadId = options.initialThreadId ?? `local-${randomUUID()}`;
-  let workId: string | undefined;
+  const restored=service.continuityEnabled?restoreTaskThread(store,workspaceId,options.initialThreadId):undefined;
+  let threadId = restored?.threadId ?? options.initialThreadId ?? `local-${randomUUID()}`;
+  let workId: string | undefined = restored?.workId;
+  if(service.continuityEnabled)selectTaskThread(store,workspaceId,ownerId,threadId,workId??null,true);
 
   io.write(`Behalvo — workspace ${workspaceId} — thread ${threadId}`);
   io.write(inputMessage('hint'));
@@ -159,7 +163,9 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         }
         if (command === '/new') {
           if (args.length > 1) throw new Error('Usage: /new [thread-id]');
-          threadId = args[0] ?? `local-${randomUUID()}`;
+          const nextThread=args[0] ?? `local-${randomUUID()}`;
+          if(service.continuityEnabled)selectTaskThread(store,workspaceId,ownerId,nextThread,null,true);
+          threadId = nextThread;
           workId = undefined;
           io.write(`New thread: ${threadId}`);
           continue;
@@ -168,12 +174,15 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           if (args.length === 0) {
             const works = Object.values(store.state(workspaceId).works);
             if (!works.length) io.write('No durable work.');
-            for (const work of works)
+            for (const work of works) {
               io.write(`${work.id} — ${work.title} [${work.phase}]${work.id === workId ? ' *' : ''}`);
+              if(service.continuityEnabled)for(const line of taskStatusLines(store.state(workspaceId),work))io.write(line);
+            }
             continue;
           }
           if (args.length !== 1) throw new Error('Usage: /work [work-id|clear]');
           if (args[0] === 'clear') {
+            if(service.continuityEnabled)selectTaskThread(store,workspaceId,ownerId,threadId,null,true);
             workId = undefined;
             io.write('Focused work cleared.');
             continue;
@@ -181,6 +190,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           const state = store.state(workspaceId);
           const work = state.works[args[0]!];
           if (!work) throw new Error(`Work not found: ${args[0]}`);
+          if(service.continuityEnabled&&['done','cancelled'].includes(work.phase))throw new Error('Closed work cannot be focused');
           if (!work.threadIds.includes(threadId)) {
             const pendingApproval = Object.values(state.actions).some(action => action.workId === work.id &&
               isOperationCommand(action.command) && ['proposed', 'approved'].includes(action.status));
@@ -190,9 +200,10 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
               threadId = linkedThread;
               io.write(`Resumed existing work thread ${JSON.stringify(threadId)} to preserve prepared approval revision.`);
             } else {
-              operator.linkThread(workspaceId, ownerId, work.id, threadId);
+              if(!service.continuityEnabled)operator.linkThread(workspaceId, ownerId, work.id, threadId);
             }
           }
+          if(service.continuityEnabled)selectTaskThread(store,workspaceId,ownerId,threadId,work.id,true);
           workId = work.id;
           io.write(`Focused work: ${work.id} — ${work.title} on thread ${threadId}`);
           continue;
@@ -254,11 +265,13 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         model: selected,
         ...(workId ? { workId } : {})
       });
-      if (!workId && result.turn.workProposals.length === 1)
+      if (!service.continuityEnabled && !workId && result.turn.workProposals.length === 1)
         workId = result.turn.workProposals[0]!.id;
       io.write(`Agent > ${result.turn.reply}`);
     } catch (error) {
       io.write(`Agent error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if(service.continuityEnabled)workId=restoreTaskThread(store,workspaceId,threadId)?.workId;
     }
   }
 }
