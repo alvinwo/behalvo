@@ -5,7 +5,8 @@ Current branch: `codex/semantic-browser-exploration`, based on merged PR17
 scoped observations/controls, independent fixture request policy, journaled
 advisory notes, projection v3 maintenance, bounded exploration-only runtime and
 CLI. The primary is the sole writer; independent Sol/high and Astra/high reviewers
-cleared the dispatch, stale-document and settlement fixes. Final release evidence
+cleared the dispatch, stale-document and settlement fixes. Clean-source local verification (1,240 pass), visible regression acceptance (25/25)
+and live Astra acceptance (15 stages across three sites) passed. Evidence
 belongs in [T1b verification](docs/verification/2026-10-10-semantic-browser-exploration.md).
 
 The owner wants a general teachable agent, without a hard-coded H-1B workflow.

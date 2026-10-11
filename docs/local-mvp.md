@@ -171,7 +171,7 @@ also enables task teachings and cannot be combined with offline mode or syntheti
 operations. A visible disposable browser opens when the model first observes the
 site. No extension enrollment or personal Chrome profile is involved.
 
-1. Create or select a task with `/work <work-id>`.
+1. Ask the agent to create a task, then select its ID with `/work <work-id>` (or select an existing task).
 2. Teach it: `Remember for this task: only consider morning sessions.`
 3. After the teaching acknowledgment, ask: `Explore the connected synthetic directory now and recommend a suitable session with its name and time.`
 4. Ask what website navigation it learned. Restart with the same database and
