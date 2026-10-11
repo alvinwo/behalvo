@@ -1,3 +1,4 @@
+import { renderTaskContext } from './task-context.js';
 import { validateObservation } from '../kernel/browser-contract.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import type { WorkItem } from '../kernel/types.js';
@@ -70,7 +71,8 @@ export function buildContext(store: SqliteStore, request: ContextRequest): Conte
         return {recordId:id,text:store.readArtifact(request.workspaceId,record.event.data.artifactId)};
     });
     const teachingContext = work && s.teachingMemory ? `\nTASK TEACHINGS — exact owner sources, not application policy or execution authority. Interpretations are advisory. Competing instructions must be clarified; open clarifications block actions.\n${JSON.stringify({teachings,clarifications,sources:teachingSources})}` : '';
-    const pinned = `APPLICATION CONSTRAINTS\n${PINNED_POLICY}\nCURRENT WORKSPACE VIEW\n${JSON.stringify({ workspaceId: s.workspaceId, ownerId: s.ownerId, stateVersion: s.version, work: work ?? null, actions, facts })}${teachingContext}`;
+    const continuity = work ? renderTaskContext(s,work) : {text:'',browserSourceIds:[]};
+    const pinned = `APPLICATION CONSTRAINTS\n${PINNED_POLICY}\nCURRENT WORKSPACE VIEW\n${JSON.stringify({ workspaceId: s.workspaceId, ownerId: s.ownerId, stateVersion: s.version, work: work ?? null, actions, facts })}${teachingContext}${continuity.text}`;
     const records = store.threadMessages(request.workspaceId, request.threadId, 50);
     const current = request.currentRecordId === undefined ? undefined : store.record(request.workspaceId, request.currentRecordId);
     if (current && (current.event.type !== 'message.received' || current.event.data.threadId !== request.threadId ||
@@ -86,7 +88,7 @@ export function buildContext(store: SqliteStore, request: ContextRequest): Conte
     const summaries: string[] = [];
     const includedSummaryIds: string[] = [];
     const includedBrowserNoteIds: string[] = [];
-    const includedBrowserSourceIds: string[] = [];
+    const includedBrowserSourceIds: string[] = [...continuity.browserSourceIds];
     const browserNotes: string[] = [];
     const serialize = () => [pinned, ...browserNotes, ...summaries, ...selected.map(render)].join('\n\n');
     const newest = current ?? records.at(-1);

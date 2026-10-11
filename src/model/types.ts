@@ -63,4 +63,5 @@ export interface AgentTurn {
   reply: string;
   workProposals: WorkProposal[];
   factProposals: FactProposal[];
+  progress?: import('../kernel/task-continuity.js').ProgressReport;
 }

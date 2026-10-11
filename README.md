@@ -117,8 +117,8 @@ see the [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md).
 | --- | --- |
 | Append-only Journal, rebuildable state, historical reads | Automatic long-history consolidation / semantic retrieval |
 | Durable owner + assistant messages across process restarts | Email, WhatsApp, WeChat, SMS or phone channels |
-| Opt-in owner-sourced task teachings, corrections, retraction and clarification holds across restart/linked threads | Arbitrary live website exploration |
-| Explicit journal-validated v1 → v2 → v3 projection upgrades, including encrypted backups | Automatic legacy projection upgrades |
+| Owner-only task intake, same-turn instruction updates, durable focus, advisory progress and correction/clarification memory across restart | Arbitrary live website exploration |
+| Explicit journal-validated v1–v3 → v4 continuity upgrade, including encrypted backups | Automatic legacy projection upgrades |
 | Opt-in model-driven synthetic website exploration, source-grounded advisory notes and restart recall | Authenticated live exploration or real booking |
 | WorkItems/Facts shared across explicitly linked threads | Live browser automation or model-generated real-world effects |
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |

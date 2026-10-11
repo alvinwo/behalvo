@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DomainEvent } from '../kernel/types.js';
+import type { DomainEvent, State } from '../kernel/types.js';
 import { required } from '../kernel/types.js';
 import { assertOwner } from '../kernel/policy.js';
 import { reduce } from '../kernel/reducer.js';
@@ -39,8 +39,8 @@ export function parseTeachingResult(value: unknown): TeachingResult {
     } else throw new Error('Invalid teaching outcome');
     return structuredClone(value) as TeachingResult;
 }
-export function prepareTeachingEvents(store: SqliteStore, binding: TeachingBinding, raw: unknown): DomainEvent[] {
-    const result=parseTeachingResult(raw); let state=store.state(binding.workspaceId); assertOwner(state,binding.ownerId);
+export function prepareTeachingEvents(store: SqliteStore, binding: TeachingBinding, raw: unknown, previewState?: State): DomainEvent[] {
+    const result=parseTeachingResult(raw); let state=previewState??store.state(binding.workspaceId); if(state.workspaceId!==binding.workspaceId)throw new Error('Teaching preview scope mismatch'); assertOwner(state,binding.ownerId);
     const work=required(state.works,binding.workId,'Work');
     if (!state.teachingMemory || work.revision!==binding.expectedWorkRevision || ['done','cancelled'].includes(work.phase)) throw new Error('Stale work or teaching projection upgrade required');
     const record=store.record(binding.workspaceId,binding.ownerRecordId);

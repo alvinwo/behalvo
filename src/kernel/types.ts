@@ -1,3 +1,4 @@
+import type { TaskContinuity, TaskContinuityEvent } from './task-continuity.js';
 import type { BrowserMemory, BrowserLearningEvent } from './browser-learning.js';
 import type { TeachingMemory, TeachingEvent } from './teachings.js';
 /** Domain data is transport- and model-independent. No provider session owns it. */
@@ -67,6 +68,7 @@ export interface Fact {
     supersedes?: string;
 }
 export interface State {
+    taskContinuity?: TaskContinuity;
     teachingMemory?: TeachingMemory;
     browserMemory?: BrowserMemory;
     workspaceId: string;
@@ -88,7 +90,7 @@ export interface MessageInput {
     senderRole: 'owner' | 'external' | 'agent';
     text: string;
 }
-export type DomainEvent = BrowserLearningEvent | TeachingEvent | {
+export type DomainEvent = TaskContinuityEvent | BrowserLearningEvent | TeachingEvent | {
     type: 'workspace.created';
     data: {
         ownerId: string;

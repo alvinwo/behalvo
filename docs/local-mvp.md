@@ -138,56 +138,71 @@ Because the gateway uses Pi's current built-in model collection, the same model 
 
 The Behalvo kernel does not contain provider-specific memory or provider-specific domain state.
 
-## Task teachings (opt-in)
+## Task continuity and memory
 
-Start with the configured model and enable durable task instructions:
-
-```bash
-npm run agent -- --task-teachings
-```
-
-Use `/work` to list tasks, then `/work <work-id>` to focus and explicitly link the
-current thread. For a new task, ask the agent to create a work item first, then
-select its ID. In that focused task, use ordinary conversation:
+Normal model-backed CLI use includes durable task continuity. Explain your goal and
+constraints in ordinary language; no memory command or “remember” keyword is needed:
 
 ```text
-Remember for this task: only consider morning sessions.
-What preference do you remember?
-Change my preference to afternoon sessions instead.
-Forget my afternoon-session preference.
+Compare synthetic sessions. Only consider morning sessions.
+Prefer afternoons instead.
+What remains to do?
 ```
 
-A change receives an application-authored acknowledgment and executes no action
-in that turn. Exact owner quotes and containing messages are retained. Changes
-advance the task revision, invalidating old approvals. Ambiguous corrections open
-a durable clarification hold; action preparation, approval and dispatch remain
-blocked until a later owner message explicitly resolves it. Recall includes active
-sources and labels interpretations as advisory. Instructions never grant action
-authority. A new linked thread recalls the same active instructions; retired
-instructions remain in history but are not active teachings.
+One owner-only intake completion resolves the task and saves useful instructions
+before reasoning continues in the same turn. Intake sees only the current owner
+message and validated owner sources for the focused task and tasks explicitly
+named in that message. It never receives browser observations, assistant replies,
+or model-authored task titles as instruction evidence. An existing task can be
+selected conversationally by its exact ID or title; ambiguous names require
+clarification. `/work <work-id>` remains an explicit selection control.
 
-This uses the configured live model, not the offline demo's canned responses.
-Teaching extraction consumes one of the existing eight completions and shares the
-120-second turn deadline. Quotes are limited to 4096 UTF-8 bytes, interpretations
-to 2048 bytes, and changes/resolutions to eight each. Oversized required memory
-fails rather than silently dropping sources. Without the flag, legacy behavior
-is preserved. The foreground service does not expose this opt-in yet.
+The selected local thread and task survive restart. `/new` starts a separate thread;
+`/work clear` clears focus. `/work` lists tasks, advisory progress, next steps,
+blockers and actual recorded action states. Progress cannot approve actions, mark a
+task complete or turn an unknown effect into a retry. A checkpoint based on an older
+task revision is marked stale. Browser stop checkpoints retain historical source IDs;
+resuming exploration always obtains fresh observations and control references.
 
-Existing projection-v1 databases require explicit maintenance. Stop Behalvo first,
-retain a verified backup, then use the database and workspace IDs you normally use:
+Exact owner quotes and containing messages remain the source for instructions.
+Corrections advance the work revision and invalidate old approvals. Ambiguous
+corrections create a durable hold until a later owner message resolves it. Retired
+instructions remain in history but are excluded from active instruction memory.
+Instructions grant no execution authority. A new explicitly linked thread recalls
+the same active instructions.
+
+Intake and reasoning share eight completions and a 120-second deadline. Quotes are
+limited to 4096 UTF-8 bytes, interpretations to 2048 bytes, and changes/resolutions
+to eight each. Progress permits a 2048-byte summary, 1024-byte next step and blocker,
+and eight scoped references. Required context that exceeds its budget fails visibly.
+No vector service, automatic historical search, background task execution or
+long-history consolidation is added.
+
+Intake commits a receipt before reasoning. If inference later fails, memory may
+already be saved while the inbox stays pending. Explicit redelivery of that same
+pending owner record reuses its receipt, applies current instructions and does not
+restore an older focus. Completed deliveries are rejected before inference.
+
+New workspaces use projection v4. Existing v1–v3 databases need explicit maintenance.
+Stop Behalvo, retain a verified backup, then use the database and workspace you use:
 
 ```bash
-npm run storage -- upgrade-teachings --db <database> --workspace <workspace>
+npm run storage -- upgrade-continuity --db <database> --workspace <workspace>
 ```
 
-For an encrypted database, supply its existing `--key-file <key-file>`. This
-validates the journal and source payloads, replaces only the projection, and runs
-no models or effects. Opening or ordinarily writing a v1 database does not upgrade
-it. New databases use projection v3. Wrong keys or invalid sources reject the
-upgrade without replacing the old projection.
+For encrypted storage supply the existing `--key-file <key-file>`. Upgrade validates
+authenticated payloads and old projection against journal replay, initializes empty
+continuity state, and infers no historical focus. It runs no model or effect. Ordinary
+writes by legacy callers preserve their existing projection version. Wrong keys,
+corrupt sources or projection mismatches fail without replacing the projection.
 
-This delivers task memory (T1a). The synthetic exploration option below adds T1b;
-supervised live access and real booking remain separate work.
+`--task-teachings` remains accepted for compatibility. Library and service callers
+opt into continuity with `taskContinuity`; their existing teaching-only and legacy
+paths remain available. The offline CLI retains its deterministic smoke behavior.
+The foreground service UI does not enable continuity by default.
+
+This improves task memory and synthetic exploration continuity. Supervised live
+website access and real booking remain separate work.
 
 ## Teachable synthetic browser exploration
 
@@ -461,7 +476,7 @@ A process restart is not a memory boundary. A new thread is not a memory boundar
 
 Facts record two different times. `observedAt` is the timestamp of the source record from which the application learned the fact. `validFrom` is the time the fact became true and remains `null` when that onset is unknown. New model-proposed validity timestamps are accepted only as `YYYY-MM-DDTHH:mm:ssZ` or `YYYY-MM-DDTHH:mm:ss.sssZ` and when the exact timestamp appears verbatim in the current owner input; natural-language dates are not silently converted or backdated. This stricter admission rule does not reinterpret older schema-v1 journal timestamps, including their previously accepted fractional forms. The trusted `Operator.recordFact` API continues to accept explicit validity timestamps, and schema-v1 facts replay with their original validity while deriving `observedAt` from their source record.
 
-Raw history is retained even when it cannot fit into the model context. However, **automatic long-thread compaction and semantic retrieval are not implemented yet**. The current ContextBuilder loads a bounded recent raw tail plus source-bound summaries that already exist. The MVP uses structured WorkItems/Facts and opt-in owner-sourced task teachings for cross-thread durable memory; automated summary generation and historical retrieval are the next memory milestone.
+Raw history is retained even when it cannot fit into the model context. However, **automatic long-thread compaction and semantic retrieval are not implemented yet**. The current ContextBuilder loads a bounded recent raw tail plus source-bound summaries that already exist. The MVP uses structured WorkItems/Facts and owner-sourced task teachings, durable focus and advisory progress for cross-thread durable memory; automated summary generation and historical retrieval are the next memory milestone.
 
 ## Safety boundary
 

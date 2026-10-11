@@ -1,3 +1,4 @@
+import { emptyTaskContinuity, reduceTaskContinuity } from './task-continuity.js';
 import { emptyBrowserMemory, reduceBrowserLearning } from './browser-learning.js';
 import { reduceTeaching, assertTeachingClear } from './teachings.js';
 import { isDeepStrictEqual } from 'node:util';
@@ -7,8 +8,8 @@ import { exactObject, isOperationCommand, jsonValue, validateConnection, validat
 import { assertArmPlanCurrent, assertArmPlanReservationReady, boundedMonitorJitter, canonicalInstant, exactMonitoringObject,
     monitoredActionCommandDigest, validateDigest, validateGrant } from '../monitoring/policy.js';
 import type { MonitorState } from '../monitoring/types.js';
-export function emptyState(workspaceId: string, projectionVersion = 3): State {
-    return { ...(projectionVersion >= 3 ? {browserMemory:emptyBrowserMemory()} : {}), ...(projectionVersion >= 2 ? { teachingMemory: {teachings: {}, clarifications: {}} } : {}), workspaceId, ownerId: '', version: 0, works: {}, actions: {}, timers: {}, facts: {}, connections: {},
+export function emptyState(workspaceId: string, projectionVersion = 4): State {
+    return { ...(projectionVersion >= 4 ? {taskContinuity:emptyTaskContinuity()} : {}), ...(projectionVersion >= 3 ? {browserMemory:emptyBrowserMemory()} : {}), ...(projectionVersion >= 2 ? { teachingMemory: {teachings: {}, clarifications: {}} } : {}), workspaceId, ownerId: '', version: 0, works: {}, actions: {}, timers: {}, facts: {}, connections: {},
         monitoredActionGrants: {}, monitors: {} };
 }
 
@@ -729,6 +730,10 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             timer.status = event.type === 'timer.fired' ? 'fired' : 'cancelled';
             break;
         }
+        case 'task.focused':
+        case 'task.intake_recorded':
+        case 'task.progress_recorded':
+            reduceTaskContinuity(s,event); break;
         case 'browser.observed':
         case 'browser.note_recorded':
         case 'browser.note_retired':
