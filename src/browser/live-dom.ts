@@ -1,4 +1,4 @@
-/** Fixed application code, never a model-supplied script or selector. No field values. */
+/** Fixed application code, never a model-supplied script or selector. No text-field values. */
 export function describeLiveControl(node: Element) {
     const e=node as HTMLElement, input=node as HTMLInputElement;
     const style=getComputedStyle(e),rect=e.getBoundingClientRect();
