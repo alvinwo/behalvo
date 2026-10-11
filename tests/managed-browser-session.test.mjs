@@ -3,13 +3,13 @@ import { fixture, createWork, message } from './helpers.mjs';
 import { ManagedBrowserController } from '../dist/browser/managed-session.js';
 import { AgentService } from '../dist/runtime/agent-service.js';
 const execution=()=>({deadline:Date.now()+30000,signal:new AbortController().signal});
-async function setup(t){const f=await fixture(t);createWork(f);const r=f.store.ingest('personal',message('open',{text:'Open synthetic browser'}));
+async function setup(t,config={}){const f=await fixture(t);createWork(f);const r=f.store.ingest('personal',message('open',{text:'Open synthetic browser'}));
  const binding={workspaceId:'personal',ownerId:'owner',workId:'w',ownerRecordId:r.id,expectedWorkRevision:1,threadId:'im'};
- let now=Date.now(),closed=0,invalidated=0;const browsers=[];
- const controller=new ManagedBrowserController(f.store,async()=> 'approve',{
-   clock:()=>now,network:check=>({revision:1,async start(){check();},async close(){return{confirmed:true};}}),
-   browser:options=>{const browser={human:false,location:'https://example.test/',async open(ctx){return this.observe(ctx);},async observe(ctx){ctx.assertCurrent();return{workspaceId:ctx.workspaceId,workId:ctx.workId,workRevision:ctx.workRevision,sessionId:ctx.sessionId,generation:ctx.generation,id:crypto.randomUUID(),documentId:'doc',origin:'https://example.test',location:'/',observedAt:new Date().toISOString(),text:'Synthetic page',controls:[]};},async interact(ctx){return this.observe(ctx);},async retire(){},async close(){closed++;return{confirmed:true};},inputs(){return[];},inputPurpose(){throw new Error('No input');},invalidateInputs(){invalidated++;},async handoff(){this.human=true;},async resume(){this.human=false;}};browsers.push(browser);return browser;}
- });t.after(()=>controller.shutdown());return {...f,binding,controller,browsers,advance(ms){now+=ms;},closed:()=>closed,invalidated:()=>invalidated};}
+ let now=Date.now(),closed=0,invalidated=0,networks=0,networkClosed=0;const browsers=[];
+ const controller=new ManagedBrowserController(f.store,config.review??(async()=> 'approve'),{
+   clock:()=>now,network:check=>{networks++;return{revision:1,async start(){await config.start?.();check();},async close(){networkClosed++;return{confirmed:config.confirmed??true};}};},
+   browser:options=>{const browser={human:false,location:'https://example.test/',async open(ctx){return this.observe(ctx);},async observe(ctx){ctx.assertCurrent();return{workspaceId:ctx.workspaceId,workId:ctx.workId,workRevision:ctx.workRevision,sessionId:ctx.sessionId,generation:ctx.generation,id:crypto.randomUUID(),documentId:'doc',origin:'https://example.test',location:'/',observedAt:new Date().toISOString(),text:'Synthetic page',controls:[]};},async visit(ctx,url){this.location=url;return this.observe(ctx);},async interact(ctx){return this.observe(ctx);},async retire(){},async close(){closed++;return{confirmed:true};},inputs(){return[];},inputPurpose(){throw new Error('No input');},invalidateInputs(){invalidated++;},async handoff(){this.human=true;},async resume(){this.human=false;}};browsers.push(browser);return browser;}
+ });t.after(()=>controller.shutdown());return {...f,binding,controller,browsers,advance(ms){now+=ms;},closed:()=>closed,invalidated:()=>invalidated,networks:()=>networks,networkClosed:()=>networkClosed};}
 function context(binding){return{workspaceId:binding.workspaceId,workId:binding.workId,workRevision:binding.expectedWorkRevision,sessionId:'new-run',generation:1,execution:execution(),assertCurrent(){},resolveInput(){throw new Error('unused');}};}
 test('healthy lease retirement preserves session and access but revokes the old lease',async t=>{const f=await setup(t);await f.controller.open(f.binding,'https://example.test/',execution());
  const one=context(f.binding),port=await f.controller.borrow(one,f.binding);const first=await port.observe(one);assert.equal(f.closed(),0);
@@ -36,4 +36,32 @@ test('human mode blocks only the bound chat and never lends its session to anoth
  assert.throws(()=>f.controller.beforeTurn(f.binding));assert.doesNotThrow(()=>f.controller.beforeTurn({...f.binding,threadId:'unrelated'}));
  assert.equal(f.controller.available({...f.binding,threadId:'unrelated'}),false);await assert.rejects(f.controller.borrow(context(f.binding),{...f.binding,threadId:'unrelated'}));
  assert.equal(f.controller.status(f.binding).state,'human');assert.equal(f.controller.status(f.binding).location,undefined);
+});
+
+test('lazy exploration acquires no resources until visit and reuses the scoped session across turns',async t=>{
+ const f=await setup(t),options=f.controller.exploration(),ctx=context(f.binding);
+ assert.equal(options.sessionState(f.binding),'absent');assert.equal(options.available(f.binding),false);
+ const unused=await options.open(ctx,f.binding);assert.equal(f.networks(),0);
+ await assert.rejects(unused.observe(ctx));assert.equal(f.networks(),0);
+ assert.deepEqual(await unused.retire(true),{leaseRetired:true,sessionDisposition:'closed',cleanupConfirmed:true});
+ const port=await options.open(ctx,f.binding);await assert.rejects(port.visit(ctx,'http://localhost/'));assert.equal(f.networks(),0);
+ const first=await port.visit(ctx,'https://example.test/');await port.visit(ctx,'https://example.test/next');
+ assert.equal(f.networks(),1);assert.equal(f.browsers.length,1);await port.retire(true);
+ assert.equal(options.sessionState(f.binding),'connected');assert.equal(options.available(f.binding),true);
+ await assert.rejects(port.visit(ctx,'https://example.test/late'));
+ const nextContext=context(f.binding),next=await options.open(nextContext,f.binding);const later=await next.visit(nextContext,'https://example.test/later');
+ assert.equal(first.sessionId,later.sessionId);assert.ok(later.generation>first.generation);assert.equal(f.networks(),1);await next.retire(true);
+});
+for(const confirmed of [true,false])test(`lazy creation cancellation owns pending resources and reports cleanup ${confirmed}`,async t=>{
+ let release,started;const ready=new Promise(r=>started=r),pending=new Promise(r=>release=r);
+ const f=await setup(t,{confirmed,start:async()=>{started();await pending;}}),ctx=context(f.binding),abort=new AbortController();ctx.execution.signal=abort.signal;
+ const port=await f.controller.exploration().open(ctx,f.binding);const visit=port.visit(ctx,'https://example.test/');const failed=assert.rejects(visit);
+ await ready;abort.abort();const result=await port.retire(false);assert.equal(result.sessionDisposition,'closed');assert.equal(result.cleanupConfirmed,confirmed);
+ release();await failed;assert.equal(f.browsers.length,0);assert.equal(f.networkClosed(),1);assert.equal(f.controller.available(f.binding),false);
+ assert.equal((await f.controller.shutdown()).confirmed,confirmed);
+});
+test('lazy port cannot allocate after retirement or a scope correction',async t=>{
+ const f=await setup(t),ctx=context(f.binding),port=await f.controller.exploration().open(ctx,f.binding);
+ f.operator.setWorkPhase('personal','owner','w','waiting_external');await assert.rejects(port.visit(ctx,'https://example.test/'));assert.equal(f.networks(),0);await port.retire(false);
+ await assert.rejects(port.visit(ctx,'https://example.test/'));assert.equal(f.networks(),0);
 });

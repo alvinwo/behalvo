@@ -21,7 +21,7 @@ export interface ManagedBrowserDependencies {
     network?:(assertActive:()=>void)=>PublicNetworkGate;
     browser?:(options:LivePlaywrightOptions)=>LivePlaywright;
 }
-type SessionState='idle'|'leased'|'human'|'closing'|'closed'|'faulted';
+type SessionState='starting'|'idle'|'leased'|'human'|'closing'|'closed'|'faulted';
 interface Session {
     key:string;id:string;scope:ManagedBrowserScope;revision:number;generation:number;expiresAt:number;state:SessionState;
     network:PublicNetworkGate;browser:LivePlaywright|undefined;binding:ManagedBrowserBinding|undefined;lease:BrowserExecution|undefined;
@@ -65,36 +65,91 @@ export class ManagedBrowserController {
         for(const session of this.#sessions.values())if(session.scope.workspaceId===scope.workspaceId&&session.scope.ownerId===scope.ownerId&&session.scope.threadId===scope.threadId){
             try{this.#checkSession(session);}catch{continue;}
             if(session.state==='human'||session.browser?.human)throw new Error(liveMessage('manualBlocked'));
-            if(session.state==='leased')throw new Error('Browser is busy');
+            if(session.state==='leased'||session.state==='starting')throw new Error('Browser is busy');
         }
     }
-    exploration():BrowserExplorationOptions{return {mode:'live',available:scope=>this.available(scope),beforeTurn:scope=>this.beforeTurn(scope),open:(context,binding)=>{
+    sessionState(scope:ManagedBrowserScope):'absent'|'connected'{
+        this.#checkScope(scope);const session=this.#sessions.get(this.#key(scope));
+        if(!session)return 'absent';this.#checkSession(session);return session.browser?'connected':'absent';
+    }
+    exploration():BrowserExplorationOptions{return {mode:'live',available:scope=>this.available(scope),sessionState:scope=>this.sessionState(scope),beforeTurn:scope=>this.beforeTurn(scope),open:async(context,binding)=>{
         if(!binding)throw new Error('Browser binding missing');const record=this.store.record(binding.workspaceId,binding.ownerRecordId);
-        if(record.event.type!=='message.received')throw new Error('Browser source missing');return this.borrow(context,{...binding,threadId:record.event.data.threadId});
+        if(record.event.type!=='message.received')throw new Error('Browser source missing');return this.#lazyPort(context,{...binding,threadId:record.event.data.threadId});
     }};}
-    async open(binding:ManagedBrowserBinding,url:string,execution:OperationExecutionContext):Promise<void>{
-        if(this.#stopped)throw new Error('Browser controller stopped');this.#binding(binding);assertExecutionActive(execution);
-        if(!this.store.inbox(binding.workspaceId).some(record=>record.id===binding.ownerRecordId))throw new Error('Browser opening instruction already handled');
-        assertNoUnknownBrowserAction(this.store.state(binding.workspaceId),binding.workId);const target=publicHttpsUrl(url);const key=this.#key(binding);
+    #reserve(binding:ManagedBrowserBinding):Session{
+        if(this.#stopped)throw new Error('Browser controller stopped');this.#binding(binding);
+        assertNoUnknownBrowserAction(this.store.state(binding.workspaceId),binding.workId);const key=this.#key(binding);
         if(this.#sessions.has(key))throw new Error('Close the existing browser before opening another');
         if(this.#sessions.size>=2)throw new Error('Browser session capacity reached');
         let session:Session;
         const network=(this.dependencies.network??(guard=>new PublicNetworkGate(guard)))(()=>this.#checkSession(session));
-        session={key,id:randomUUID(),scope:{workspaceId:binding.workspaceId,ownerId:binding.ownerId,threadId:binding.threadId,workId:binding.workId},revision:binding.expectedWorkRevision,generation:0,expiresAt:this.#clock()+600000,state:'idle',network,browser:undefined,binding:undefined,lease:undefined};
-        this.#sessions.set(key,session);
+        session={key,id:randomUUID(),scope:{workspaceId:binding.workspaceId,ownerId:binding.ownerId,threadId:binding.threadId,workId:binding.workId},revision:binding.expectedWorkRevision,generation:0,expiresAt:this.#clock()+600000,state:'starting',network,browser:undefined,binding:undefined,lease:undefined};
+        this.#sessions.set(key,session);return session;
+    }
+    async #prepare(session:Session,ownerOpen?:{sourceId:string;url:string}):Promise<void>{
+        await session.network.start();this.#checkSession(session);
+        session.browser=(this.dependencies.browser??(options=>new LivePlaywright(options)))({sessionId:session.id,threadId:session.scope.threadId,network:session.network,assertSession:()=>this.#checkSession(session),
+            perform:async(context,command,detail,gesture)=>{
+                if(session.lease!==context||!session.binding)throw new Error('Browser lease mismatch');
+                const result=await this.#broker.perform(session.binding,command,context.execution,{...gesture,
+                    review:(action,signal)=>{
+                        if(command.operation!=='open')return this.review(action,detail,signal);
+                        if(!ownerOpen||ownerOpen.sourceId!==session.binding?.ownerRecordId||ownerOpen.url!==command.url)throw new Error('Owner opening authority unavailable');
+                        ownerOpen=undefined;return Promise.resolve('approve');
+                    }});
+                if(result.status==='unknown'||result.status==='failed')void this.#close(session);
+                return result;
+            }});
+        session.state='idle';
+    }
+    /** Own partial allocation before awaiting it, so cancellation can always close it. */
+    #lazyPort(context:BrowserExecution,binding:ManagedBrowserBinding):SemanticBrowserPort{
+        let retired=false,session:Session|undefined,borrowed:SemanticBrowserPort|undefined,acquiring:Promise<SemanticBrowserPort>|undefined;
+        const check=()=>{
+            if(retired||this.#stopped)throw new Error('Browser lease retired');
+            assertExecutionActive(context.execution);context.assertCurrent();this.#binding(binding);
+            if(context.workspaceId!==binding.workspaceId||context.workId!==binding.workId||context.workRevision!==binding.expectedWorkRevision)throw new Error('Browser lease scope mismatch');
+        };check();
+        const guarded={...context,assertCurrent:check};
+        const stopped=()=>{if(session)void this.#close(session);};context.execution.signal?.addEventListener('abort',stopped,{once:true});
+        const detach=()=>context.execution.signal?.removeEventListener('abort',stopped);
+        const acquire=(create:boolean):Promise<SemanticBrowserPort>=>{
+            check();if(acquiring)return acquiring;
+            const existing=this.#sessions.get(this.#key(binding));
+            if(existing){this.#checkSession(existing);if(existing.state!=='idle'||!existing.browser)throw new Error('Browser is unavailable or in manual mode');session=existing;}
+            else{if(!create)throw new Error('Browser has no page');session=this.#reserve(binding);}
+            const owned=session;
+            acquiring=(async()=>{
+                if(!existing)await this.#prepare(owned);check();
+                const value=await this.borrow(guarded,binding);
+                if(retired){await value.close();throw new Error('Browser lease retired');}
+                borrowed=value;check();return value;
+            })();return acquiring;
+        };
+        const supplied=(value:BrowserExecution)=>{if(value!==context)throw new Error('Browser lease mismatch');check();};
+        return {
+            visit:async(value,url)=>{supplied(value);const target=publicHttpsUrl(url);const port=await acquire(true);check();return port.visit!(guarded,target.href);},
+            observe:async value=>{supplied(value);const port=await acquire(false);check();return port.observe(guarded);},
+            interact:async(value,command)=>{supplied(value);const port=await acquire(false);check();return port.interact(guarded,command);},
+            handoff:async()=>{const port=await acquire(false);check();await port.handoff!();},
+            retire:async healthy=>{
+                if(retired)throw new Error('Browser lease already retired');detach();
+                if(borrowed){const result=borrowed.retire!(healthy);retired=true;return result;}
+                retired=true;const result=session?await this.#close(session):{confirmed:true};
+                return{leaseRetired:result.confirmed,sessionDisposition:'closed',cleanupConfirmed:result.confirmed};
+            },
+            close:async()=>{retired=true;detach();return borrowed?borrowed.close():session?this.#close(session):{confirmed:true};}
+        };
+    }
+    async open(binding:ManagedBrowserBinding,url:string,execution:OperationExecutionContext):Promise<void>{
+        if(this.#stopped)throw new Error('Browser controller stopped');this.#binding(binding);assertExecutionActive(execution);
+        if(!this.store.inbox(binding.workspaceId).some(record=>record.id===binding.ownerRecordId))throw new Error('Browser opening instruction already handled');
+        const target=publicHttpsUrl(url),session=this.#reserve(binding);
         try{
-            await network.start();this.#checkSession(session);
-            session.browser=(this.dependencies.browser??(options=>new LivePlaywright(options)))({sessionId:session.id,threadId:binding.threadId,network,assertSession:()=>this.#checkSession(session),
-                perform:async(context,command,detail,gesture)=>{
-                    if(session.lease!==context||!session.binding)throw new Error('Browser lease mismatch');
-                    const result=await this.#broker.perform(session.binding,command,context.execution,{...gesture,
-                        review:(action,signal)=>command.operation==='open'?Promise.resolve('approve'):this.review(action,detail,signal)});
-                    if(result.status==='unknown'||result.status==='failed')void this.#close(session);
-                    return result;
-                }});
+            await this.#prepare(session,{sourceId:binding.ownerRecordId,url:target.href});
             const context:BrowserExecution={workspaceId:binding.workspaceId,workId:binding.workId,workRevision:binding.expectedWorkRevision,sessionId:session.id,generation:1,execution,assertCurrent:()=>this.#binding(binding),resolveInput:(id,origin,purpose)=>resolveStoredTaskInput(this.store,binding,id,origin,purpose)};
             const port=await this.borrow(context,binding);
-            const observation=await session.browser.open(session.lease!,target.href);context.assertCurrent();
+            const observation=await session.browser!.open(session.lease!,target.href);context.assertCurrent();
             recordBrowserObservation(this.store,binding,observation,()=>this.#binding(binding));
             const retired=await port.retire!(true);if(!retired.leaseRetired||retired.sessionDisposition!=='retained')throw new Error('Browser opening did not retain a session');
             this.store.completeInbox(binding.workspaceId,binding.ownerRecordId,this.store.state(binding.workspaceId).version,[]);
@@ -111,6 +166,7 @@ export class ManagedBrowserController {
         const stopped=()=>{void this.#close(session);};context.execution.signal?.addEventListener('abort',stopped,{once:true});
         const close=async()=>{retired=true;context.execution.signal?.removeEventListener('abort',stopped);return this.#close(session);};
         return {
+            visit:async(supplied,url)=>{if(supplied!==context)throw new Error('Browser lease mismatch');check();return session.browser!.visit(lease,url);},
             observe:async supplied=>{if(supplied!==context)throw new Error('Browser lease mismatch');check();return session.browser!.observe(lease);},
             interact:async(supplied,command)=>{if(supplied!==context)throw new Error('Browser lease mismatch');check();return session.browser!.interact(lease,command);},
             handoff:async()=>{check();await session.browser!.handoff();session.state='human';},

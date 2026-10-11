@@ -18,6 +18,7 @@ import type { OperationLoopResult } from './operation-loop.js';
 import { browserMessage } from './browser-messages.js';
 export interface BrowserExplorationOptions {
     mode?:'synthetic'|'live';
+    sessionState?(scope:{workspaceId:string;ownerId:string;threadId:string;workId:string}):'absent'|'connected';
     available?(scope:{workspaceId:string;ownerId:string;threadId:string;workId:string}):boolean;
     beforeTurn?(scope:{workspaceId:string;ownerId:string;threadId:string}):void;
     open(context:BrowserExecution,binding?:TeachingBinding):Promise<SemanticBrowserPort>;
