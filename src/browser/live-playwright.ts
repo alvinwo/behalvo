@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { request as playwrightRequest, type APIRequestContext, type Browser, type Page } from 'playwright';
+import type { APIRequestContext, Browser, Page } from 'playwright';
 import type { BrowserActionCommand } from '../kernel/browser-action.js';
 import { parseBrowserCommand, resolveControl, sameScope, validateObservation } from '../kernel/browser-contract.js';
 import type { BrowserGestureExecution, BrowserGestureResult } from '../runtime/browser-actions.js';
@@ -50,6 +50,7 @@ export class LivePlaywright {
         this.#assertSession();
         // Never use the browser's shared APIRequestContext: it overrides Chromium's
         // Cookie omission and imports Set-Cookie before browser credential policy runs.
+        const {request:playwrightRequest}=await import('playwright');
         const requests=await playwrightRequest.newContext({proxy:{server:this.options.network.proxyUrl},ignoreHTTPSErrors:this.dependencies.ignoreHTTPSErrors===true,timeout:10000});
         if(this.#closed){await requests.dispose();throw new Error('Browser closed during startup');}this.#requests=requests;
         let page:Page|undefined;
