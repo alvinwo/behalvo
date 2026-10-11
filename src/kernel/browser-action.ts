@@ -2,7 +2,10 @@ import { exact, text, parseBrowserCommand } from './browser-contract.js';
 import type { State } from './types.js';
 
 /** Audit-only description. Persisted refs never reconnect a browser or authorize a new lease. */
-export type LiveBrowserGesture = Exclude<import('./browser-types.js').BrowserCommand, {kind:'request_login'}>;
+export type LiveBrowserGesture =
+    {kind:'navigate'|'click';observationId:string;ref:string} |
+    {kind:'fill';observationId:string;ref:string;taskInputId:string} |
+    {kind:'select';observationId:string;ref:string;optionRef:string};
 export type BrowserActionCommand = {
     kind: 'browser.gesture'; version: 1;
     threadId: string; sessionId: string; generation: number; grantRevision: number; origin: string;

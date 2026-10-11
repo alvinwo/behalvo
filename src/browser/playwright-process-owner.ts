@@ -7,6 +7,8 @@ import type { Browser, BrowserServer, BrowserType } from 'playwright';
 import { bounded, failureCode, PlaywrightDiagnosticError, type PlaywrightFailureCode } from './playwright-errors.js';
 
 export interface PlaywrightOwnerDependencies {
+  /** Application-owned checked-address proxy; never supplied by CLI/model configuration. */
+  networkProxy?: string;
   /** Trusted composition seams, never exposed through CLI arguments or model tools. */
   loadChromium?: () => Promise<BrowserType>;
   environment?: NodeJS.ProcessEnv;
@@ -83,8 +85,11 @@ export class PlaywrightProcessOwner {
       for (const key of ['PATH', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'DISPLAY', 'XAUTHORITY', 'SYSTEMROOT', 'WINDIR']) {
         if (environment[key]) childEnvironment[key] = environment[key]!;
       }
+      const proxy=this.dependencies.networkProxy;
+      if(proxy){const url=new URL(proxy);if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||url.username||url.password||url.pathname!=='/'||url.search||url.hash)throw new PlaywrightDiagnosticError('protocol_rejected');}
       this.#receipt.phase = 'launching'; this.#write(); this.#launched = true;
       const launch = chromium.launchServer({ host: '127.0.0.1', port: 0, headless: false,
+        ...(proxy?{proxy:{server:proxy},args:['--proxy-bypass-list=<-loopback>','--disable-quic','--force-webrtc-ip-handling-policy=disable_non_proxied_udp','--disable-features=WebTransport,MediaRouter']}:{}),
         chromiumSandbox: true, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false,
         timeout: Math.max(1, deadline - Date.now()), env: childEnvironment });
       // Register ownership before racing cancellation; late handles never become usable.

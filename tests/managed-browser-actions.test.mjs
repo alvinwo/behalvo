@@ -36,3 +36,12 @@ test('late dispatch completion cannot overwrite an unknown settlement',async t=>
 test('changed task during review cancels without dispatch',async t=>{
  const f=await setup(t);const result=await f.broker.perform(f.binding,command,execution(),{review:async()=>{f.operator.setWorkPhase('personal','owner','w','waiting_external');return 'approve';},validate:async()=>{},dispatch:async()=>assert.fail('stale')});assert.equal(result.status,'rejected');assert.equal(Object.values(f.store.state('personal').actions)[0].status,'cancelled');
 });
+test('deterministic browser action validation rejects a forged digest and enforces unknown barrier',async t=>{
+ const f=await setup(t);const append=e=>f.store.append('personal',f.store.state('personal').version,[e]);
+ const action={id:'forged',workId:'w',workRevision:1,key:'forged',command,digest:'0'.repeat(64),status:'proposed'};
+ assert.throws(()=>append({type:'action.proposed',data:{action}}),/digest/i);
+ const first=await f.broker.perform(f.binding,command,execution(),{review:async()=> 'approve',validate:async()=>{},dispatch:async mark=>{mark();throw new Error('unknown');}});
+ const replacement={...action,id:'replacement',key:'replacement',digest:commandDigest('personal','w',1,command)};
+ append({type:'action.proposed',data:{action:replacement}});append({type:'action.approved',data:{id:'replacement',approval:{ownerId:'owner',digest:replacement.digest,expiresAt:new Date(Date.now()+10000).toISOString()}}});
+ assert.throws(()=>append({type:'action.started',data:{id:'replacement',attemptId:'attempt'}}),/unknown|unresolved/i);assert.equal(f.store.state('personal').actions[first.actionId].status,'unknown');
+});

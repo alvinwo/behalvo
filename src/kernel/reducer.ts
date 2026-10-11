@@ -1,4 +1,5 @@
 import { assertNoUnknownBrowserAction, isBrowserActionCommand, validateBrowserActionCommand } from './browser-action.js';
+import { commandDigest } from './policy.js';
 import { emptyTaskContinuity, reduceTaskContinuity } from './task-continuity.js';
 import { emptyBrowserMemory, reduceBrowserLearning } from './browser-learning.js';
 import { reduceTeaching, assertTeachingClear } from './teachings.js';
@@ -601,6 +602,7 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             if (isOperationCommand(a.command)) validateOperationCommand(a.command);
             if (isBrowserActionCommand(a.command)) {
                 validateBrowserActionCommand(a.command);
+                if(a.digest!==commandDigest(s.workspaceId,a.workId,a.workRevision,a.command))throw new Error('Browser command digest mismatch');
                 if(!w.threadIds.includes(a.command.threadId))throw new Error('Browser action thread mismatch');
             }
             if (a.workRevision !== w.revision)
