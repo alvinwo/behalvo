@@ -1,4 +1,5 @@
 import type { TaskContinuity, TaskContinuityEvent } from './task-continuity.js';
+import type { BrowserActionCommand } from './browser-action.js';
 import type { BrowserMemory, BrowserLearningEvent } from './browser-learning.js';
 import type { TeachingMemory, TeachingEvent } from './teachings.js';
 /** Domain data is transport- and model-independent. No provider session owns it. */
@@ -17,7 +18,7 @@ export interface MessageCommand {
     to: string;
     body: string;
 }
-export type Command = MessageCommand | OperationCommand;
+export type Command = MessageCommand | OperationCommand | BrowserActionCommand;
 export interface WorkItem {
     id: string;
     title: string;

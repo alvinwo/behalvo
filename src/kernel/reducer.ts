@@ -1,3 +1,4 @@
+import { assertNoUnknownBrowserAction, isBrowserActionCommand, validateBrowserActionCommand } from './browser-action.js';
 import { emptyTaskContinuity, reduceTaskContinuity } from './task-continuity.js';
 import { emptyBrowserMemory, reduceBrowserLearning } from './browser-learning.js';
 import { reduceTeaching, assertTeachingClear } from './teachings.js';
@@ -598,6 +599,10 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
                 throw new Error('Invalid initial action state');
             if (a.verification) throw new Error('Invalid initial action verification');
             if (isOperationCommand(a.command)) validateOperationCommand(a.command);
+            if (isBrowserActionCommand(a.command)) {
+                validateBrowserActionCommand(a.command);
+                if(!w.threadIds.includes(a.command.threadId))throw new Error('Browser action thread mismatch');
+            }
             if (a.workRevision !== w.revision)
                 throw new Error('Stale work revision');
             if (Object.hasOwn(s.actions, a.id) || Object.values(s.actions).some(x => x.key === a.key))
@@ -625,6 +630,10 @@ export function reduce(previous: State, event: DomainEvent, seq: number, legacyF
             assertTeachingClear(s,a.workId);
             if (work.revision !== a.workRevision || ['done', 'cancelled'].includes(work.phase))
                 throw new Error('Stale or closed work authorization');
+            if(isBrowserActionCommand(a.command)) {
+                validateBrowserActionCommand(a.command);
+                assertNoUnknownBrowserAction(s,a.workId);
+            }
             if (isOperationCommand(a.command)) {
                 validateOperationCommand(a.command);
                 const command = a.command;
