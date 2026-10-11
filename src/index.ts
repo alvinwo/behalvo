@@ -82,6 +82,8 @@ export { startSyntheticPortal } from './synthetic-portal/server.js';
 export type { SyntheticPortalServer } from './synthetic-portal/server.js';
 export type * from './secrets/types.js';
 export { SyntheticSecretProvider } from './secrets/synthetic.js';
+export { LocalCredentialVault } from './vault/local-vault.js';
+export type { VaultScope, LoginMetadata, LoginReference, LoginInput, LoginBytes, VaultOperationOptions } from './vault/types.js';
 export { KeychainSecretProvider, NativeKeychainHelperTransport } from './secrets/keychain.js';
 export type { KeychainHelperRequest, KeychainHelperResponse, KeychainHelperTransport,
   NativeHelperLaunch, NativeHelperLaunchResult, NativeKeychainHelperTransportOptions } from './secrets/keychain.js';

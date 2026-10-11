@@ -1,6 +1,6 @@
 # Local credential vault design
 
-Date: 2026-10-11. Status: proposed for delegated architecture review.
+Date: 2026-10-11. Status: approved by delegated Astra/max architecture reviewer.
 
 ## Intent and scope
 
@@ -59,8 +59,10 @@ whitespace; invalid UTF-8/unpaired surrogates and control characters in metadata
 are refused. Values are neither interpolated into errors nor printed.
 
 An entry is bound to workspace ID, owner ID and exact canonical origin. HTTPS is
-required for ordinary entries. Explicit synthetic entries allow only an exact
-`http://127.0.0.1:<port>` origin. No wildcard, suffix, inferred subdomain, URL path,
+required for ordinary entries. Synthetic HTTP is available only through the
+owned compiled login fixture at `http://127.0.0.1:43118`; startup fails if its
+reserved port is occupied. Owner/model-selected arbitrary HTTP origins are refused.
+No wildcard, suffix, inferred subdomain, URL path,
 userinfo, query or fragment matching. Distinct ports are distinct origins.
 Each new entry gets a random opaque ID. Replacement increments revision; removal
 keeps a non-secret tombstone so stale IDs cannot become valid again. Updates use
@@ -78,6 +80,9 @@ canonical/identity collision checks against database/companions, auth, settings,
 key files and locks. Existing `storage keygen` provisions the key. The vault is
 opt-in and fails closed on wrong key, corruption, plaintext, unsafe permissions,
 symlink/hardlink, missing previously observed state or unsupported platform.
+Creation is explicit through `/vault init` with trusted owner confirmation. Normal
+unlock/read/update/use requires an existing initialized document, including after
+restart; a missing file never silently becomes a new empty vault.
 
 The local process, its UID, root and trusted path ancestors remain inside the
 trust boundary. Lock clears owned key/borrowed byte buffers and denies new uses;
@@ -94,7 +99,8 @@ lock and unlock. Add/replace prompts for metadata, then hidden username/password
 no command accepts a password argument. All vault prompts bypass ordinary
 chat/history. Invalid vault commands produce fixed usage text, never echo values.
 Without a configured vault, display setup guidance. Hidden entry must be available;
-no plaintext prompt fallback. EOF, cancellation and run expiry leave no entry.
+no plaintext prompt fallback. EOF, cancellation and run expiry before publication
+leave no new entry.
 
 The agent can request a login from the current synthetic login control. Trusted
 code derives the destination from the browser observation, not from model text.
@@ -124,7 +130,8 @@ operation. It exposes a typed current login control and only schema-recognized,
 constant status text. It does not expose general DOM text after credential entry.
 The runtime accepts `request_login` with only current observation/control IDs;
 no URL, selector, account password, code or arbitrary browser options are accepted.
-The model sees success, skipped, unavailable or stopped and a fresh sanitized
+The model sees success, skipped, unavailable, stopped-before-dispatch or unknown
+after uncertain dispatch and a fresh sanitized
 observation. No raw exceptions or submitted form values enter its transcript.
 
 The adapter owns a disposable Chromium profile. Network policy is limited to the
@@ -136,6 +143,9 @@ types and form method/action immediately before filling; request interception
 rechecks the one-use permission before sending the POST. Values never enter URLs,
 command arguments, environment, traces or screenshots. Credentials travel only
 inside the trusted process, private browser connection and exact allowed request.
+The form must own exactly the two expected fields, have no alternate target, and
+use the fixed POST endpoint. Interception also verifies content type and exact
+body field shape before consuming permission synchronously at final dispatch.
 
 In-flight disclosure cannot be recalled. Removal/lock prevents a new dispatch but
 cannot unsend an already issued request. A timeout or uncertain dispatch ends the
@@ -148,6 +158,8 @@ may explain the sanitized result but cannot continue using an authenticated
 session. Failure to confirm browser cleanup keeps the runtime's existing cleanup
 hold active. This is the smallest end-to-end credential use boundary for this
 slice, not evidence that authenticated general exploration is implemented.
+After an attempt the sanitized observation has no controls and the runtime accepts
+only a final model answer; it cannot reopen the port or resubmit in the same turn.
 
 ## Acceptance and completion
 
