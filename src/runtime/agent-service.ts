@@ -1,3 +1,6 @@
+import { assertBrowserWork } from './browser-learning.js';
+import { runBrowserExploration, type BrowserExplorationOptions } from './browser-exploration.js';
+import { browserMessage } from './browser-messages.js';
 import { extractTeachings } from './teaching-extractor.js';
 import { prepareTeachingEvents } from './teachings.js';
 import { teachingHold } from '../kernel/teachings.js';
@@ -60,13 +63,14 @@ export class AgentService {
   readonly #workspaceId: string | undefined;
   readonly #clock: () => string;
   readonly #timeoutMs: number;
+  #browserCleanupPending = false;
 
   constructor(
     private readonly store: SqliteStore,
     private readonly gateway: ModelGateway,
     clock: () => string = () => new Date().toISOString(),
     operations?: OperationLoopOptions,
-    private readonly features: { teachingMode?: boolean } = {}
+    private readonly features: { teachingMode?: boolean; browser?: BrowserExplorationOptions } = {}
   ) {
     this.#timeoutMs = operations?.timeoutMs ?? 120000;
     this.#operator = new Operator(store, clock);
@@ -98,7 +102,7 @@ export class AgentService {
       const work = state.works[input.workId];
       if (!work)
         throw new Error(`Work not found: ${input.workId}`);
-      if (!work.threadIds.includes(input.threadId) && this.features.teachingMode) throw new Error('Thread must be explicitly linked to work');
+      if (!work.threadIds.includes(input.threadId) && (this.features.teachingMode || this.features.browser || Object.values(state.browserMemory?.notes ?? {}).some(n=>n.workId===work.id))) throw new Error('Thread must be explicitly linked to work');
       if (!work.threadIds.includes(input.threadId))
         this.#operator.linkThread(input.workspaceId, input.ownerId, input.workId, input.threadId);
     }
@@ -139,7 +143,12 @@ export class AgentService {
     admitted?: { job: ServiceJob; fence: TrustedExecutionFence }): Promise<AgentTurnResult> {
 
     const teachingEvents: DomainEvent[] = [];
-    const teachingEnabled = this.features.teachingMode === true;
+    const hasNotes = !!input.workId && Object.values(this.store.state(input.workspaceId).browserMemory?.notes ?? {}).some(n=>n.workId===input.workId&&n.status==='candidate');
+    const explorationEnabled = !!input.workId && (!!this.features.browser || hasNotes);
+    const teachingEnabled = this.features.teachingMode === true || explorationEnabled;
+    const browserEvents: DomainEvent[] = [];
+    let browserCommitGuard: (()=>void) | undefined;
+    if (explorationEnabled && this.#browserCleanupPending) throw new Error('Previous browser cleanup remains unconfirmed');
     const controller = teachingEnabled && !admitted ? new AbortController() : undefined;
     const timer = controller ? setTimeout(()=>controller.abort(),this.#timeoutMs) : undefined;
     try {
@@ -201,6 +210,18 @@ export class AgentService {
     request.prompt = context.text;
     let result: OperationLoopResult;
     if (teachingReply !== undefined) result = {turn:{reply:teachingReply,workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution!.deadline};
+    else if (explorationEnabled) {
+      if(!input.workId)throw new Error('Focus an explicitly linked work item before browsing');
+      const state=this.store.state(input.workspaceId);
+      if(!state.browserMemory)throw new Error(browserMessage('upgrade'));
+      const browserBinding={workspaceId:input.workspaceId,ownerId:input.ownerId,workId:input.workId,ownerRecordId:ownerRecord.id,expectedWorkRevision:state.works[input.workId]!.revision};
+      browserCommitGuard=()=>{try{const current=assertBrowserWork(this.store,browserBinding);if(teachingHold(current,browserBinding.workId))throw new Error('Clarification pending');}catch{throw new OperationStoppedError();}};
+      const browserResult=await runBrowserExploration(this.store,this.gateway,request,
+        browserBinding,
+        execution!,this.features.browser,extracted?7:8,binding.inputBudgetBytes,context.includedBrowserSourceIds);
+      this.#browserCleanupPending=!browserResult.cleanupConfirmed;
+      browserEvents.push(...browserResult.events);result=browserResult;
+    }
     else if (this.#loop) result = await this.#loop.run(this.gateway, request, binding);
     else if (!admitted) result = await withinExecution(()=>this.gateway.complete(execution?.signal ? {...request,signal:execution.signal} : request),execution).then(response => ({ turn: parseAgentTurn(response.text),
       applicationAuthored: false, ...(execution ? {deadline:execution.deadline} : {}), ...(response.providerResponseId ? { providerResponseId: response.providerResponseId } : {}) }));
@@ -224,11 +245,11 @@ export class AgentService {
 
     const current = this.store.state(input.workspaceId);
     const proposedWorkIds = new Set<string>();
-    const events: DomainEvent[] = [...teachingEvents];
+    const events: DomainEvent[] = [...teachingEvents,...browserEvents];
 
     try {
       if (teachingEnabled && turn.factProposals.length) throw new Error('Task teaching mode does not accept legacy facts');
-      if ((!applicationAuthored || teachingEvents.length>0) && result.deadline !== undefined && Date.now() >= result.deadline)
+      if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0)) && result.deadline !== undefined && Date.now() >= result.deadline)
         throw new Error('Run deadline');
       for (const proposal of turn.workProposals) {
         if (Object.hasOwn(current.works, proposal.id) || proposedWorkIds.has(proposal.id))
@@ -264,7 +285,7 @@ export class AgentService {
 
       let preview = current;
       for (const event of events) preview = reduce(preview, event, preview.version + 1);
-      if ((!applicationAuthored || teachingEvents.length>0) && result.deadline !== undefined && Date.now() >= result.deadline)
+      if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0)) && result.deadline !== undefined && Date.now() >= result.deadline)
         throw new Error('Run deadline');
     } catch (error) {
       if (!this.#loop && !teachingEnabled) throw error;
@@ -286,7 +307,8 @@ export class AgentService {
         reason: stopReason, at: this.#clock()
       }, () => {
         admitted.fence.assertSettlementCurrent?.();
-        if (!applicationAuthored || teachingEvents.length>0 || !admitted.fence.assertSettlementCurrent)
+        if(!applicationAuthored || browserEvents.length>0)browserCommitGuard?.();
+        if (!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0) || !admitted.fence.assertSettlementCurrent)
           assertExecutionActive({ signal: admitted.fence.signal, deadline: execution?.deadline ?? admitted.fence.deadline });
       });
       const assistantRecord = completed.records.find((record): record is JournalRecord =>
@@ -321,13 +343,13 @@ export class AgentService {
     };
     const finalVersion = this.store.state(input.workspaceId).version;
     // Check before entry and after SQLite obtains its writer lock; lock waits may exceed the deadline.
-    if ((!applicationAuthored || teachingEvents.length>0) && result.deadline !== undefined && Date.now() >= result.deadline) deadlineStop();
+    if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0)) && result.deadline !== undefined && Date.now() >= result.deadline) deadlineStop();
     let committed: JournalRecord[];
     try {
       committed = this.store.completeInbox(input.workspaceId, ownerRecord.id, finalVersion, events,
-        (!applicationAuthored || teachingEvents.length>0) && result.deadline !== undefined ? () => assertExecutionActive({ deadline: result.deadline! }) : undefined);
+        (!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0)) && result.deadline !== undefined ? () => {assertExecutionActive({ deadline: result.deadline!, ...(execution?.signal?{signal:execution.signal}:{}) });if(!applicationAuthored || browserEvents.length>0)browserCommitGuard?.();} : undefined);
     } catch (error) {
-      if (!(error instanceof OperationStoppedError) || (applicationAuthored && teachingEvents.length===0)) throw error;
+      if (!(error instanceof OperationStoppedError) || (applicationAuthored && teachingEvents.length===0 && browserEvents.length===0)) throw error;
       deadlineStop();
       committed = this.store.completeInbox(input.workspaceId, ownerRecord.id, this.store.state(input.workspaceId).version, events);
     }

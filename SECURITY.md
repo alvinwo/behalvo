@@ -236,3 +236,30 @@ handoff retirement, without granting a reusable epoch. The run is bounded to
 180 seconds plus 5 seconds cleanup; pending browser ownership attempts retain per-owner receipts and forbid
 automatic restart. Pending portal/service startup also exits 3 but may have no
 browser receipt if no owner was created. No personal profile, credentials, live account or model is used.
+
+## Synthetic semantic browser learning (T1b)
+
+`--synthetic-browser` exposes only three application-owned loopback fixtures in a
+fresh visible disposable Chromium session. The model chooses observed controls;
+a reviewed request-shape allowlist independently permits only fixture exploration.
+There is no real URL option, persistent profile, arbitrary selector/script tool,
+legacy operation tool, or booking authority. JavaScript and unreviewed channels are
+disabled. This is an application boundary, not an OS network sandbox.
+
+Each observation and control reference is scoped to workspace, task revision,
+session and document. Interactions check freshness across awaits and before
+request dispatch. Free-text fills require exact owner-sourced input bindings for
+the current task revision, destination origin and reviewed field purpose; the
+model cannot author or retarget values. Revocation is rechecked at dispatch.
+Selection uses only current observed option references and the same independent
+request policy. Unknown targets, redirects, downloads and popups are denied.
+
+Journaled observations and candidate navigation notes are untrusted evidence,
+separate from owner teachings, approvals and facts. Historical context omits live
+control references; restart is read/reduce only. Final notes and replies settle
+atomically after task freshness checks. Teaching extraction and exploration share
+eight model calls and one deadline. Unconfirmed browser cleanup blocks later
+browser turns in that agent instance and preserves process-owner receipts.
+Projection v3 requires explicit validated maintenance for existing databases.
+Synthetic acceptance does not establish live-site compatibility or credential
+custody; those remain T2 prerequisites, with consequential actions gated in T3.

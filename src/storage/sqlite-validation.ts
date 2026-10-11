@@ -1,3 +1,4 @@
+import { validateBrowserSources, type BrowserLearningEvent } from '../kernel/browser-learning.js';
 import { validateTeachingSource, type TeachingEvent } from '../kernel/teachings.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
@@ -549,6 +550,7 @@ export function verifyEncryptedDatabase(db: DatabaseSync, cipher: PayloadCipher)
                     requireValid(record.causationId === source.id && !handled.has(source.id));
                     handled.add(source.id);
                 }
+                if (event.type.startsWith('browser.')) validateBrowserSources(state,event as BrowserLearningEvent,id=>{const r=prior.get(id);requireValid(r);return r;},requireArtifact);
                 if (event.type.startsWith('teaching.')) validateTeachingSource(state,event as TeachingEvent,id=>{const r=prior.get(id);requireValid(r);return r;},requireArtifact);
                 state = reduce(state, event, record.seq, observedAt);
                 prior.set(record.id, record);

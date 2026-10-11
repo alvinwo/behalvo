@@ -1,7 +1,11 @@
 # Semantic Browser Exploration Implementation Plan
 
 Status: approved by delegated Astra/max architecture review after focused amendments
-on 2026-10-09. No T1b code is implemented by this document.
+on 2026-10-09. Tasks 1–4 are implemented; Task 5 release gates are tracked in
+[verification](../../verification/2026-10-10-semantic-browser-exploration.md).
+The original checklist below is retained as the planned scope, not a claim that
+every named adversarial variation received an individual test. See recorded tests
+and limitations for actual coverage.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans. The primary agent remains the sole writer; the owner delegates technical review to specialists.
 
