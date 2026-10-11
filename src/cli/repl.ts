@@ -1,4 +1,9 @@
 import { restoreTaskThread, selectTaskThread } from '../runtime/task-continuity.js';
+import { handleBrowserCommand, displayBrowserActions } from './browser-commands.js';
+import { liveMessage } from '../browser/live-messages.js';
+import type { ManagedBrowserController } from '../browser/managed-session.js';
+import { handleSessionCommand } from './session-commands.js';
+import { memoryMessage } from '../memory/messages.js';
 import { taskStatusLines } from '../runtime/task-messages.js';
 import { inputMessage } from './input-messages.js';
 import { handleVaultCommand } from './vault-commands.js';
@@ -33,6 +38,7 @@ export interface ReplAuthenticator {
 }
 
 export interface ReplOptions {
+  managedBrowser?: ManagedBrowserController;
   vault?: LocalCredentialVault;
   store: SqliteStore;
   registry: ModelRegistry;
@@ -58,14 +64,12 @@ const HELP = `Commands:
 /model                        List models
 /model <provider> <model>     Select model
 /login <provider> <oauth|api_key>  Run provider-owned login
-/new [thread-id]              Start a new communication thread
 /work                         List durable work
 /work <work-id>               Focus work in the current thread
 /work clear                   Clear focused work
 /actions                      Display exact operations for focused work
 /approve <action-id> <digest> Approve a command displayed by /actions (ten minutes)
 /state                        Show projected state
-/history [limit]              Show recent journal records
 /context                      Show base context (without loop protocol/transcript)
 /quit                         Exit`;
 
@@ -84,6 +88,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   for (;;) {
     const raw = await (io.readPrompt ? io.readPrompt('You > ') : io.readLine('You > '));
     if (raw === null) return { reason: 'eof', threadId, ...(workId ? { workId } : {}) };
+    if(await handleBrowserCommand(raw,{store,...(options.managedBrowser?{controller:options.managedBrowser}:{}),scope:{workspaceId,ownerId,threadId,...(workId?{workId}:{})},io}))continue;
     if (await handleVaultCommand(raw, { ...(options.vault ? { vault: options.vault } : {}), io,
       scope: { workspaceId, ownerId } })) continue;
     const multiline = /[\r\n]/.test(raw);
@@ -93,10 +98,12 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
     if (!multiline && line.startsWith('/')) {
       const [command, ...args] = line.split(/\s+/);
       try {
+        const session=handleSessionCommand(store,{workspaceId,ownerId,threadId,...(workId?{workId}:{})},line,service.continuityEnabled,line=>io.write(line));
+        if(session){threadId=session.threadId;workId=session.workId;continue;}
         if (command === '/quit')
           return { reason: 'quit', threadId, ...(workId ? { workId } : {}) };
         if (command === '/help') {
-          io.write(HELP+'\n'+inputMessage('help')+'\n'+browserMessage('help')+'\n'+vaultMessage('help'));
+          io.write(HELP+'\n'+memoryMessage('help')+'\n'+inputMessage('help')+'\n'+browserMessage('help')+'\n'+liveMessage('help')+'\n'+vaultMessage('help'));
           continue;
         }
         if(command==='/browser-input'||command==='/browser-revoke') {
@@ -169,15 +176,6 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           io.write(`Login complete for ${args[0]} (${credential.type}).`);
           continue;
         }
-        if (command === '/new') {
-          if (args.length > 1) throw new Error('Usage: /new [thread-id]');
-          const nextThread=args[0] ?? `local-${randomUUID()}`;
-          if(service.continuityEnabled)selectTaskThread(store,workspaceId,ownerId,nextThread,null,true);
-          threadId = nextThread;
-          workId = undefined;
-          io.write(`New thread: ${threadId}`);
-          continue;
-        }
         if (command === '/work') {
           if (args.length === 0) {
             const works = Object.values(store.state(workspaceId).works);
@@ -218,8 +216,8 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         }
         if (command === '/actions') {
           if (args.length !== 0) throw new Error('Usage: /actions');
-          if (!review) throw new Error('Operation service is unavailable');
-          review.display(workId, line => io.write(line));
+          displayBrowserActions(store,{workspaceId,ownerId,threadId,...(workId?{workId}:{})},line=>io.write(line));
+          review?.display(workId, line => io.write(line));
           continue;
         }
         if (command === '/approve') {
@@ -229,16 +227,6 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         }
         if (command === '/state') {
           io.write(JSON.stringify(store.state(workspaceId), null, 2));
-          continue;
-        }
-        if (command === '/history') {
-          if (args.length > 1) throw new Error('Usage: /history [limit]');
-          const limit = args[0] === undefined ? 20 : Number(args[0]);
-          if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 200)
-            throw new Error('History limit must be an integer from 1 to 200');
-          const records = store.journal(workspaceId).slice(-limit);
-          for (const record of records)
-            io.write(`${record.seq} ${record.recordedAt} ${record.event.type} ${record.id}`);
           continue;
         }
         if (command === '/context') {

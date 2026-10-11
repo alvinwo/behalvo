@@ -1,4 +1,7 @@
 import { startSemanticFixture, type SemanticSite } from '../browser/semantic-fixture-sites.js';
+import { ManagedBrowserController } from '../browser/managed-session.js';
+import { liveMessage } from '../browser/live-messages.js';
+import { reviewBrowserGesture } from './browser-commands.js';
 import { SemanticPlaywright } from '../browser/semantic-playwright.js';
 import { startSyntheticLoginFixture } from '../browser/synthetic-login-fixture.js';
 import { SyntheticLoginBrowser } from '../browser/synthetic-login-browser.js';
@@ -34,6 +37,7 @@ export interface CliArgs {
   syntheticOperations: boolean;
   teachingMode?: boolean;
   semanticSite?: SemanticSite | 'login';
+  liveBrowser?: boolean;
   dbPath: string;
   authPath: string;
   workspaceId: string;
@@ -84,10 +88,14 @@ export function parseCliArgs(argv: string[]): CliArgs {
     !offline
   );
   const semanticSite=valueAfter(argv,'--synthetic-browser');
+  const liveBrowser=valueAfter(argv,'--browser');
+  if(argv.filter(value=>value==='--browser').length>1||argv.some(value=>/^--(?:browser=|browser-|proxy|cdp|profile|ignore-https-errors|allow-localhost|resolver)/.test(value))||
+    liveBrowser&&(liveBrowser!=='live'||offline||semanticSite||argv.includes('--synthetic-operations')))throw new Error(liveMessage('flag'));
   if(semanticSite&&(!['appointments-a','appointments-b','classes','login'].includes(semanticSite)||offline||argv.includes('--synthetic-operations')))throw new Error(browserMessage('invalidFixture'));
   const model = parseModel(valueAfter(argv, '--model') ?? process.env.BEHALVO_MODEL ?? process.env.OPERATOR_MODEL);
   const parsed: CliArgs = {
     offline,
+    ...(liveBrowser?{liveBrowser:true}:{}),
     ...(semanticSite?{semanticSite:semanticSite as SemanticSite | 'login',teachingMode:true}:{}),
     ...(argv.includes('--task-teachings') ? {teachingMode:true} : {}),
     syntheticOperations: argv.includes('--synthetic-operations'),
@@ -117,6 +125,7 @@ async function terminalIo(): Promise<NodeLineIo | TerminalPromptIo> {
 
 async function main(): Promise<void> {
   const args = parseCliArgs(process.argv.slice(2));
+  if(args.liveBrowser&&(!stdin.isTTY||!stdout.isTTY))throw new Error(liveMessage('interactive'));
   if (args.storageKeyPath && args.syntheticOperations)
     throw new Error('Encrypted storage cannot use persistent synthetic operations.');
   let encryptionKey: Uint8Array | undefined;
@@ -128,6 +137,7 @@ async function main(): Promise<void> {
   let loginFixture: Awaited<ReturnType<typeof startSyntheticLoginFixture>> | undefined;
   let vault: LocalCredentialVault | undefined;
   let io: NodeLineIo | TerminalPromptIo | undefined;
+  let managed: ManagedBrowserController | undefined;
   const browser: BrowserExplorationOptions | undefined=args.semanticSite?{open:async context=>{
     if (args.semanticSite === 'login') {
       loginFixture ??= await startSyntheticLoginFixture();
@@ -140,6 +150,8 @@ async function main(): Promise<void> {
     return new VaultLoginBroker({ ...(vault ? { vault } : {}), io }).use(
       { workspaceId: binding.workspaceId, ownerId: binding.ownerId }, challenge, execution, use,
       loginFixture.authority.secretAuthority);
+  }}:args.liveBrowser?{mode:'live',beforeTurn:scope=>managed?.beforeTurn(scope),available:scope=>managed?.available(scope)??false,open:(context,binding)=>{
+    if(!managed)throw new Error(liveMessage('unavailable'));return managed.exploration().open(context,binding);
   }}:undefined;
   try {
     encryptionKey = args.storageKeyPath ? loadStorageKeyFile(args.storageKeyPath) : undefined;
@@ -213,8 +225,17 @@ async function main(): Promise<void> {
     encryptionKey?.fill(0);
     protection.encryptionKey?.fill(0);
   }
+  let stopping=false;
+  const stopForSignal=(signal:NodeJS.Signals)=>{
+    if(stopping)return;stopping=true;
+    void(async()=>{const result=await managed?.shutdown();if(result&&!result.confirmed)stderr.write(liveMessage('cleanupPending')+'\n');
+      vault?.lock();io?.close();await fixture?.close();await loginFixture?.close();app.close();process.exit(signal==='SIGINT'?130:143);
+    })().catch(()=>{stderr.write(liveMessage('cleanupPending')+'\n');process.exit(1);});
+  };
   try {
     io = await terminalIo();
+    if(args.liveBrowser){managed=new ManagedBrowserController(app.store,(action,detail,signal)=>reviewBrowserGesture(io!,action,detail,signal));io.write(liveMessage('startup'));}
+    process.on('SIGINT',stopForSignal);process.on('SIGTERM',stopForSignal);
     if (args.vault) {
       vault = configuredVault(args.vault);
       io.write(vaultMessage('locked'));
@@ -252,10 +273,13 @@ async function main(): Promise<void> {
       workspaceId: args.workspaceId,
       ownerId: args.ownerId,
       ...(vault ? { vault } : {}),
+      ...(managed?{managedBrowser:managed}:{}),
       ...(!args.offline && settings ? { onModelSelected: (selected: { provider: string; model: string }) =>
         settings.write(args.workspaceId, selected) } : {})
     });
   } finally {
+    process.off('SIGINT',stopForSignal);process.off('SIGTERM',stopForSignal);
+    const cleanup=await managed?.shutdown();if(cleanup&&!cleanup.confirmed){stderr.write(liveMessage('cleanupPending')+'\n');process.exitCode=1;}
     vault?.lock();
     io?.close();
     app.close();

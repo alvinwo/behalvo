@@ -65,7 +65,7 @@ export async function processTaskIntake(store: SqliteStore, gateway: ModelGatewa
         validateTeachingSource(state,{type:'teaching.retracted',data:{id:'source-validation',workId,source:t,expectedRevision:1,expectedWorkRevision:state.works[workId]!.revision}},id=>store.record(binding.workspaceId,id),id=>store.readArtifact(binding.workspaceId,id));
         const record=store.record(binding.workspaceId,t.sourceRecordId);
         if(record.event.type!=='message.received')throw new Error('Invalid teaching source');
-        return store.readArtifact(binding.workspaceId,record.event.data.artifactId);
+        return t.sourceQuote;
     };
     const catalog=candidates.map(w=>({id:w.id,
         // Only expose a title when its exact bytes are present in current owner

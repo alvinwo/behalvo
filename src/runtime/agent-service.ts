@@ -1,4 +1,6 @@
 import { prepareProgressEvent, PROGRESS_PROTOCOL } from './task-continuity.js';
+import { runRecallLoop } from './recall-loop.js';
+import { memoryMessage } from '../memory/messages.js';
 import { processTaskIntake } from './task-intake.js';
 import { taskMessage } from './task-messages.js';
 import { assertBrowserWork } from './browser-learning.js';
@@ -69,6 +71,7 @@ export class AgentService {
   readonly #clock: () => string;
   readonly #timeoutMs: number;
   #browserCleanupPending = false;
+  readonly #activeThreads = new Set<string>();
 
   constructor(
     private readonly store: SqliteStore,
@@ -87,10 +90,19 @@ export class AgentService {
   get continuityEnabled(): boolean { return this.features.taskContinuity === true; }
 
   async runOwnerTurn(input: OwnerTurnInput): Promise<AgentTurnResult> {
+    const key=JSON.stringify([input.workspaceId,input.threadId]);
+    if(this.#activeThreads.has(key))throw new Error(memoryMessage('busy'));
+    this.#activeThreads.add(key);
+    try {return await this.#runDirectOwnerTurn(input);} finally {this.#activeThreads.delete(key);}
+  }
+
+  async #runDirectOwnerTurn(input: OwnerTurnInput): Promise<AgentTurnResult> {
     if (this.#workspaceId !== undefined && input.workspaceId !== this.#workspaceId)
       throw new Error('Agent service workspace binding mismatch');
     const initial = this.store.state(input.workspaceId);
     assertOwner(initial, input.ownerId);
+
+    this.features.browser?.beforeTurn?.(input);
 
     const ownerRecord = this.store.ingest(input.workspaceId, {
       source: 'owner:local',
@@ -122,6 +134,7 @@ export class AgentService {
       throw new Error('Agent service workspace binding mismatch');
     const initial = this.store.state(input.workspaceId);
     assertOwner(initial, input.ownerId);
+    if(input.job.parameters.kind==='owner_turn')this.features.browser?.beforeTurn?.({workspaceId:input.workspaceId,ownerId:input.ownerId,threadId:input.job.parameters.threadId});
     const job = input.job;
     if (job.workspaceId !== input.workspaceId || job.status !== 'running' || !job.claim ||
         job.kind !== 'owner_turn' || job.parameters.kind !== 'owner_turn')
@@ -153,8 +166,9 @@ export class AgentService {
     const continuityEnabled = this.continuityEnabled;
     const teachingEvents: DomainEvent[] = [];
     const hasNotes = !!input.workId && Object.values(this.store.state(input.workspaceId).browserMemory?.notes ?? {}).some(n=>n.workId===input.workId&&n.status==='candidate');
-    let explorationEnabled = !!input.workId && (!!this.features.browser || hasNotes);
-    const teachingEnabled = continuityEnabled || this.features.teachingMode === true || explorationEnabled;
+    const browserAvailable=()=>!!input.workId&&!!this.features.browser&&(!this.features.browser.available||this.features.browser.available({workspaceId:input.workspaceId,ownerId:input.ownerId,threadId:input.threadId,workId:input.workId}));
+    let explorationEnabled = browserAvailable();
+    const teachingEnabled = continuityEnabled || this.features.teachingMode === true || explorationEnabled || hasNotes;
     const browserEvents: DomainEvent[] = [];
     let browserCommitGuard: (()=>void) | undefined;
     if ((explorationEnabled || continuityEnabled && this.features.browser) && this.#browserCleanupPending) throw new Error('Previous browser cleanup remains unconfirmed');
@@ -184,7 +198,7 @@ export class AgentService {
         extracted=intake.completionsUsed===1;
         if(intake.receipt.workId!==null) input.workId=intake.receipt.workId; else delete input.workId;
         if(intake.receipt.outcome==='clarify')teachingReply=intake.receipt.question!;
-        explorationEnabled=!!input.workId&&(!!this.features.browser||Object.values(this.store.state(input.workspaceId).browserMemory?.notes??{}).some(n=>n.workId===input.workId&&n.status==='candidate'));
+        explorationEnabled=browserAvailable();
         if(input.workId&&teachingHold(this.store.state(input.workspaceId),input.workId))teachingReply??=teachingMessage('clarification');
       } catch { teachingReply=taskMessage('rejected'); }
     }
@@ -219,6 +233,7 @@ export class AgentService {
       sessionHint: `${input.workspaceId}:${input.threadId}`
     };
     const binding = { workspaceId: input.workspaceId, ownerId: input.ownerId,
+      ...(continuityEnabled?{recall:{workspaceId:input.workspaceId,ownerId:input.ownerId,threadId:input.threadId,...(input.workId?{workId:input.workId}:{})}}:{}),
       ...(execution ? {executionContext:execution,maxCompletions:extracted?7:8} : {}),
       ownerRecordId: ownerRecord.id, inputBudgetBytes: (input.windowTokens ?? 64000) - (input.outputReserve ?? 8000),
       ...(admitted ? { capability: 'prepare_only' as const, executionContext: {
@@ -231,6 +246,7 @@ export class AgentService {
       ownerId: input.ownerId,
       threadId: input.threadId,
       currentRecordId: ownerRecord.id,
+      historyMode: continuityEnabled ? 'task' : 'legacy_thread',
       ...(input.workId ? { workId: input.workId } : {}),
       windowTokens: input.windowTokens ?? 64000,
       outputReserve: input.outputReserve ?? 8000,
@@ -247,7 +263,8 @@ export class AgentService {
     };
     const completeFinal = async (context?:OperationExecutionContext) => {
       if(continuityEnabled&&Buffer.byteLength(JSON.stringify(request),'utf8')>Math.min(binding.inputBudgetBytes,196608))throw new Error('Task reasoning input budget exceeded');
-      const response=await withinExecution(()=>this.gateway.complete(context?.signal?{...request,signal:context.signal}:request),context);
+      const response=continuityEnabled ? await runRecallLoop(this.store,this.gateway,request,binding.recall!,context!,extracted?7:8,binding.inputBudgetBytes) :
+        await withinExecution(()=>this.gateway.complete(context?.signal?{...request,signal:context.signal}:request),context);
       if(continuityEnabled&&(Buffer.byteLength(response.text,'utf8')>65536||(response.diagnosticText!==undefined&&Buffer.byteLength(response.diagnosticText,'utf8')>65536)))throw new Error('Task reasoning output budget exceeded');
       return response;
     };
@@ -262,7 +279,7 @@ export class AgentService {
       const browserResult=await runBrowserExploration(this.store,this.gateway,request,
         browserBinding,
         execution!,this.features.browser,extracted?7:8,binding.inputBudgetBytes,context.includedBrowserSourceIds);
-      this.#browserCleanupPending=!browserResult.cleanupConfirmed;
+      this.#browserCleanupPending=!(browserResult.cleanupConfirmed===true||browserResult.leaseRetired===true);
       browserEvents.push(...browserResult.events);result=browserResult;
     }
     else if (this.#loop) result = await this.#loop.run(this.gateway, request, binding);
@@ -270,7 +287,9 @@ export class AgentService {
       try {
         const response=await completeFinal(execution);
         result={turn:parseAgentTurn(response.text),applicationAuthored:false,...(execution?{deadline:execution.deadline}:{}),...(response.providerResponseId?{providerResponseId:response.providerResponseId}:{})};
-      } catch(error) { if(continuityEnabled)throw new Error(taskMessage('interrupted'));throw error; }
+      } catch(error) { if(continuityEnabled)throw new Error(taskMessage('interrupted'));
+        if(hasNotes)result={turn:{reply:browserMessage('stopped'),workProposals:[],factProposals:[]},applicationAuthored:true,stopReason:'invalid_model_result'};
+        else throw error; }
     }
     else {
       const context: OperationExecutionContext = { signal: admitted.fence.signal, deadline: execution?.deadline ?? admitted.fence.deadline,
@@ -299,7 +318,7 @@ export class AgentService {
     let hasProgress=false;
 
     try {
-      if (continuityEnabled && turn.workProposals.length) throw new Error('Task creation requires owner intake');
+      if ((continuityEnabled || hasNotes) && turn.workProposals.length) throw new Error('Task creation requires owner intake');
       if (teachingEnabled && turn.factProposals.length) throw new Error('Task teaching mode does not accept legacy facts');
       if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0 || hasProgress)) && result.deadline !== undefined && Date.now() >= result.deadline)
         throw new Error('Run deadline');

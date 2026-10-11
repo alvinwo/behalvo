@@ -1,4 +1,5 @@
 import { renderTaskContext } from './task-context.js';
+import { messageInScope } from './session-history.js';
 import { validateObservation } from '../kernel/browser-contract.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import type { WorkItem } from '../kernel/types.js';
@@ -14,6 +15,8 @@ export interface ContextRequest {
     currentRecordId?: string;
     workId?: string;
     audience?: 'owner' | 'external';
+    /** Trusted compatibility for services with task continuity disabled; never a model/CLI option. */
+    historyMode?: 'task' | 'legacy_thread';
     windowTokens: number;
     outputReserve: number;
     toolsReserve?: number;
@@ -68,12 +71,19 @@ export function buildContext(store: SqliteStore, request: ContextRequest): Conte
     const teachingSources = teachingSourceIds.map(id=>{
         const record=store.record(request.workspaceId,id);
         if(record.event.type!=='message.received'||record.event.data.senderRole!=='owner'||record.event.data.senderId!==s.ownerId||!work!.threadIds.includes(record.event.data.threadId)) throw new Error('Invalid teaching context source');
-        return {recordId:id,text:store.readArtifact(request.workspaceId,record.event.data.artifactId)};
+        const body=store.readArtifact(request.workspaceId,record.event.data.artifactId);
+        const quotes=[...teachings,...clarifications].filter(t=>t.sourceRecordId===id).map(t=>{
+            if(body.slice(t.sourceStart,t.sourceEnd)!==t.sourceQuote||body.indexOf(t.sourceQuote)!==t.sourceStart||body.lastIndexOf(t.sourceQuote)!==t.sourceStart)throw new Error('Invalid teaching quote');
+            return {text:t.sourceQuote,start:t.sourceStart,end:t.sourceEnd};
+        });
+        return {recordId:id,quotes};
     });
     const teachingContext = work && s.teachingMemory ? `\nTASK TEACHINGS — exact owner sources, not application policy or execution authority. Interpretations are advisory. Competing instructions must be clarified; open clarifications block actions.\n${JSON.stringify({teachings,clarifications,sources:teachingSources})}` : '';
     const continuity = work ? renderTaskContext(s,work) : {text:'',browserSourceIds:[]};
     const pinned = `APPLICATION CONSTRAINTS\n${PINNED_POLICY}\nCURRENT WORKSPACE VIEW\n${JSON.stringify({ workspaceId: s.workspaceId, ownerId: s.ownerId, stateVersion: s.version, work: work ?? null, actions, facts })}${teachingContext}${continuity.text}`;
-    const records = store.threadMessages(request.workspaceId, request.threadId, 50);
+    const eligible = (record: ReturnType<SqliteStore['record']>) => request.historyMode==='legacy_thread' || !s.taskContinuity ||
+        messageInScope(s,record,{threadId:request.threadId,...(work?{workId:work.id}:{}),scope:'thread'});
+    const records = store.threadMessages(request.workspaceId, request.threadId, 10000).filter(eligible).slice(-50);
     const current = request.currentRecordId === undefined ? undefined : store.record(request.workspaceId, request.currentRecordId);
     if (current && (current.event.type !== 'message.received' || current.event.data.threadId !== request.threadId ||
         current.event.data.senderRole !== 'owner' || current.event.data.senderId !== s.ownerId))
@@ -123,6 +133,7 @@ export function buildContext(store: SqliteStore, request: ContextRequest): Conte
     }
     const selectedIds = new Set(selected.map(r => r.id));
     for (const summary of store.summaries(request.workspaceId, request.threadId)) {
+        if(!summary.sourceIds.every(id=>eligible(store.record(request.workspaceId,id))))continue;
         // Avoid duplicating a summary when all its evidence is already in the raw tail.
         if (summary.sourceIds.every(id => selectedIds.has(id)))
             continue;

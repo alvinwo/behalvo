@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isBrowserActionCommand, validateBrowserActionCommand } from './browser-action.js';
 import type { Command, MessageCommand, State } from './types.js';
 import { nonempty } from './types.js';
 import { canonicalJson, isOperationCommand, jsonValue, validateOperationCommand } from '../operations/validation.js';
@@ -20,6 +21,10 @@ export function validateCommand(command: Command, allowedChannels: readonly stri
         throw new Error('Command exceeds size limit');
 }
 export function commandDigest(workspaceId: string, workId: string, workRevision: number, command: Command): string {
+    if(isBrowserActionCommand(command)) {
+        validateBrowserActionCommand(command);
+        return createHash('sha256').update(JSON.stringify([workspaceId,workId,workRevision,command.kind,canonicalJson(jsonValue(command,'browser command'))])).digest('hex');
+    }
     if (isOperationCommand(command)) {
         validateOperationCommand(command);
         const canonical = JSON.stringify([workspaceId, workId, workRevision, command.kind, canonicalJson(jsonValue(command, 'operation command'))]);

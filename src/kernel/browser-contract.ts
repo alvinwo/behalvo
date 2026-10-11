@@ -12,7 +12,10 @@ export function sameScope(a: BrowserScope, b: BrowserScope): void {
     for (const key of ['workRevision','generation'] as const) if (!Number.isSafeInteger(a[key]) || a[key]<1 || a[key]!==b[key]) throw new Error('Stale browser revision');
 }
 export function browserOrigin(value: string): void {
-    const url=new URL(value);if(url.origin!==value || url.protocol!=='http:' || url.hostname!=='127.0.0.1' || !url.port)throw new Error('Synthetic browser origin required');
+    const url=new URL(value);
+    // Shape only. Network and origin authority belong to the selected adapter/controller.
+    if(url.origin!==value || url.username || url.password ||
+        !(url.protocol==='https:' || (url.protocol==='http:' && url.hostname==='127.0.0.1' && !!url.port)))throw new Error('Invalid browser origin');
 }
 export function validateObservation(raw: unknown, scope: BrowserScope): BrowserObservation {
     const x=exact(raw,['workspaceId','workId','workRevision','sessionId','generation','id','documentId','origin','location','observedAt','text','controls']);

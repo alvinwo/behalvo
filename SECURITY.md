@@ -18,7 +18,40 @@ through interactive hidden prompts. The model can request a current observed log
 control, but receives no values or credential IDs. Every use requires fresh owner
 confirmation and current task/document/entry authority. The only browser integration
 is a compiled local synthetic login with one bounded attempt and disposable-profile
-closure. There is no live website login or production vault-security claim.
+closure. There is no vault-driven live website login or production vault-security claim.
+
+The opt-in `--browser live` path opens isolated temporary Chromium bound to one
+workspace, local owner, chat and task. Exact owner-selected public HTTPS origins
+may run JavaScript and background requests. Each agent gesture separately needs
+fresh review and a one-use journaled Action. HTTP verbs do not classify effects.
+A checked-IP CONNECT proxy prevents a second DNS resolution after validation;
+context routing also guards redirects and dependencies. There is no direct
+fallback, personal profile, remote CDP attachment or public boundary override.
+Popups, downloads, uploads, service workers, WebSockets and permissions are denied.
+Browser descriptors and semantic dispatch use fixed code in a private Chromium
+isolated world. Final validation and activation run synchronously; page-prototype
+overrides cannot change the helper. Events are programmatic; sites requiring
+trusted input use manual handoff. Request forwarding uses an isolated request
+context and preserves Chromium cookie omission and response-cookie policy.
+These are application controls, not an OS sandbox.
+
+Manual handoff pauses model calls in the bound chat and invalidates its browser
+references while preserving cookies. Other chats cannot borrow that session. Resume obtains fresh observations. Sensitive fields, input values,
+hidden fields, cookies and raw HTML are omitted. This cannot redact secrets that
+a website reflects elsewhere in visible text; the owner acknowledges visible-page
+disclosure before resume. Healthy turns retire executable references without
+claiming process cleanup. Shutdown, cancellation, expiry and uncertain gestures
+close owned resources; unconfirmed cleanup remains an explicit failure. Live
+browsing neither calls the vault nor establishes real visa-portal compatibility.
+
+Browser Actions bind task revision, session, generation, origin grant, document,
+observation and semantic control fingerprint. Input authorization uses an exact
+owner source and descriptor-only purpose; it cannot revive an executable handle.
+Possible dispatch followed by lost response or missing fresh evidence is unknown,
+never an automatic retry. The work-wide unresolved barrier survives replacement
+windows and replay until owner reconciliation. Journaled page text inherits the
+configured SQLite protection; the database is plaintext unless opted into
+storage encryption.
 
 This operational store is outside the domain journal and task replay. Credential
 removal/replacement serializes with active borrows; revocation cannot recall a

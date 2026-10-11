@@ -483,7 +483,7 @@ A process restart is not a memory boundary. A new thread is not a memory boundar
 
 Facts record two different times. `observedAt` is the timestamp of the source record from which the application learned the fact. `validFrom` is the time the fact became true and remains `null` when that onset is unknown. New model-proposed validity timestamps are accepted only as `YYYY-MM-DDTHH:mm:ssZ` or `YYYY-MM-DDTHH:mm:ss.sssZ` and when the exact timestamp appears verbatim in the current owner input; natural-language dates are not silently converted or backdated. This stricter admission rule does not reinterpret older schema-v1 journal timestamps, including their previously accepted fractional forms. The trusted `Operator.recordFact` API continues to accept explicit validity timestamps, and schema-v1 facts replay with their original validity while deriving `observedAt` from their source record.
 
-Raw history is retained even when it cannot fit into the model context. However, **automatic long-thread compaction and semantic retrieval are not implemented yet**. The current ContextBuilder loads a bounded recent raw tail plus source-bound summaries that already exist. The MVP uses structured WorkItems/Facts and owner-sourced task teachings, durable focus and advisory progress for cross-thread durable memory; automated summary generation and historical retrieval are the next memory milestone.
+Raw history is retained even when it cannot fit into the model context. However, **automatic long-thread compaction and semantic retrieval are not implemented yet**. The current ContextBuilder loads a bounded recent raw tail plus source-bound summaries that already exist. The MVP uses structured WorkItems/Facts and owner-sourced task teachings, durable focus and advisory progress for cross-thread durable memory; literal source-bound historical recall is available in the harness; automatic summary generation and semantic retrieval remain future work.
 
 ## Safety boundary
 
@@ -491,8 +491,10 @@ Model output is parsed as a strict final `AgentTurn` envelope or a disjoint,
 allowlisted operation request. Final output may propose replies, new WorkItems,
 and Facts; fact provenance is rebound to the actual owner message. Operation
 tools use trusted workspace/owner/focused-work bindings and the existing
-OperationService approval, attempt and uncertainty rules. The terminal provides
-no model approval, connection-registration, reconciliation, shell or browser tool.
+OperationService approval, attempt and uncertainty rules. The opt-in managed
+browser exposes bounded semantic tools, fresh owner gesture review, and trusted
+browser reconciliation commands. It exposes no model approval authority,
+connection registration, shell, arbitrary script or CDP attachment tool.
 
 Credentials remain outside operation catalogs, prompts and domain state. Pi
 provider ambient environment credentials and SDK caches remain outside protected
@@ -503,9 +505,14 @@ handler code. See [SECURITY.md](../SECURITY.md).
 
 ## What is not implemented yet
 
+The interactive harness now supports [saved chats and scoped recall](HARNESS_SESSIONS.md)
+and an opt-in [managed live browser](PLAYWRIGHT_BROWSER.md#managed-live-browser)
+with manual login handoff and reviewed gestures. These do not activate real
+account operation handlers or unattended monitoring.
+
 - email / email relay;
 - WhatsApp, WeChat, SMS, or phone channels;
-- browser automation;
+- unattended real-site browser automation or verified real-portal booking;
 - automatic memory consolidation / summarization;
 - semantic/vector retrieval;
 - real account operation handlers and protected operation credentials;

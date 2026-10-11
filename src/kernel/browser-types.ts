@@ -11,7 +11,8 @@ export interface BrowserObservation extends BrowserScope {
     id: string; documentId: string; origin: string; location: string; observedAt: string;
     text: string; controls: BrowserControl[];
 }
-export type BrowserCommand = { kind: 'navigate' | 'click' | 'request_login'; observationId: string; ref: string } |
+export type BrowserCommand = { kind: 'navigate' | 'click'; observationId: string; ref: string } |
+    { kind: 'request_login'; observationId: string; ref: string } |
     { kind: 'fill'; observationId: string; ref: string; taskInputId: string } |
     { kind: 'select'; observationId: string; ref: string; optionRef: string };
 export interface TaskInputBinding extends TeachingSource {

@@ -1,6 +1,10 @@
 > **Current verification command:** `npm run verify`. Treat only its terminal
 > `data/verification/*/summary.json` and named raw logs as evidence for a run.
 
+The [harness and managed-browser record](verification/2026-10-11-harness-browser.md)
+separates scripted Chromium acceptance, a public HTTPS smoke, live-model synthetic
+acceptance and release gates.
+
 ## Current sequential gate
 
 On POSIX, `npm run verify` records and runs these steps in order:

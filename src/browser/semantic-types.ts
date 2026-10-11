@@ -17,4 +17,7 @@ export interface SemanticBrowserPort {
     observe(context: BrowserExecution): Promise<BrowserObservation>;
     interact(context: BrowserExecution, command: BrowserCommand): Promise<BrowserObservation>;
     close(): Promise<{ confirmed: boolean }>;
+    /** Retaining a browser is distinct from proving process/profile cleanup. */
+    retire?(healthy:boolean):Promise<{leaseRetired:boolean;sessionDisposition:'retained'|'human'|'closed';cleanupConfirmed?:boolean}>;
+    handoff?():Promise<void>;
 }
