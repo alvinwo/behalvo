@@ -7,11 +7,11 @@ async function setup(t){const f=await fixture(t);createWork(f);const r=f.store.i
  const binding={workspaceId:'personal',ownerId:'owner',workId:'w',ownerRecordId:r.id,expectedWorkRevision:1,threadId:'im'};
  let now=Date.now(),closed=0,invalidated=0;const browsers=[];
  const controller=new ManagedBrowserController(f.store,async()=> 'approve',{
-   clock:()=>now,network:(origins,check)=>({origins,revision:1,blockedOrigins:[],async start(){check();},async close(){return{confirmed:true};},allow(o){this.origins.push(o);this.revision++;}}),
+   clock:()=>now,network:check=>({revision:1,async start(){check();},async close(){return{confirmed:true};}}),
    browser:options=>{const browser={human:false,location:'https://example.test/',async open(ctx){return this.observe(ctx);},async observe(ctx){ctx.assertCurrent();return{workspaceId:ctx.workspaceId,workId:ctx.workId,workRevision:ctx.workRevision,sessionId:ctx.sessionId,generation:ctx.generation,id:crypto.randomUUID(),documentId:'doc',origin:'https://example.test',location:'/',observedAt:new Date().toISOString(),text:'Synthetic page',controls:[]};},async interact(ctx){return this.observe(ctx);},async retire(){},async close(){closed++;return{confirmed:true};},inputs(){return[];},inputPurpose(){throw new Error('No input');},invalidateInputs(){invalidated++;},async handoff(){this.human=true;},async resume(){this.human=false;}};browsers.push(browser);return browser;}
  });t.after(()=>controller.shutdown());return {...f,binding,controller,browsers,advance(ms){now+=ms;},closed:()=>closed,invalidated:()=>invalidated};}
 function context(binding){return{workspaceId:binding.workspaceId,workId:binding.workId,workRevision:binding.expectedWorkRevision,sessionId:'new-run',generation:1,execution:execution(),assertCurrent(){},resolveInput(){throw new Error('unused');}};}
-test('healthy lease retirement preserves session and grants but revokes the old lease',async t=>{const f=await setup(t);await f.controller.open(f.binding,'https://example.test/',execution());
+test('healthy lease retirement preserves session and access but revokes the old lease',async t=>{const f=await setup(t);await f.controller.open(f.binding,'https://example.test/',execution());
  const one=context(f.binding),port=await f.controller.borrow(one,f.binding);const first=await port.observe(one);assert.equal(f.closed(),0);
  assert.deepEqual(await port.retire(true),{leaseRetired:true,sessionDisposition:'retained'});await assert.rejects(port.observe(one));
  const two=context(f.binding),next=await f.controller.borrow(two,f.binding);const second=await next.observe(two);assert.equal(second.sessionId,first.sessionId);assert.ok(second.generation>first.generation);await next.retire(true);assert.equal(f.closed(),0);

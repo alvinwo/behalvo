@@ -16,9 +16,9 @@ the agent to inspect it. This opens a new visible Chromium window, without an
 extension or personal Chrome profile. The model discovers semantic links,
 buttons, text/search fields, textareas and selects; no visa workflow is hardcoded.
 
-Opening grants that exact origin permission to run its web application, including
-JavaScript and background requests. This is not read-only access: GET can mutate
-and POST can read. Each agent-selected gesture separately displays its task,
+Public HTTPS sites, redirects, scripts, images and content APIs load without
+per-domain approval, including JavaScript and background requests. This is not
+read-only access: GET can mutate and POST can read. Each agent-selected gesture separately displays its task,
 site, control, selected option, navigation/form destination and authorized non-secret text for a fresh `approve`, `reject` or
 `handoff` response. The initial owner-authored open command needs no duplicate
 approval. A successful gesture does not verify a remote business outcome.
@@ -31,14 +31,15 @@ approval. A successful gesture does not verify a remote business outcome.
 3. Ask the agent to inspect. For a non-secret search field, use `/browser status`,
    then `/browser input <field-ref> <text>`. The next turn can propose filling it
    for review.
-4. Inspect blocked origins with `/browser status`. Explicitly allow any necessary
-   exact resource/login origin with `/browser allow https://another.example`.
-   There are at most eight origins per session.
-5. Inspect `/actions` after uncertainty. After checking the website yourself, use
+4. Inspect `/actions` after uncertainty. After checking the website yourself, use
    `/browser resolve <action-id> <accepted|failed> <note>`. This records your
    evidence and never repeats the gesture.
-6. Use `/browser close` to close the task's window. Exiting Behalvo also closes
+5. Use `/browser close` to close the task's window. Exiting Behalvo also closes
    owned sessions and reports unconfirmed cleanup.
+
+`/browser status` shows `networkPolicy: "public_https"`. The old `/browser allow`
+command only explains that public sites no longer need enrollment; it grants
+no extra access.
 
 Cookies survive ordinary turns in the same task/chat. Executable references do
 not; each turn observes again. Input authorization binds task revision, session,
@@ -48,7 +49,7 @@ Owner commands/new leases refresh this timer; background traffic does not.
 Cookies and profiles are not resumed after restart.
 
 Live mode accepts public HTTPS only. The checked-address CONNECT proxy and
-request routing reject private/local addresses and ungranted origins, including
+request routing reject private/local addresses and unsupported protocols, including
 redirects. Popups, uploads, downloads, WebSockets, service workers, browser
 permissions and model-selected frame controls are unsupported. Limits are
 2,048 routed requests, 32 tunnels and 128 MiB of tunneled bytes per session.
@@ -59,10 +60,12 @@ use manual handoff for sites that require trusted keyboard or pointer input.
 This is an application boundary, not an OS sandbox.
 
 The vault's automated browser integration remains the synthetic login fixture;
-live login uses manual handoff. Real H-1B portal compatibility, automatic booking
-verification and unattended monitoring have not been established. See
+live login uses manual handoff. Field binding controls where Behalvo fills an
+authorized value; it cannot restrict how the receiving website uses that value.
+Real H-1B portal compatibility, automatic booking verification and unattended monitoring have not been established. See
 [sessions and memory](HARNESS_SESSIONS.md) and the
-[verification record](verification/2026-10-11-harness-browser.md).
+[harness verification](verification/2026-10-11-harness-browser.md) and
+[public HTTPS verification](verification/2026-10-11-public-https.md).
 
 Explicit visible acceptance uses synthetic accounts only:
 

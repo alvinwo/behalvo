@@ -32,35 +32,20 @@ export interface PublicNetworkDependencies {
 }
 /** TLS remains end-to-end; the gate sees no cookies, headers, bodies or page content. */
 export class PublicNetworkGate {
-    readonly #origins=new Set<string>();readonly #blocked=new Set<string>();readonly #sockets=new Set<Socket>();readonly #tunnels=new Set<Socket>();
-    #server:Server|undefined;#listening:Promise<void>|undefined;#closing:Promise<{confirmed:boolean}>|undefined;#proxyUrl:string|undefined;#closed=false;#revision=1;#requests=0;#bytes=0;
-    constructor(origins:readonly string[],private readonly assertActive:()=>void,private readonly dependencies:PublicNetworkDependencies={}) {
-        if(!origins.length||origins.length>8)throw new Error('Invalid browser origin grant');
-        for(const origin of origins){const url=publicHttpsUrl(origin);if(url.origin!==origin)throw new Error('Exact browser origin required');this.#origins.add(origin);}
-    }
+    readonly #sockets=new Set<Socket>();readonly #tunnels=new Set<Socket>();
+    #server:Server|undefined;#listening:Promise<void>|undefined;#closing:Promise<{confirmed:boolean}>|undefined;#proxyUrl:string|undefined;#closed=false;#requests=0;#bytes=0;
+    constructor(private readonly assertActive:()=>void,private readonly dependencies:PublicNetworkDependencies={}) {}
+    // Immutable policy version carried in the legacy grantRevision audit field.
+    // Live authority additionally requires the current session and lease guards.
+    readonly revision=1;
     get proxyUrl():string {if(!this.#proxyUrl||this.#closed)throw new Error('Browser network gate unavailable');return this.#proxyUrl;}
-    get revision():number{return this.#revision;}
-    get origins():string[]{return [...this.#origins];}
-    get blockedOrigins():string[]{return [...this.#blocked];}
     #check():void {if(this.#closed)throw new Error('Browser network gate closed');this.assertActive();}
     allows(value:string):URL {
-        this.#check();const url=publicHttpsUrl(value);
-        if(!this.#origins.has(url.origin)){if(this.#blocked.size<16)this.#blocked.add(url.origin);throw new Error('Browser origin is not granted');}
-        return url;
+        this.#check();return publicHttpsUrl(value);
     }
     assertAllowed(value:string):void {
         this.allows(value);
         if(++this.#requests>2048)throw new Error('Browser request limit reached');
-    }
-    allow(value:string):void {
-        this.#check();const url=publicHttpsUrl(value);
-        if(url.origin!==value)throw new Error('Exact browser origin required');
-        if(this.#origins.has(value))return;
-        if(this.#origins.size>=8)throw new Error('Browser origin limit reached');
-        this.#origins.add(value);this.#blocked.delete(value);this.#revision++;
-    }
-    revoke(value:string):void {
-        this.#check();if(this.#origins.delete(value)){this.#revision++;for(const socket of this.#sockets)socket.destroy();}
     }
     async start():Promise<void> {
         this.#check();if(this.#server)throw new Error('Browser network gate already started');
