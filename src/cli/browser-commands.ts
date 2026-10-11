@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { publicHttpsUrl } from '../browser/public-network.js';
 import { liveMessage } from '../browser/live-messages.js';
 import type { ManagedBrowserController, ManagedBrowserScope } from '../browser/managed-session.js';
 import type { LiveReviewDetail } from '../browser/live-playwright.js';
@@ -41,7 +42,7 @@ export async function handleBrowserCommand(raw:string,options:{store:SqliteStore
         if(fixed&&words.length!==(words.length===1?1:2)||['open','allow'].includes(command)&&words.length!==3||command==='input'&&words.length<4||command==='resolve'&&words.length<5){io.write(liveMessage('usage'));return true;}
         if(command==='status'){io.write(JSON.stringify(controller.status(scope)));return true;}
         if(command==='close'){io.write(liveMessage((await controller.close(scope)).confirmed?'closed':'cleanupPending'));return true;}
-        if(command==='allow'){controller.allow(scope,words[2]!);io.write(liveMessage('allowed'));return true;}
+        if(command==='allow'){const url=publicHttpsUrl(words[2]!);if(url.origin!==words[2])throw new Error('Exact HTTPS origin required');io.write(liveMessage('allowUnnecessary'));return true;}
         if(command==='handoff'){await controller.handoff(scope);io.write(liveMessage('manual'));return true;}
         if(command==='resume'){
             if(!io.discardSensitiveInput)throw new Error('Fresh prompt unavailable');io.discardSensitiveInput();

@@ -61,7 +61,7 @@ retaining source attribution and task scoping. Model summaries are not owner pol
 [Hermes browser](https://hermes-agent.nousresearch.com/docs/user-guide/features/browser)
 inform our retained isolated window, fresh page references and manual handoff.
 Behalvo's [managed browser](PLAYWRIGHT_BROWSER.md#managed-live-browser) uses visible
-managed Chromium, exact-origin network grants and per-gesture review. It does not
+managed Chromium, public HTTPS network access and per-gesture review. It does not
 expose arbitrary CDP attachment, page scripts, selectors, personal profiles or
 cloud browser credentials. Sources reviewed 2026-10-11; these are design lessons,
 not copied implementation or equivalent trust-model claims.

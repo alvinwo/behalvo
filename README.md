@@ -124,7 +124,7 @@ For an isolated live browser with manual login handoff and reviewed gestures, us
 | Explicit journal-validated v1–v3 → v4 continuity upgrade, including encrypted backups | Automatic legacy projection upgrades |
 | Synthetic and managed public-HTTPS exploration with source-grounded advisory notes | Proven real-portal compatibility or automatic booking verification |
 | WorkItems/Facts shared across explicitly linked threads | Memory granting permission or completing tasks |
-| Retained isolated browser, fresh leases, manual login handoff, exact-origin grants and gesture review | Personal-profile/CDP attachment, unattended actions or browser login after restart |
+| Retained isolated browser, fresh leases, manual login handoff, public HTTPS access and gesture review | Personal-profile/CDP attachment, unattended actions or browser login after restart |
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |
 | Pinned Pi multi-provider adapter and separate file credential store | Independent live-model operation-loop verification |
 | Provider-owned OAuth login flow in the REPL | Hosted multi-user deployment |

@@ -2,12 +2,22 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import { parseCliArgs } from '../dist/cli/main.js';
 import { handleBrowserCommand, reviewBrowserGesture } from '../dist/cli/browser-commands.js';
 import { fixture, createWork } from './helpers.mjs';
+test('legacy allow command explains public access without changing network authority',async t=>{
+ const f=await fixture(t);createWork(f);const output=[];
+ await handleBrowserCommand('/browser allow https://assets.test',{store:f.store,controller:{},scope:{workspaceId:'personal',ownerId:'owner',threadId:'im',workId:'w'},io:{interactive:true,write:line=>output.push(line)}});
+ assert.match(output.join('\n'),/public HTTPS.*already|public HTTPS.*no longer/i);
+ assert.equal(f.store.journal('personal').filter(r=>r.event.type==='message.received').length,0);
+ for(const origin of ['http://example.test','https://127.0.0.1','https://assets.test/path','https://assets.test/','https://u:p@assets.test']){
+  await handleBrowserCommand(`/browser allow ${origin}`,{store:f.store,controller:{},scope:{workspaceId:'personal',ownerId:'owner',threadId:'im',workId:'w'},io:{interactive:true,write:line=>output.push(line)}});
+  assert.doesNotMatch(output.at(-1),/already load/i);
+ }
+});
 test('live browser CLI is explicit and rejects fixtures, offline and public boundary overrides',()=>{
  assert.equal(parseCliArgs(['--browser','live']).liveBrowser,true);
  for(const args of [['--browser','remote'],['--browser','live','--offline'],['--browser','live','--synthetic-browser','classes'],['--browser','live','--synthetic-operations'],['--browser','live','--proxy','http://127.0.0.1:1'],['--browser','live','--ignore-https-errors'],['--browser','live','--browser','live']])assert.throws(()=>parseCliArgs(args));
 });
 test('trusted browser commands preserve exact text and scope; no command text becomes a model call',async t=>{
- const f=await fixture(t);createWork(f);const calls=[],output=[];const controller={async open(binding,url){calls.push(['open',binding,url]);},input(binding,ref,value){calls.push(['input',binding,ref,value]);return 'input-id';},status(){return{state:'idle'};},async handoff(){calls.push(['handoff']);},async resume(){calls.push(['resume']);},allow(scope,origin){calls.push(['allow',scope,origin]);},async close(){return{confirmed:true};}};
+ const f=await fixture(t);createWork(f);const calls=[],output=[];const controller={async open(binding,url){calls.push(['open',binding,url]);},input(binding,ref,value){calls.push(['input',binding,ref,value]);return 'input-id';},status(){return{state:'idle'};},async handoff(){calls.push(['handoff']);},async resume(){calls.push(['resume']);},async close(){return{confirmed:true};}};
  const options={store:f.store,controller,scope:{workspaceId:'personal',ownerId:'owner',threadId:'im',workId:'w'},io:{interactive:true,discardSensitiveInput(){},readLine:async()=> 'resume',write:line=>output.push(line)}};
  for(const line of ['/browser open https://example.test/path','/browser input field-ref Cedar and Pine','/browser status','/browser allow https://assets.test','/browser handoff','/browser resume','/browser close'])assert.equal(await handleBrowserCommand(line,options),true);
  assert.equal(calls[0][2],'https://example.test/path');assert.equal(calls[1][3],'Cedar and Pine');assert.equal(calls[1][1].threadId,'im');assert.ok(calls.some(c=>c[0]==='resume'));

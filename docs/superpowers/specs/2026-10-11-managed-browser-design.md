@@ -2,6 +2,8 @@
 
 Status: approved by the delegated architecture reviewer for implementation.
 Date: 2026-10-11.
+Amendment: owner and delegated architect approved public HTTPS access by default;
+per-origin network enrollment is superseded. Input and gesture authority remain scoped.
 
 ## Intent and finish line
 
@@ -13,9 +15,10 @@ continuity work. The existing synthetic adapters and vault flow remain regressio
 fixtures, not the implementation of general browsing.
 
 Deliver a visible, isolated, locally managed Chromium browser in the normal agent
-CLI. The owner chooses a starting HTTPS URL and exact additional origins. The
+CLI. The owner chooses a starting HTTPS URL. Public HTTPS destinations and resources
+load without per-origin enrollment. The
 model explores current semantic controls; the owner supervises each proposed
-gesture. JavaScript, ordinary resources, same-origin redirects, and fetch/XHR work
+gesture. JavaScript, ordinary resources, public HTTPS redirects, and fetch/XHR work
 without site-specific selectors or request-path policies. Manual login/challenge
 handoff retains the same temporary browser. The owner can resume model observation
 afterward. No real account, booking, or sensitive owner data is used in tests or
@@ -61,7 +64,7 @@ Official sources inspected on 2026-10-11:
 
 Three options were considered. More compiled fixture policies do not meet the
 goal. Unrestricted Playwright/CDP or model-authored scripts discard the existing
-authority boundary. A managed browser with current references, owner origin
+authority boundary. A managed browser with current references, public HTTPS
 access, and supervised gestures meets the goal with one local adapter and the
 existing journal-backed action lifecycle. Select the third option.
 
@@ -71,15 +74,14 @@ existing journal-backed action lifecycle. Select the third option.
 Trusted owner commands are:
 
 - `/browser open <https-url>`: open for the focused work and current chat. The
-  command authorizes that exact initial navigation and its exact origin after
+  command authorizes that exact initial navigation after
   the CLI has explained the managed-browser access scope. No model may manufacture
   this command or grant. Reject userinfo, unsupported schemes, and invalid URLs.
-- `/browser allow <https-origin>`: admit one additional exact origin for the
-  current browser. No wildcard or suffix matching. Show existing/blocked origins
-  in status; an observed redirect or dependency never admits itself. Admit at most
-  eight origins per session.
+- `/browser allow <https-origin>`: compatibility response only, omitted from help.
+  Validate a canonical public HTTPS origin, explain that enrollment is unnecessary,
+  and change no policy, expiry, lease, journal or network state.
 - `/browser status`: show bound work/chat, state, current sanitized location,
-  allowed origins, expiry, current owner input references, and any unresolved
+  `networkPolicy: "public_https"`, expiry, current owner input references, and any unresolved
   gesture.
 - `/browser input <input-ref> <text>`: authorize a non-secret owner value for
   one field in the latest owner descriptor catalog. Capture an exact owner source,
@@ -116,7 +118,7 @@ current work revision, run deadline, cancellation signal, and a fresh generation
 Only one lease may exist for that session. Every new lease clears old references
 and observes current state before interaction. A teaching revision invalidates
 the old lease/approval, but does not erase cookies or silently transfer the
-session's origin access to another task.
+session to another task.
 
 Executable references and owner input references are separate namespaces. Normal
 lease retirement discards every executable handle/reference. It may retain the
@@ -144,15 +146,17 @@ absence under the existing ownership contract.
 
 ## Network access
 
-An origin access grant is permission to run that web application, including its
-JavaScript and background requests, within exact owner-selected origins. It is
-not a claim of read-only access. GET can mutate; POST can fetch data. Neither
-method nor a page/model label determines effect permission. The access grant is
-separate from permission for a model-selected gesture.
+Opening a managed browser permits web applications to use public HTTPS, including
+JavaScript, redirects and background requests across origins. It is not read-only
+access. GET can mutate; POST can fetch data. Neither method nor a page/model label
+determines effect permission. Network access is separate from permission for a
+model-selected gesture. Input binding controls where Behalvo fills a value; it
+does not prevent that website from sending received data to other public sites
+under normal browser policy.
 
-All live destinations use HTTPS. Context-wide routing checks the current grant
-before every request, including redirects and subresources. Allowed same-origin
-redirects work; a new origin is blocked and surfaced for a trusted owner decision.
+All live destinations use HTTPS. Context-wide routing checks current session
+and public-destination policy before every request, including redirects and
+subresources. A new public origin needs no separate approval.
 No request body, cookie, authorization header, console output, or raw network
 trace is exposed to the model or included in diagnostics. Browser request routing
 does not bypass CSP or certificate validation.
@@ -170,13 +174,13 @@ with session cleanup. A routing helper must not grant cookies that the browser
 withheld or import a rejected Set-Cookie response into the browser jar.
 
 Use a small per-session loopback CONNECT proxy as an application-owned network
-gate. It accepts only authorities matching granted HTTPS origins, resolves the
+gate. It accepts only public HTTPS authorities, resolves the
 host, rejects non-public addresses, and connects to one of those exact checked
 addresses. Resolve-and-check followed by letting Chromium resolve again is not a
 private-network boundary. Validate IPv4, IPv6, IPv4-mapped IPv6, all returned DNS
 addresses, and literal addresses; reject loopback, private, link-local, multicast,
 unspecified, documentation/reserved destinations, and local-only names. No direct
-fallback is configured. Origin revocation/session closure destroys existing
+fallback is configured. Session revocation/closure destroys existing
 tunnels as well as denying new ones. Limit a session to 32 concurrent tunnels,
 2,048 routed requests, and 128 MiB of tunneled traffic in either direction
 combined; connection setup has a ten-second deadline and inactive tunnels close
@@ -197,9 +201,9 @@ policy. There is no `allow-localhost`, insecure-certificate, proxy override, or
 test mode available through public CLI arguments or environment variables.
 
 A single main tab is automated initially. Deny automatic popups. Frames may load
-only through the same exact-origin network gate; model control references cover
+only through the same public HTTPS network gate; model control references cover
 the main document. An unsupported frame or popup flow is an explicit manual
-blocker, not permission to widen scope. Manual handoff can use already admitted
+blocker, not permission to widen scope. Manual handoff can use public HTTPS
 frames without exposing their controls to the model.
 
 ## Observation and interaction
@@ -345,7 +349,10 @@ type BrowserActionCommand = {
 ```
 
 The Action binds workspace/work/revision; the command binds thread/session/lease
-and origin authority. `open` is owner-authored and has no invented observation or
+and origin identity. The legacy numeric `grantRevision` field records the fixed
+network-policy revision for a new session. Historical values and digests remain
+unchanged; this audit field never substitutes for current session/lease authority.
+`open` is owner-authored and has no invented observation or
 control. Its URL's origin must equal the bound origin. `interact` binds the current
 observation/control and private descriptor fingerprint. Its input/option IDs are
 resolved and revalidated at dispatch; exact fill text comes from the immutable
@@ -363,10 +370,10 @@ navigation or submission control. Page/model text
 cannot answer this prompt. Noninteractive callers cannot approve. The exact
 initial `/browser open` command is already a trusted owner instruction and does
 not require a duplicate confirmation. Approval remains one-use and expires no
-later than the active run/lease. An origin grant alone never approves a model
+later than the active run/lease. Public HTTPS access alone never approves a model
 gesture.
 
-After approval, recheck work, clarification holds, grant revision, lease,
+After approval, recheck work, clarification holds, network policy revision, lease,
 document/control, input bindings, cancellation, and deadline. Commit
 `action.started` before invoking the gesture. Perform a synchronous final guard
 at the browser dispatch boundary. Mark possible dispatch before sending the
@@ -404,7 +411,7 @@ never starts Chromium, a proxy, a prompt, or network traffic.
 
 ## Minimum interfaces and file boundaries
 
-- `browser/managed-session.ts`: controller, exact binding, origin grants, run
+- `browser/managed-session.ts`: controller, exact binding, public HTTPS access, run
   borrow/release, handoff/resume, expiry and shutdown; operational resources only.
 - `browser/live-playwright.ts`: semantic snapshot/ref implementation and guarded
   atomic semantic interactions; consumes the controller's private lease and
@@ -419,7 +426,7 @@ never starts Chromium, a proxy, a prompt, or network traffic.
 - `runtime/browser-exploration.ts`: capability-selected live/synthetic protocol,
   shared recall and model budget, explicit lease retirement result. Retain the
   existing per-turn close behavior for synthetic adapters.
-- `cli/browser-commands.ts`: trusted lifecycle/input/origin/reconciliation surface
+- `cli/browser-commands.ts`: trusted lifecycle/input/reconciliation surface
   and owner review; `cli/main.ts` composes it only with `--browser live`.
 
 The existing process owner may accept narrowly typed internal proxy/launch
@@ -449,7 +456,7 @@ Write behavior tests first and observe failure before each implementation step.
    are absent from snapshots and audit. Do not infer a guarantee against malicious
    reflection from this fixture.
 4. New leases invalidate prior refs. Work/chat/session crossover, stale task or
-   input revision, replacement controls, revoked origins, cancelled review, and
+   input revision, replacement controls, revoked sessions, cancelled review, and
    changed documents reject before dispatch. Two work/chat sessions cannot share
    cookies or controls. Unknown outcome blocks replacement sessions for that work.
    Owner input authorization between turns succeeds for one freshly matching
@@ -458,7 +465,8 @@ Write behavior tests first and observe failure before each implementation step.
    Same-node link/form/input/option changes during actionability preparation cannot
    change the approved gesture. Cover/uncover races, page-overridden DOM methods,
    cancellation and document replacement cannot bypass the final atomic guard.
-5. Reject unapproved origins, redirects, private/literal/DNS/rebinding targets,
+5. Allow public cross-origin resources, content APIs and redirects without
+   enrollment. Reject private/literal/DNS/rebinding targets and redirects,
    unsupported protocols, service workers, WebSockets, files, downloads, and
    proxy bypass. Server-side counters prove no prohibited dispatch. Public CLI
    cannot invoke trusted test-only routing or certificate seams.
@@ -483,6 +491,6 @@ Write behavior tests first and observe failure before each implementation step.
    integration.
 
 No new owner design decision is required under the existing delegation. Runtime
-origin access, gesture review, handoff, and reconciliation are concrete owner
+public HTTPS access, gesture review, handoff, and reconciliation are concrete owner
 controls of the delivered product; they are not permission gates for this
 implementation work.

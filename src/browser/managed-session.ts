@@ -18,7 +18,7 @@ export interface ManagedBrowserScope {workspaceId:string;ownerId:string;threadId
 export type ManagedBrowserBinding=ManagedBrowserScope&TeachingBinding;
 export interface ManagedBrowserDependencies {
     clock?:()=>number;
-    network?:(origins:string[],assertActive:()=>void)=>PublicNetworkGate;
+    network?:(assertActive:()=>void)=>PublicNetworkGate;
     browser?:(options:LivePlaywrightOptions)=>LivePlaywright;
 }
 type SessionState='idle'|'leased'|'human'|'closing'|'closed'|'faulted';
@@ -79,7 +79,7 @@ export class ManagedBrowserController {
         if(this.#sessions.has(key))throw new Error('Close the existing browser before opening another');
         if(this.#sessions.size>=2)throw new Error('Browser session capacity reached');
         let session:Session;
-        const network=(this.dependencies.network??((origins,guard)=>new PublicNetworkGate(origins,guard)))([target.origin],()=>this.#checkSession(session));
+        const network=(this.dependencies.network??(guard=>new PublicNetworkGate(guard)))(()=>this.#checkSession(session));
         session={key,id:randomUUID(),scope:{workspaceId:binding.workspaceId,ownerId:binding.ownerId,threadId:binding.threadId,workId:binding.workId},revision:binding.expectedWorkRevision,generation:0,expiresAt:this.#clock()+600000,state:'idle',network,browser:undefined,binding:undefined,lease:undefined};
         this.#sessions.set(key,session);
         try{
@@ -124,8 +124,7 @@ export class ManagedBrowserController {
             },close
         };
     }
-    allow(scope:ManagedBrowserScope,origin:string):void{const session=this.#get(scope);if(session.state==='leased')throw new Error('Browser busy');const url=publicHttpsUrl(origin);if(url.origin!==origin)throw new Error('Use an exact HTTPS origin');session.network.allow(origin);this.#touch(session);}
-    status(scope:ManagedBrowserScope){const session=this.#get(scope);this.#touch(session);return{sessionId:session.id,state:session.state,scope:session.scope,location:session.state==='human'?undefined:session.browser?.location,origins:session.network.origins,blockedOrigins:session.network.blockedOrigins,expiresAt:new Date(session.expiresAt).toISOString(),inputs:session.browser?.inputs()??[],unresolvedActions:Object.values(this.store.state(scope.workspaceId).actions).filter(a=>a.workId===scope.workId&&a.command.kind==='browser.gesture'&&['unknown','running'].includes(a.status)).map(a=>({id:a.id,status:a.status}))};}
+    status(scope:ManagedBrowserScope){const session=this.#get(scope);this.#touch(session);return{sessionId:session.id,state:session.state,scope:session.scope,location:session.state==='human'?undefined:session.browser?.location,networkPolicy:'public_https' as const,expiresAt:new Date(session.expiresAt).toISOString(),inputs:session.browser?.inputs()??[],unresolvedActions:Object.values(this.store.state(scope.workspaceId).actions).filter(a=>a.workId===scope.workId&&a.command.kind==='browser.gesture'&&['unknown','running'].includes(a.status)).map(a=>({id:a.id,status:a.status}))};}
     input(binding:ManagedBrowserBinding,ref:string,value:string):string{this.#binding(binding);const session=this.#get(binding);if(session.state!=='idle'||!session.browser)throw new Error('Browser must be idle');const item=session.browser.inputs().find(item=>item.ref===ref);if(!item)throw new Error('Input reference is stale');
         const result=authorizeTaskInput(this.store,binding,{quote:value,origin:item.origin,purpose:session.browser.inputPurpose(ref)},true);this.#touch(session);return result.id;}
     async handoff(scope:ManagedBrowserScope):Promise<void>{const session=this.#get(scope);if(session.state!=='idle'||!session.browser)throw new Error('Browser must be idle');await session.browser.handoff();session.state='human';this.#touch(session);}

@@ -9,29 +9,45 @@ test('public address and URL policy reject private, mapped, reserved and non-HTT
  assert.equal(publicHttpsUrl('https://EXAMPLE.com:443/path').origin,'https://example.com');
 });
 async function connect(proxy,authority){const address=new URL(proxy);const socket=net.connect(Number(address.port),address.hostname);socket.on('error',()=>{});await new Promise((res,rej)=>{socket.once('connect',res);socket.once('error',rej);});socket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`);const response=await new Promise((res,rej)=>{socket.once('data',b=>res(b.toString()));socket.once('end',()=>res(''));socket.once('error',rej);});return {socket,response};}
+test('public HTTPS destinations work without separate origin enrollment',async t=>{
+ const {PublicNetworkGate}=await api();const hosts=[];
+ const server=net.createServer(s=>s.on('data',b=>s.write(b)));await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const gate=new PublicNetworkGate(()=>{},{resolve:async host=>{hosts.push(host);return ['8.8.8.8'];},dial:()=>net.connect(server.address().port,'127.0.0.1')});
+ t.after(async()=>{await gate.close();await new Promise(r=>server.close(r));});await gate.start();
+ for(const host of ['cdn.test','login.test',...Array.from({length:9},(_,i)=>`assets-${i}.test`)]){
+  gate.assertAllowed(`https://${host}/resource`);const {socket,response}=await connect(gate.proxyUrl,`${host}:443`);assert.match(response,/200/);socket.destroy();
+ }
+ assert.equal(hosts.length,11);
+});
 test('CONNECT resolves once and dials the exact checked address, then destroys tunnels on close',async t=>{
  const {PublicNetworkGate}=await api();let looked=0;const dials=[];
  const server=net.createServer(s=>s.on('data',b=>s.write(b)));await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const gate=new PublicNetworkGate(['https://example.test'],()=>{}, {resolve:async host=>{assert.equal(host,'example.test');looked++;return ['8.8.8.8'];},dial:(ip,port)=>{dials.push([ip,port]);return net.connect(server.address().port,'127.0.0.1');}});
+ const gate=new PublicNetworkGate(()=>{}, {resolve:async host=>{assert.equal(host,'example.test');looked++;return ['8.8.8.8'];},dial:(ip,port)=>{dials.push([ip,port]);return net.connect(server.address().port,'127.0.0.1');}});
  t.after(async()=>{await gate.close();await new Promise(r=>server.close(r));});await gate.start();
  const {socket,response}=await connect(gate.proxyUrl,'example.test:443');assert.match(response,/200/);assert.deepEqual(dials,[['8.8.8.8',443]]);assert.equal(looked,1);
  const gone=new Promise(r=>socket.once('close',r));await gate.close();await gone;assert.throws(()=>gate.assertAllowed('https://example.test/path'));
 });
-test('mixed DNS answers and ungranted origins deny before dialing; route limits are bounded',async t=>{
+test('mixed DNS answers and private destinations deny before dialing; route limits are bounded',async t=>{
  const {PublicNetworkGate}=await api();let dials=0;
- const gate=new PublicNetworkGate(['https://example.test'],()=>{}, {resolve:async()=>['8.8.8.8','127.0.0.1'],dial:()=>{dials++;throw new Error('must not dial');}});await gate.start();t.after(()=>gate.close());
+ const gate=new PublicNetworkGate(()=>{}, {resolve:async()=>['8.8.8.8','127.0.0.1'],dial:()=>{dials++;throw new Error('must not dial');}});await gate.start();t.after(()=>gate.close());
  for(const host of ['example.test:443','ungranted.test:443','127.0.0.1:443']){const {socket,response}=await connect(gate.proxyUrl,host);assert.doesNotMatch(response,/200/);socket.destroy();}
- assert.equal(dials,0);assert.throws(()=>gate.assertAllowed('https://ungranted.test/path'));
- gate.allow('https://cdn.example.test');gate.assertAllowed('https://cdn.example.test/resource');
+ assert.equal(dials,0);gate.assertAllowed('https://cdn.example.test/resource');
  for(let i=1;i<2048;i++)gate.assertAllowed('https://example.test/resource');assert.throws(()=>gate.assertAllowed('https://example.test/overflow'),/limit/i);
 });
 test('expired authority cannot admit new requests',async t=>{
  const {PublicNetworkGate}=await api();let active=true;
- const gate=new PublicNetworkGate(['https://example.com'],()=>{if(!active)throw new Error('expired');});await gate.start();t.after(()=>gate.close());
- active=false;assert.throws(()=>gate.assertAllowed('https://example.com'));assert.throws(()=>gate.allow('https://cdn.example.com'));
+ const gate=new PublicNetworkGate(()=>{if(!active)throw new Error('expired');});await gate.start();t.after(()=>gate.close());
+ active=false;assert.throws(()=>gate.assertAllowed('https://example.com'));assert.throws(()=>gate.assertAllowed('https://cdn.example.com'));
+});
+test('DNS completion after session closure cannot dial a public destination',async t=>{
+ const {PublicNetworkGate}=await api();let finishLookup,lookupStarted;const started=new Promise(r=>lookupStarted=r);let dials=0;
+ const gate=new PublicNetworkGate(()=>{},{resolve:()=>{lookupStarted();return new Promise(r=>finishLookup=r);},dial:()=>{dials++;throw new Error('Late dial');}});
+ await gate.start();t.after(()=>gate.close());const pending=connect(gate.proxyUrl,'public.test:443');await started;
+ assert.equal((await gate.close()).confirmed,true);finishLookup(['8.8.8.8']);const {socket,response}=await pending;socket.destroy();
+ await new Promise(r=>setImmediate(r));assert.doesNotMatch(response,/200/);assert.equal(dials,0);
 });
 test('closing during pending listen confirms only after the owned server is gone',async()=>{
- const script=`import {PublicNetworkGate} from './dist/browser/public-network.js';const gate=new PublicNetworkGate(['https://example.com'],()=>{});const starting=gate.start().catch(()=>{});const result=await gate.close();await starting;if(!result.confirmed)throw new Error('Cleanup pending');`;
+ const script=`import {PublicNetworkGate} from './dist/browser/public-network.js';const gate=new PublicNetworkGate(()=>{});const starting=gate.start().catch(()=>{});const result=await gate.close();await starting;if(!result.confirmed)throw new Error('Cleanup pending');`;
  await promisify(execFile)(process.execPath,['--input-type=module','-e',script],{cwd:process.cwd(),timeout:2500});
 });
 test('owned Chromium receives only a loopback proxy and fixed anti-bypass settings',async t=>{
@@ -47,9 +63,9 @@ test('invalid proxy configuration fails before launch and does not invent an unk
  const owner=new PlaywrightProcessOwner({signal:new AbortController().signal},{environment:{},networkProxy:'http://external.example:8080',loadChromium:async()=>f.chromium});
  await assert.rejects(()=>owner.start(async()=>null));assert.equal(f.counts().launches,0);assert.equal((await owner.close()).confirmed,true);owner.finishReceipt(true,null,true);
 });
-test('revoking an origin tears down its active tunnel and prevents another connection',async t=>{
+test('revoking session authority tears down active traffic and prevents another connection',async t=>{
  const {PublicNetworkGate}=await api();const server=net.createServer(s=>s.on('data',b=>s.write(b)));await new Promise(r=>server.listen(0,'127.0.0.1',r));let dials=0;
- const gate=new PublicNetworkGate(['https://example.test'],()=>{},{resolve:async()=>['8.8.8.8'],dial:()=>{dials++;return net.connect(server.address().port,'127.0.0.1');}});await gate.start();t.after(async()=>{await gate.close();await new Promise(r=>server.close(r));});
- const {socket,response}=await connect(gate.proxyUrl,'example.test:443');assert.match(response,/200/);const closed=new Promise(r=>socket.once('close',r));gate.revoke('https://example.test');await closed;
+ let active=true;const gate=new PublicNetworkGate(()=>{if(!active)throw new Error('Session revoked');},{resolve:async()=>['8.8.8.8'],dial:()=>{dials++;return net.connect(server.address().port,'127.0.0.1');}});await gate.start();t.after(async()=>{await gate.close();await new Promise(r=>server.close(r));});
+ const {socket,response}=await connect(gate.proxyUrl,'example.test:443');assert.match(response,/200/);const closed=new Promise(r=>socket.once('close',r));active=false;socket.write('synthetic traffic after revocation');await closed;
  const denied=await connect(gate.proxyUrl,'example.test:443');assert.doesNotMatch(denied.response,/200/);denied.socket.destroy();assert.equal(dials,1);
 });

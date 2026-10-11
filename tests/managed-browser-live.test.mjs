@@ -10,6 +10,27 @@ function lease(generation = 1) { return { workspaceId: 'w', workId: 'task', work
 async function direct(context, command, detail, gesture) {
   await gesture.validate(); return { actionId: 'test', status: 'accepted', observation: await gesture.dispatch(() => gesture.assertCurrent()) };
 }
+test('public cross-origin scripts, content APIs, images and redirects render without origin enrollment',{skip:!enabled,timeout:60000},async()=>{
+ const site=await managedSite((req,res)=>{
+  if(req.url==='/content'){res.setHeader('Access-Control-Allow-Origin','*');return res.end('Public content loaded');}
+  if(req.url==='/app.js'){res.setHeader('Content-Type','text/javascript');return res.end(`fetch('https://content.test/content').then(r=>r.text()).then(text=>document.querySelector('h1').textContent=text);`);}
+  if(req.url==='/style.css'){res.setHeader('Content-Type','text/css');return res.end('h1 { color: green; }');}
+  if(req.url==='/image.svg'){res.setHeader('Content-Type','image/svg+xml');return res.end('<svg xmlns="http://www.w3.org/2000/svg"/>');}
+  if(req.url==='/redirect'){res.writeHead(302,{location:'https://destination.test/landed'});return res.end();}
+  res.setHeader('Content-Type','text/html');
+  if(req.url==='/landed')return res.end('<h1>Public destination</h1>');
+  res.end('<h1>Loading</h1><link rel="stylesheet" href="https://styles.test/style.css"><script src="https://scripts.test/app.js"></script><img src="https://images.test/image.svg"><a href="/redirect">Continue</a>');
+ });
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:direct},{ignoreHTTPSErrors:true});
+ try{
+  const ctx=lease();let o=await live.open(ctx,'https://example.test/');
+  for(let i=0;i<20&&!o.text.includes('Public content loaded');i++){await new Promise(r=>setTimeout(r,50));o=await live.observe(ctx);}
+  assert.match(o.text,/Public content loaded/);
+  for(const path of ['/app.js','/content','/style.css','/image.svg'])assert.ok(site.requests.some(r=>r.url===path),path);
+  o=await live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls.find(c=>c.name==='Continue').ref});
+  assert.equal(o.origin,'https://destination.test');assert.match(o.text,/Public destination/);
+ }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+});
 test('generic live pages execute JS, keep cookies, expose safe controls and require fresh refs and field matches', { skip: !enabled, timeout: 60000 }, async () => {
   const site = await managedSite((req, res) => {
     if (req.url === '/app.js') return res.end(`document.querySelector('h1').textContent='Dynamic directory';document.cookie='session=synthetic;Secure';`);
@@ -42,18 +63,38 @@ test('generic live pages execute JS, keep cookies, expose safe controls and requ
   } finally { assert.equal((await live.close()).confirmed, true); assert.equal(existsSync(live.receiptPath), false); await site.close(); }
 });
 
-test('route guard denies ungranted redirects, popup, WebSocket and service worker traffic', { skip: !enabled, timeout: 60000 }, async () => {
+test('route guard denies private redirects, popup, WebSocket and service worker traffic', { skip: !enabled, timeout: 60000 }, async () => {
   const site = await managedSite((req, res) => {
-    if (req.url === '/redirect') { res.writeHead(302, { location: 'https://other.test/forbidden' }); return res.end(); }
-    res.setHeader('Content-Type', 'text/html');res.end(`<h1>Boundary</h1><script>new WebSocket('wss://example.test/ws');navigator.serviceWorker.register('/sw.js').catch(()=>{});window.open('/popup');fetch('https://other.test/foreign').catch(()=>{});</script><a href="/redirect">Redirect</a>`);
+    if (req.url === '/redirect') { res.writeHead(302, { location: 'https://127.0.0.1/forbidden' }); return res.end(); }
+    res.setHeader('Content-Type', 'text/html');res.end(`<h1>Boundary</h1><script>new WebSocket('wss://example.test/ws');navigator.serviceWorker.register('/sw.js').catch(()=>{});window.open('/popup');fetch('https://127.0.0.1/foreign').catch(()=>{});</script><a href="/redirect">Redirect</a>`);
   });
   const live = new LivePlaywright({ sessionId: 'session', threadId: 'thread', network: site.gate, assertSession() {}, perform: direct }, { ignoreHTTPSErrors: true });
   try {
     const ctx = lease();const o = await live.open(ctx, 'https://example.test/');
     await assert.rejects(live.interact(ctx, { kind: 'navigate', observationId: o.id, ref: o.controls[0].ref }));
     assert.ok(!site.requests.some(r => /forbidden|foreign|sw.js|ws|popup/.test(r.url)));
-    assert.ok(site.gate.blockedOrigins.includes('https://other.test'));
   } finally { assert.equal((await live.close()).confirmed, true); await site.close(); }
+});
+
+test('public navigation cannot reuse an owner input authorized for another origin',{skip:!enabled,timeout:60000},async t=>{
+ const {fixture,createWork,message}=await import('./helpers.mjs');
+ const {authorizeTaskInput,resolveStoredTaskInput}=await import('../dist/runtime/browser-learning.js');
+ const f=await fixture(t);createWork(f);const source=f.store.ingest('personal',message('input',{text:'Cedar'}));
+ const binding={workspaceId:'personal',ownerId:'owner',workId:'w',ownerRecordId:source.id,expectedWorkRevision:1};
+ let fills=0;
+ const site=await managedSite((req,res)=>{if(req.url==='/filled'){fills++;return res.end('ok');}res.setHeader('Content-Type','text/html');res.end('<label>Search<input name="q" oninput="fetch(\'/filled\')"></label><a href="https://other.test/">Other site</a>');});
+ const live=new LivePlaywright({sessionId:'session',threadId:'im',network:site.gate,assertSession(){},perform:direct},{ignoreHTTPSErrors:true});
+ try{
+  const ctx={...lease(),workspaceId:'personal',workId:'w',resolveInput:(id,origin,purpose)=>resolveStoredTaskInput(f.store,binding,id,origin,purpose)};
+  let o=await live.open(ctx,'https://example.test/');const field=live.inputs()[0],purpose=live.inputPurpose(field.ref);
+  const input=authorizeTaskInput(f.store,binding,{quote:'Cedar',origin:field.origin,purpose},true);
+  o=await live.interact(ctx,{kind:'fill',observationId:o.id,ref:o.controls.find(c=>c.name==='Search').ref,taskInputId:input.id});
+  for(let i=0;i<20&&fills===0;i++)await new Promise(r=>setTimeout(r,25));assert.equal(fills,1);
+  o=await live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls.find(c=>c.name==='Other site').ref});
+  assert.equal(o.origin,'https://other.test');assert.throws(()=>live.inputPurpose(field.ref));
+  await assert.rejects(live.interact(ctx,{kind:'fill',observationId:o.id,ref:o.controls.find(c=>c.name==='Search').ref,taskInputId:input.id}));
+  assert.equal(fills,1);
+ }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
 });
 
 test('a replaced control during review cannot receive an authorized value', { skip: !enabled, timeout: 60000 }, async () => {
@@ -126,7 +167,7 @@ test('cross-site fetch preserves SameSite cookie exclusion and rejected response
   if(req.url==='/'){return res.end(`<h1>Main</h1><a href="https://other.test/read">Read cookies</a><script>fetch('https://other.test/cross',{credentials:'include'}).then(()=>fetch('/done'))</script>`);}
   if(req.url==='/cross'){res.setHeader('Access-Control-Allow-Origin','https://example.test');res.setHeader('Access-Control-Allow-Credentials','true');res.setHeader('Set-Cookie','rejected=synthetic;Secure;HttpOnly;SameSite=Strict');}
   res.end('<h1>Read</h1><a href="/final">Same-site read</a>');if(req.url==='/done')done();
- });site.gate.allow('https://other.test');
+ });
  const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:direct},{ignoreHTTPSErrors:true});
  try{const ctx=lease();let o=await live.open(ctx,'https://other.test/seed');o=await live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls[0].ref});
   await Promise.race([finished,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Missing cross-site request')),5000).unref())]);assert.equal(requests.find(r=>r.url==='/cross').cookie,'');

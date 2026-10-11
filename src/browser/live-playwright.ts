@@ -129,7 +129,7 @@ export class LivePlaywright {
         const check=()=>{this.#assert();if(this.#documentId!==documentId||this.#observation?.id!==observationId||this.options.network.revision!==revision||!this.options.network.allows(origin))throw new Error('Stale browser action');};
         let value:string|undefined;
         const validate=async()=>{check();const now=await this.#world!.describe(entry.nodeId);check();if(!now.visible||!now.eligible||hash(now.descriptor)!==entry.fingerprint)throw new Error('Stale control');
-            if(command.kind==='navigate'){const target=publicHttpsUrl(now.descriptor.href);if(!this.options.network.allows(target.href))throw new Error('Origin not granted');}
+            if(command.kind==='navigate'){const target=publicHttpsUrl(now.descriptor.href);if(!this.options.network.allows(target.href))throw new Error('Browser destination unavailable');}
             if(command.kind==='fill'){
                 if(![...this.#catalog.values()].some(c=>c.fingerprint===entry.fingerprint&&c.purpose===entry.purpose))throw new Error('Ambiguous input');
                 const resolved=context.resolveInput(command.taskInputId,origin,entry.purpose);if(value!==undefined&&value!==resolved)throw new Error('Input changed');value=resolved;
@@ -143,7 +143,7 @@ export class LivePlaywright {
                 ...(entry.descriptor.form?{form:{action:entry.descriptor.formAction||entry.descriptor.form.action,method:entry.descriptor.formMethod||entry.descriptor.form.method,target:entry.descriptor.formTarget||entry.descriptor.form.target}}:{})},{validate,
                 // The broker checks lease authority after settlement too. A successful gesture
                 // deliberately replaces its old observation; only pre-dispatch checks bind that ref.
-                assertCurrent:()=>{this.#assert();if(this.options.network.revision!==revision)throw new Error('Origin grant changed');},dispatch:async mark=>{
+                assertCurrent:()=>{this.#assert();if(this.options.network.revision!==revision)throw new Error('Browser network policy changed');},dispatch:async mark=>{
                 await this.#world!.prepare(entry.nodeId);await validate();check();mark();
                 await this.#world!.dispatch({nodeId:entry.nodeId,descriptor:entry.descriptor,kind:command.kind,deadline:context.execution.deadline,
                     ...(value===undefined?{}:{value}),...(command.kind==='select'?{index:entry.options.get(command.optionRef)!}:{})});

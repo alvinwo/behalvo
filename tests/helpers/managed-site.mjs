@@ -17,7 +17,7 @@ export async function managedSite(handler, assertActive = () => {}, start = true
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
-  const gate = new PublicNetworkGate(['https://example.test'], assertActive, {
+  const gate = new PublicNetworkGate( assertActive, {
     resolve: async () => ['8.8.8.8'], dial: () => connect({ host: '127.0.0.1', port }),
   });
   if(start)await gate.start();
