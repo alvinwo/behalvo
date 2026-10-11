@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { liveMessage } from './live-messages.js';
 import { assertOwner } from '../kernel/policy.js';
 import { assertNoUnknownBrowserAction } from '../kernel/browser-action.js';
 import { assertTeachingClear } from '../kernel/teachings.js';
@@ -63,7 +64,7 @@ export class ManagedBrowserController {
     beforeTurn(scope:{workspaceId:string;ownerId:string;threadId:string}):void{
         for(const session of this.#sessions.values())if(session.scope.workspaceId===scope.workspaceId&&session.scope.ownerId===scope.ownerId&&session.scope.threadId===scope.threadId){
             try{this.#checkSession(session);}catch{continue;}
-            if(session.state==='human'||session.browser?.human)throw new Error('Browser is in manual mode. Use /browser resume before another agent turn.');
+            if(session.state==='human'||session.browser?.human)throw new Error(liveMessage('manualBlocked'));
             if(session.state==='leased')throw new Error('Browser is busy');
         }
     }

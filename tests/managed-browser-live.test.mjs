@@ -70,3 +70,14 @@ test('a replaced control during review cannot receive an authorized value', { sk
     await live.handoff();assert.deepEqual(live.inputs(),[]);
   }finally{assert.equal((await live.close()).confirmed,true);await replacement.close();}
 });
+test('duplicate semantic fields and a handoff epoch never recover prior input authority',{skip:!enabled,timeout:60000},async()=>{
+ let duplicate=false;const site=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<label>Search<input name="q"></label>'+(duplicate?'<label>Search<input name="q"></label>':''));});
+ const live=new LivePlaywright({sessionId:'session',threadId:'thread',network:site.gate,assertSession(){},perform:direct},{ignoreHTTPSErrors:true});
+ try{const ctx=lease();await live.open(ctx,'https://example.test/');const old=live.inputs()[0],purpose=live.inputPurpose(old.ref);await live.handoff();await live.resume();assert.throws(()=>live.inputPurpose(old.ref));
+  await live.observe(lease(2));assert.notEqual(live.inputPurpose(live.inputs()[0].ref),purpose);
+ }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
+ const other=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<label>Search<input name="q"></label><label>Search<input name="q"></label>');});
+ const ambiguous=new LivePlaywright({sessionId:'session',threadId:'thread',network:other.gate,assertSession(){},perform:direct},{ignoreHTTPSErrors:true});
+ try{const ctx=lease();ctx.resolveInput=()=>assert.fail('Ambiguous fields must not resolve owner input');const o=await ambiguous.open(ctx,'https://example.test/');assert.deepEqual(ambiguous.inputs(),[]);await assert.rejects(ambiguous.interact(ctx,{kind:'fill',observationId:o.id,ref:o.controls[0].ref,taskInputId:'old'}));}
+ finally{assert.equal((await ambiguous.close()).confirmed,true);await other.close();}
+});

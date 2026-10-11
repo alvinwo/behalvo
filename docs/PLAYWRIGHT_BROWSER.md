@@ -1,4 +1,74 @@
-# Synthetic Playwright browser workflows
+# Playwright browser workflows
+
+## Managed live browser
+
+Start an interactive terminal with your existing provider login and model:
+
+```sh
+npm ci
+npx playwright install chromium
+npm run agent -- --browser live --model openai-codex/gpt-6-astra
+```
+
+Describe your goal in chat. Once its task exists, use
+`/browser open https://site.example/path` with the intended HTTPS URL, then ask
+the agent to inspect it. This opens a new visible Chromium window, without an
+extension or personal Chrome profile. The model discovers semantic links,
+buttons, text/search fields, textareas and selects; no visa workflow is hardcoded.
+
+Opening grants that exact origin permission to run its web application, including
+JavaScript and background requests. This is not read-only access: GET can mutate
+and POST can read. Each agent-selected gesture separately displays its task,
+site, control and authorized non-secret text for a fresh `approve`, `reject` or
+`handoff` response. The initial owner-authored open command needs no duplicate
+approval. A successful gesture does not verify a remote business outcome.
+
+1. Use `/browser handoff` to enter login and verification codes in the browser.
+   Agent turns pause during handoff.
+2. Use `/browser resume`, then confirm `resume`, to share visible page content
+   with the selected model. Sensitive fields are omitted, but websites can display
+   account details elsewhere on the page.
+3. Ask the agent to inspect. For a non-secret search field, use `/browser status`,
+   then `/browser input <field-ref> <text>`. The next turn can propose filling it
+   for review.
+4. Inspect blocked origins with `/browser status`. Explicitly allow any necessary
+   exact resource/login origin with `/browser allow https://another.example`.
+   There are at most eight origins per session.
+5. Inspect `/actions` after uncertainty. After checking the website yourself, use
+   `/browser resolve <action-id> <accepted|failed> <note>`. This records your
+   evidence and never repeats the gesture.
+6. Use `/browser close` to close the task's window. Exiting Behalvo also closes
+   owned sessions and reports unconfirmed cleanup.
+
+Cookies survive ordinary turns in the same task/chat. Executable references do
+not; each turn observes again. Input authorization binds task revision, session,
+document, origin and semantic field. Navigation, handoff, correction or closure
+invalidates it. There are at most two windows and ten idle minutes per session.
+Owner commands/new leases refresh this timer; background traffic does not.
+Cookies and profiles are not resumed after restart.
+
+Live mode accepts public HTTPS only. The checked-address CONNECT proxy and
+request routing reject private/local addresses and ungranted origins, including
+redirects. Popups, uploads, downloads, WebSockets, service workers, browser
+permissions and model-selected frame controls are unsupported. Limits are
+2,048 routed requests, 32 tunnels and 128 MiB of tunneled bytes per session.
+There is no public proxy/profile/CDP/certificate override or direct fallback.
+This is an application boundary, not an OS sandbox.
+
+The vault's automated browser integration remains the synthetic login fixture;
+live login uses manual handoff. Real H-1B portal compatibility, automatic booking
+verification and unattended monitoring have not been established. See
+[sessions and memory](HARNESS_SESSIONS.md) and the
+[verification record](verification/2026-10-11-harness-browser.md).
+
+Explicit visible acceptance uses synthetic accounts only:
+
+```sh
+npm run build
+TMPDIR=/private/tmp BEHALVO_MANAGED_ACCEPTANCE=1 node --test tests/managed-browser-live.test.mjs tests/managed-browser-acceptance.test.mjs
+```
+
+## Original synthetic diagnostics
 
 P1 opens a visible, newly isolated Chromium browser, reads the local synthetic
 login page through Behalvo's existing BrowserSession, and closes its owned browser.

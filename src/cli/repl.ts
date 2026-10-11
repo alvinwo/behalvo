@@ -1,4 +1,7 @@
 import { restoreTaskThread, selectTaskThread } from '../runtime/task-continuity.js';
+import { handleBrowserCommand, displayBrowserActions } from './browser-commands.js';
+import { liveMessage } from '../browser/live-messages.js';
+import type { ManagedBrowserController } from '../browser/managed-session.js';
 import { handleSessionCommand } from './session-commands.js';
 import { memoryMessage } from '../memory/messages.js';
 import { taskStatusLines } from '../runtime/task-messages.js';
@@ -35,6 +38,7 @@ export interface ReplAuthenticator {
 }
 
 export interface ReplOptions {
+  managedBrowser?: ManagedBrowserController;
   vault?: LocalCredentialVault;
   store: SqliteStore;
   registry: ModelRegistry;
@@ -84,6 +88,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   for (;;) {
     const raw = await (io.readPrompt ? io.readPrompt('You > ') : io.readLine('You > '));
     if (raw === null) return { reason: 'eof', threadId, ...(workId ? { workId } : {}) };
+    if(await handleBrowserCommand(raw,{store,...(options.managedBrowser?{controller:options.managedBrowser}:{}),scope:{workspaceId,ownerId,threadId,...(workId?{workId}:{})},io}))continue;
     if (await handleVaultCommand(raw, { ...(options.vault ? { vault: options.vault } : {}), io,
       scope: { workspaceId, ownerId } })) continue;
     const multiline = /[\r\n]/.test(raw);
@@ -98,7 +103,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         if (command === '/quit')
           return { reason: 'quit', threadId, ...(workId ? { workId } : {}) };
         if (command === '/help') {
-          io.write(HELP+'\n'+memoryMessage('help')+'\n'+inputMessage('help')+'\n'+browserMessage('help')+'\n'+vaultMessage('help'));
+          io.write(HELP+'\n'+memoryMessage('help')+'\n'+inputMessage('help')+'\n'+browserMessage('help')+'\n'+liveMessage('help')+'\n'+vaultMessage('help'));
           continue;
         }
         if(command==='/browser-input'||command==='/browser-revoke') {
@@ -211,8 +216,8 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         }
         if (command === '/actions') {
           if (args.length !== 0) throw new Error('Usage: /actions');
-          if (!review) throw new Error('Operation service is unavailable');
-          review.display(workId, line => io.write(line));
+          displayBrowserActions(store,{workspaceId,ownerId,threadId,...(workId?{workId}:{})},line=>io.write(line));
+          review?.display(workId, line => io.write(line));
           continue;
         }
         if (command === '/approve') {

@@ -108,8 +108,10 @@ Use `npm run agent -- --synthetic-operations` for an isolated simulated account.
 
 See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, security boundaries, and current limitations.
 
-For the visible synthetic browser diagnostic and supervised scheduling workflow without extension enrollment,
-see the [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md).
+For an isolated live browser with manual login handoff and reviewed gestures, use
+`npm run agent -- --browser live` in an interactive terminal. See the
+[Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md) and
+[sessions, tasks and memory](docs/HARNESS_SESSIONS.md).
 
 ## What exists in this revision
 
@@ -117,10 +119,12 @@ see the [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md).
 | --- | --- |
 | Append-only Journal, rebuildable state, historical reads | Automatic long-history consolidation / semantic retrieval |
 | Durable owner + assistant messages across process restarts | Email, WhatsApp, WeChat, SMS or phone channels |
-| Owner-only task intake, same-turn instruction updates, durable focus, advisory progress and correction/clarification memory across restart | Arbitrary live website exploration |
+| Owner-only task intake, same-turn instruction updates, durable focus, advisory progress and correction/clarification memory across restart | Autonomous completion from model claims |
+| Saved chat listing/resume, task-attributed history, bounded source-linked recall and memory inspection | Vector services or global cross-workspace retrieval |
 | Explicit journal-validated v1–v3 → v4 continuity upgrade, including encrypted backups | Automatic legacy projection upgrades |
-| Opt-in model-driven synthetic website exploration, source-grounded advisory notes and restart recall | Authenticated live exploration or real booking |
-| WorkItems/Facts shared across explicitly linked threads | Live browser automation or model-generated real-world effects |
+| Synthetic and managed public-HTTPS exploration with source-grounded advisory notes | Proven real-portal compatibility or automatic booking verification |
+| WorkItems/Facts shared across explicitly linked threads | Memory granting permission or completing tasks |
+| Retained isolated browser, fresh leases, manual login handoff, exact-origin grants and gesture review | Personal-profile/CDP attachment, unattended actions or browser login after restart |
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |
 | Pinned Pi multi-provider adapter and separate file credential store | Independent live-model operation-loop verification |
 | Provider-owned OAuth login flow in the REPL | Hosted multi-user deployment |
@@ -128,7 +132,7 @@ see the [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md).
 | Opt-in authenticated payload encryption for new SQLite databases | Whole-file encryption or rollback detection |
 | Verified encrypted SQLite backup and restore CLI | Encrypted evaluation reports or coordinated model-state/SQLite backups |
 | Opt-in protected Pi credentials and saved model settings on POSIX | Plaintext migration, model-state key rotation or secure erasure |
-| Separate encrypted website-login vault, hidden capture, scoped management and owner-confirmed one-shot synthetic browser login | Live website login, external password-manager integration, TOTP or production credential protection |
+| Separate encrypted website-login vault, hidden capture, scoped management and owner-confirmed one-shot synthetic browser login | Live vault-driven login, external password-manager integration, TOTP or production credential protection |
 | Interactive multiline editor with direct paste, keyboard submission, and local state/history/context inspection | Production security review |
 | Versioned prepared operations with exact connection/resource bindings | Real account handlers, remote authentication or universal account discovery |
 | Opt-in persistent synthetic contact/subscription operations with readback | Production credential protection or provider write verification |
@@ -140,7 +144,7 @@ see the [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md).
 | Metadata-only synthetic browser discovery report for 13 read-only P2 states, source provenance, request counts and cleanup | Calendar pagination, live-site discovery, authenticated readiness or activation authority |
 | Disabled-by-default China visa policy, owner-bound authenticated discovery fixtures, durable current-authority checks, exact compiled-page evidence, encrypted synthetic intent transport, and bounded strict booking/readback | Live visa registration, owner-laptop discovery, portal credentials, browser installation, live polling, or real booking |
 | Paired synthetic monitored-action setup/review/arm, foreground polling across restart and handoff, one verified booking, stopped recurrence, and effect-free rebuild | Installed Chrome/native host, signed Keychain helper, current live terms/group verification, owner activation, or OS-supervised service |
-| Visible isolated Playwright/Chromium login diagnostic and supervised synthetic scheduling actions with durable dispatch guards, readback, handoff and bounded cleanup | Live browsing, persistent authenticated profiles or unattended monitoring |
+| Visible isolated Playwright/Chromium diagnostic and supervised synthetic scheduling actions with durable dispatch guards, readback, handoff and bounded cleanup | Persistent authenticated profiles or unattended monitoring |
 
 ## Mental model
 
@@ -186,7 +190,7 @@ src/
   service-demo.ts  paired restart/handoff/race/booking/rebuild acceptance scenario
 ```
 
-One package, not a forest of empty packages. Pi and the synthetic-only Playwright browser adapter are pinned integration dependencies and remain outside the kernel. No event
+One package, not a forest of empty packages. Pi and the Playwright browser adapters are pinned integration dependencies and remain outside the kernel. No event
 broker, distributed workflow engine, graph database or multi-agent orchestration.
 
 ## Safety boundary

@@ -1,4 +1,5 @@
 import { parseProgressReport } from '../kernel/task-continuity.js';
+import { liveMessage } from '../browser/live-messages.js';
 import { invokeRecall, RECALL_PROTOCOL } from './recall-tool.js';
 import { PROGRESS_PROTOCOL } from './task-continuity.js';
 import { randomUUID } from 'node:crypto';
@@ -74,7 +75,7 @@ export async function runBrowserExploration(store:SqliteStore,gateway:ModelGatew
                 if(!options)throw new Error('Browser absent');
                 if(options.mode==='live'&&tool.name==='handoff'){
                     exact(tool.arguments,[]);if(!port)port=await options.open(context,binding);if(!port.handoff)throw new Error('Handoff unavailable');await port.handoff();
-                    result={turn:{reply:'Browser paused for manual use. Use /browser resume when ready.',workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution.deadline,stopReason:'completed'};break;
+                    result={turn:{reply:liveMessage('manual'),workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution.deadline,stopReason:'completed'};break;
                 }
                 if(options.mode==='live'&&tool.name==='request_login')throw new Error('Use manual handoff');
                 if(tool.name!=='observe'&&!['navigate','click','fill','select','request_login'].includes(tool.name))throw new Error('Unsupported browser tool');
@@ -101,6 +102,7 @@ export async function runBrowserExploration(store:SqliteStore,gateway:ModelGatew
     finally{if(port){try{if(port.retire){const retired=await port.retire(!faulted);cleanupConfirmed=retired.cleanupConfirmed;leaseRetired=retired.leaseRetired;sessionDisposition=retired.sessionDisposition;}else cleanupConfirmed=(await port.close()).confirmed;}catch{cleanupConfirmed=false;leaseRetired=false;}}}
     try{check();}catch{events.length=0;result={turn:{reply:browserMessage('stopped'),workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution.deadline,stopReason:'invalid_model_result'};}
     const retiredSafely=leaseRetired===true||cleanupConfirmed===true;
+    if(sessionDisposition==='human')result={turn:{reply:liveMessage('manual'),workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution.deadline,stopReason:'completed'};
     if(!retiredSafely){events.length=0;result={turn:{reply:browserMessage('stopped'),workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution.deadline,stopReason:'invalid_model_result'};}
     if(retiredSafely&&result.applicationAuthored&&observed.length){try{check();events.push({type:'browser.checkpoint',data:{workId:binding.workId,expectedWorkRevision:binding.expectedWorkRevision,sourceIds:observed.slice(-8),reason:'exploration_stopped'}});}catch{/* No stale/cancelled checkpoint. */}}
     return {...result,events,...(cleanupConfirmed===undefined?{}:{cleanupConfirmed}),...(leaseRetired===undefined?{}:{leaseRetired}),...(sessionDisposition?{sessionDisposition}:{})};

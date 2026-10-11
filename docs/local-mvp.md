@@ -503,9 +503,14 @@ handler code. See [SECURITY.md](../SECURITY.md).
 
 ## What is not implemented yet
 
+The interactive harness now supports [saved chats and scoped recall](HARNESS_SESSIONS.md)
+and an opt-in [managed live browser](PLAYWRIGHT_BROWSER.md#managed-live-browser)
+with manual login handoff and reviewed gestures. These do not activate real
+account operation handlers or unattended monitoring.
+
 - email / email relay;
 - WhatsApp, WeChat, SMS, or phone channels;
-- browser automation;
+- unattended real-site browser automation or verified real-portal booking;
 - automatic memory consolidation / summarization;
 - semantic/vector retrieval;
 - real account operation handlers and protected operation credentials;

@@ -134,7 +134,10 @@ export class LivePlaywright {
         };
         await validate();
         const result=await this.options.perform(context,{kind:'browser.gesture',version:1,operation:'interact',threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin,documentId,controlFingerprint:entry.fingerprint,gesture:command},
-            {operation:command.kind,origin,name:control.name,...(value===undefined?{}:{value})},{validate,assertCurrent:check,dispatch:async mark=>{
+            {operation:command.kind,origin,name:control.name,...(value===undefined?{}:{value})},{validate,
+                // The broker checks lease authority after settlement too. A successful gesture
+                // deliberately replaces its old observation; only pre-dispatch checks bind that ref.
+                assertCurrent:()=>{this.#assert();if(this.options.network.revision!==revision)throw new Error('Origin grant changed');},dispatch:async mark=>{
                 await validate();check();mark();const timeout=Math.max(1,context.execution.deadline-Date.now());
                 if(command.kind==='fill')await entry.handle.fill(value!,{timeout});
                 else if(command.kind==='select')await entry.handle.selectOption({index:entry.options.get(command.optionRef)!},{timeout});

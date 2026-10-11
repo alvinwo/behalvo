@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { PublicNetworkGate } from '../../dist/browser/public-network.js';
 
 // Trusted construction seam. Production never accepts certificate/DNS/dial overrides.
-export async function managedSite(handler, assertActive = () => {}) {
+export async function managedSite(handler, assertActive = () => {}, start = true) {
   const directory = mkdtempSync(join(tmpdir(), 'managed-site-'));
   execFileSync('/usr/bin/openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', join(directory, 'key'),
     '-out', join(directory, 'cert'), '-subj', '/CN=example.test', '-days', '1'], { stdio: 'ignore' });
@@ -20,6 +20,6 @@ export async function managedSite(handler, assertActive = () => {}) {
   const gate = new PublicNetworkGate(['https://example.test'], assertActive, {
     resolve: async () => ['8.8.8.8'], dial: () => connect({ host: '127.0.0.1', port }),
   });
-  await gate.start();
+  if(start)await gate.start();
   return { gate, requests, async close() { await gate.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); rmSync(directory, { recursive: true, force: true }); } };
 }
