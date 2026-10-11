@@ -42,3 +42,9 @@ test('browser protocol explicitly advertises application-dispatched JSON tools',
  f.gateway.complete=async request=>{systems.push(request.system);return complete(request);};
  try{await f.run();assert.match(systems[1],/application dispatches your JSON tool envelope/);assert.match(systems[1],/browser is available/);}finally{f.store.close();}
 });
+test('live model receives public HTTPS policy separately from gesture review',async()=>{
+ const f=fixture([{outcome:'none'},{reply:'Ready to inspect.',notes:[]}]);f.browser.mode='live';
+ const complete=f.gateway.complete,systems=[];f.gateway.complete=async request=>{systems.push(request.system);return complete(request);};
+ try{await f.run();assert.match(systems[1],/public HTTPS.*without per-origin approval/i);assert.doesNotMatch(systems[1],/origin access grant/i);assert.match(systems[1],/Every gesture is reviewed privately by the owner/);assert.match(systems[1],/Private networks and local files remain blocked/);}
+ finally{f.store.close();}
+});
