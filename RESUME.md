@@ -1,30 +1,39 @@
-# Semantic browser exploration — 2026-10-10
+# Public HTTPS browsing — 2026-10-11
 
-Current branch: `codex/semantic-browser-exploration`, based on merged PR17
-`d9a95266187d9870e11b121578e4626d4ee97edc`. T1b implementation is present:
-scoped observations/controls, independent fixture request policy, journaled
-advisory notes, projection v3 maintenance, bounded exploration-only runtime and
-CLI. The primary is the sole writer; independent Sol/high and Astra/high reviewers
-cleared the dispatch, stale-document and settlement fixes. Clean-source local verification (1,240 pass), visible regression acceptance (25/25)
-and live Astra acceptance (15 stages across three sites) passed. Evidence
-belongs in [T1b verification](docs/verification/2026-10-10-semantic-browser-exploration.md).
+The owner approved normal public HTTPS access without per-domain enrollment,
+while retaining isolated sessions, exact-origin field/vault binding, reviewed
+journaled gestures and private/local network restrictions. The primary remains
+the sole implementation writer. Specialist review, fixes, PR publication,
+exact-head CI and merge are authorized in the current conversation.
 
-The owner wants a general teachable agent, without a hard-coded H-1B workflow.
-Email is not a prerequisite. Owner teachings remain separate from website-derived
-notes; no live accounts or portals are authorized by this synthetic increment.
-Technical specialist review, fixing findings, verified PR publication and merge
-are authorized. Preserve historical profiles, ignored auth and evidence; never
-inspect or copy credential contents into reports.
+Executable source is `05111a59c8b98ea2bddf190723ec43575db26a53` on
+`codex/public-https-browsing`, based on merged PR23 at `da27afbd`. Current network
+policy and commands are documented in the [browser guide](docs/PLAYWRIGHT_BROWSER.md)
+and [approved amended design](docs/superpowers/specs/2026-10-11-managed-browser-design.md).
+Independent Sol/high and Astra/high reviewers approved after correcting stale
+origin-grant wording in the live agent system prompt.
 
-The [approved design](docs/superpowers/specs/2026-10-09-teachable-browser-design.md)
-and [T1b plan](docs/superpowers/plans/2026-10-09-semantic-browser-exploration.md)
-define this scope. The same runtime explores two appointment layouts and a class
-directory. Request policy grants no goal choice or booking authority. T2 supervised
-live exploration and private session custody are next; T3 consequential action and
-independent readback follow separate review and authorization.
+Full POSIX verification passed: 1,365 tests passed, 85 opt-in skips, zero failures,
+and all six verification steps passed. All 46 managed-browser cases passed
+across focused runs with real Chromium against synthetic sites. The public visa
+information page rendered without enrollment, but remaining resource resets and
+403 responses prevent any claim of complete portal compatibility. No real login,
+account or appointment mutation was tested. Exact evidence and limitations:
+[public HTTPS verification](docs/verification/2026-10-11-public-https.md).
 
-Run Node from `/opt/homebrew/opt/node/bin` and set `TMPDIR=/private/tmp` on this
-laptop for CLI process tests. Final gates are local `npm run verify`, visible
-owned-browser acceptance, bounded clean-source live-model acceptance, both code
-reviews, and exact PR-head hosted CI. Do not promote scripted evidence into a live
-acceptance claim; retain diagnostic failures alongside final evidence.
+The latest change removes `/browser allow` from normal use. The compatibility
+command only explains the public policy. Private/local/file access, gesture
+review, input scope, cookie policy, unknown barriers and synthetic vault behavior
+remain unchanged. No storage migration is required. Existing Behalvo processes
+must restart to pick up the code; do not stop an owner's session or inspect its
+account state during development.
+
+Before resuming integration, inspect git and remote PR state rather than assuming
+this checkpoint means published or merged. Required hosted checks must pass on
+the exact final PR head. After merge, sync clean local `master` and remove only
+this merged feature branch. Preserve ignored profiles, auth and evidence.
+
+Use Node from `/opt/homebrew/opt/node/bin` and `TMPDIR=/private/tmp` on this laptop.
+The general browser still uses manual login handoff and programmatic semantic
+gestures. Authenticated H-1B compatibility, live vault-driven login and unattended
+booking remain unverified or outside this change.

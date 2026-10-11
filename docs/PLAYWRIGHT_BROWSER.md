@@ -17,8 +17,8 @@ extension or personal Chrome profile. The model discovers semantic links,
 buttons, text/search fields, textareas and selects; no visa workflow is hardcoded.
 
 Public HTTPS sites, redirects, scripts, images and content APIs load without
-per-domain approval, including JavaScript and background requests. This is not read-only access: GET can mutate
-and POST can read. Each agent-selected gesture separately displays its task,
+per-domain approval, including JavaScript and background requests. This is not
+read-only access: GET can mutate and POST can read. Each agent-selected gesture separately displays its task,
 site, control, selected option, navigation/form destination and authorized non-secret text for a fresh `approve`, `reject` or
 `handoff` response. The initial owner-authored open command needs no duplicate
 approval. A successful gesture does not verify a remote business outcome.
@@ -61,10 +61,11 @@ This is an application boundary, not an OS sandbox.
 
 The vault's automated browser integration remains the synthetic login fixture;
 live login uses manual handoff. Field binding controls where Behalvo fills an
-authorized value; it cannot restrict how the receiving website uses that value. Real H-1B portal compatibility, automatic booking
-verification and unattended monitoring have not been established. See
+authorized value; it cannot restrict how the receiving website uses that value.
+Real H-1B portal compatibility, automatic booking verification and unattended monitoring have not been established. See
 [sessions and memory](HARNESS_SESSIONS.md) and the
-[verification record](verification/2026-10-11-harness-browser.md).
+[harness verification](verification/2026-10-11-harness-browser.md) and
+[public HTTPS verification](verification/2026-10-11-public-https.md).
 
 Explicit visible acceptance uses synthetic accounts only:
 

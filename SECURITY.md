@@ -25,8 +25,7 @@ workspace, local owner, chat and task. Public HTTPS sites, redirects and resourc
 may run JavaScript and background requests without per-origin approval. Websites
 can send received data to other public HTTPS sites under normal browser policy;
 field binding constrains where Behalvo fills input, not the website’s later use.
-Each agent gesture separately needs
-fresh review and a one-use journaled Action. HTTP verbs do not classify effects.
+Each agent gesture separately needs fresh review and a one-use journaled Action. HTTP verbs do not classify effects.
 A checked-IP CONNECT proxy prevents a second DNS resolution after validation;
 context routing also guards redirects and dependencies. There is no direct
 fallback, personal profile, remote CDP attachment or public boundary override.
@@ -47,8 +46,8 @@ claiming process cleanup. Shutdown, cancellation, expiry and uncertain gestures
 close owned resources; unconfirmed cleanup remains an explicit failure. Live
 browsing neither calls the vault nor establishes real visa-portal compatibility.
 
-Browser Actions bind task revision, session, generation, network policy revision, document,
-observation and semantic control fingerprint. Input authorization uses an exact
+Browser Actions bind task revision, session, generation, network policy revision,
+document, observation and semantic control fingerprint. Input authorization uses an exact
 owner source and descriptor-only purpose; it cannot revive an executable handle.
 Possible dispatch followed by lost response or missing fresh evidence is unknown,
 never an automatic retry. The work-wide unresolved barrier survives replacement
