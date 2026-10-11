@@ -1,6 +1,6 @@
 # Agent Browser Navigation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. The user selected the primary chat as the sole implementation writer. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. The user selected the primary chat as the sole implementation writer. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Let an owner task drive reviewed public HTTPS navigation without a prerequisite `/browser open` command.
 
@@ -32,11 +32,11 @@
 
 **Interfaces:** Add optional `SemanticBrowserPort.visit(context, url): Promise<BrowserObservation>` and `LivePlaywright.visit(context, url): Promise<BrowserObservation>`. Add the exact `operation: 'visit'; url: string` union branch; share private navigation mechanics where useful while keeping public `open` and `visit` distinct.
 
-- [ ] Add failing tests for exact visit shape, URL/origin/digest bindings and fixed legacy digest fixtures; adapter visits require broker approval, reuse its page, and invalidate controls/input descriptors even for fragment navigation.
-- [ ] Build and run the targeted action/live tests; record the expected failures.
-- [ ] Implement strict command validation and one-shot reviewed `visit`; preserve legacy `open`, exact dispatch guard, fresh capture and handoff handling.
-- [ ] Re-run targeted tests. Assert reject/handoff has zero destination requests and approved navigation observes `action.started` before the first request.
-- [ ] Commit the command and adapter change with its tests.
+- [x] Add failing tests for exact visit shape, URL/origin/digest bindings and fixed legacy digest fixtures; adapter visits require broker approval, reuse its page, and invalidate controls/input descriptors even for fragment navigation.
+- [x] Build and run the targeted action/live tests; record the expected failures.
+- [x] Implement strict command validation and one-shot reviewed `visit`; preserve legacy `open`, exact dispatch guard, fresh capture and handoff handling.
+- [x] Re-run targeted tests. Assert reject/handoff has zero destination requests and approved navigation observes `action.started` before the first request.
+- [x] Commit the command and adapter change with its tests.
 
 ### Task 2: Lazy owned session acquisition
 
@@ -44,11 +44,11 @@
 
 **Interfaces:** `exploration().open(context, binding)` returns a lazy `SemanticBrowserPort`; its `visit` materializes/reuses the exact scoped session. Expose `sessionState(scope): 'absent' | 'connected'`, preserving `available(scope)` semantics. Retire a never-materialized port without claiming retained resources.
 
-- [ ] Add failing tests for zero allocation on port acquisition, one allocation across repeated visits/turns, unchanged capacity and cross-scope isolation, review rejection/handoff, cancellation during creation, late allocation and unconfirmed cleanup.
-- [ ] Build and run the session tests; record the expected failures.
-- [ ] Factor creation from trusted owner `open`; make the lazy port own in-flight creation and cleanup before its first allocating await. Route `visit` to review and keep owner `open` authority inaccessible from the model port.
-- [ ] Re-run session/live tests. Assert no late navigation or session resurrection, correct retained/human/closed disposition, and durable unknown barriers.
-- [ ] Commit the lifecycle change with its tests.
+- [x] Add failing tests for zero allocation on port acquisition, one allocation across repeated visits/turns, unchanged capacity and cross-scope isolation, review rejection/handoff, cancellation during creation, late allocation and unconfirmed cleanup.
+- [x] Build and run the session tests; record the expected failures.
+- [x] Factor creation from trusted owner `open`; make the lazy port own in-flight creation and cleanup before its first allocating await. Route `visit` to review and keep owner `open` authority inaccessible from the model port.
+- [x] Re-run session/live tests. Assert no late navigation or session resurrection, correct retained/human/closed disposition, and durable unknown barriers.
+- [x] Commit the lifecycle change with its tests.
 
 ### Task 3: Task-driven protocol and CLI composition
 
@@ -56,19 +56,19 @@
 
 **Interfaces:** Add optional `BrowserExplorationOptions.sessionState(scope)` using the type from Task 2. Live mode selects the existing loop for a resolved task regardless of existing session availability. Exact `visit` arguments are `{url: string}`; absent observation/handoff returns fixed tool feedback with no resource creation.
 
-- [ ] Add failing tests for natural task → visit → final without owner-open, final without allocation, absent observe recovery, synthetic-mode visit rejection, malformed URL rejection before allocation and truthful protocol state.
-- [ ] Build and run exploration/CLI tests; record expected failures.
-- [ ] Implement the live protocol and tool dispatch, retaining completion/deadline/recall bounds, source validation, safe retirement, and synthetic behavior. Wire the controller state callback through production CLI composition.
-- [ ] Re-run targeted tests, then the gated real-Chromium synthetic acceptance path. Prove first visit owner review, subsequent URL reuse, fresh journal evidence and no effects during encrypted rebuild.
-- [ ] Commit the product path and tests.
+- [x] Add failing tests for natural task → visit → final without owner-open, final without allocation, absent observe recovery, synthetic-mode visit rejection, malformed URL rejection before allocation and truthful protocol state.
+- [x] Build and run exploration/CLI tests; record expected failures.
+- [x] Implement the live protocol and tool dispatch, retaining completion/deadline/recall bounds, source validation, safe retirement, and synthetic behavior. Wire the controller state callback through production CLI composition.
+- [x] Re-run targeted tests, then the gated real-Chromium synthetic acceptance path. Prove first visit owner review, subsequent URL reuse, fresh journal evidence and no effects during encrypted rebuild.
+- [x] Commit the product path and tests.
 
 ### Task 4: Documentation, final verification and review
 
 **Files:** `README.md`, `SECURITY.md`, `docs/PLAYWRIGHT_BROWSER.md`, the relevant implementation-status table and a scoped verification record.
 
-- [ ] Update descriptions to make natural-language navigation operational and `/browser open` optional. State that URL navigation is reviewed and public HTTPS access is separate authority.
-- [ ] Run `npm run verify` on the final tree and inspect terminal summary plus raw logs. Record actual browser/model acceptance categories and cleanup results; do not infer hosted CI from local tests.
-- [ ] Obtain the one independent Sol/high plus Astra/high final review pair, fix supported findings and run appropriate verification for changed code.
+- [x] Update descriptions to make natural-language navigation operational and `/browser open` optional. State that URL navigation is reviewed and public HTTPS access is separate authority.
+- [x] Run `npm run verify` on the final tree and inspect terminal summary plus raw logs. Record actual browser/model acceptance categories and cleanup results; do not infer hosted CI from local tests.
+- [x] Obtain the one independent Sol/high plus Astra/high final review pair, fix supported findings and run appropriate verification for changed code.
 - [ ] Under the existing user authorization, prepare the PR, verify exact-head hosted CI, merge and perform repository cleanup.
 
 ## Delegated approval
