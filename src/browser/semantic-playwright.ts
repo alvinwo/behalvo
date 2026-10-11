@@ -12,16 +12,16 @@ export class SemanticPlaywright implements SemanticBrowserPort {
     readonly #policy:SemanticFixturePolicy;
     #page:Page|undefined; #scope:BrowserScope|undefined; #observation:BrowserObservation|undefined;
     #entries=new Map<string,Entry>(); #current:BrowserExecution|undefined;
-    #permit:string|undefined; #busy=false; #closed=false; #documentId=randomUUID();
+    #permit:string|undefined; #dispatchCheck:(()=>void)|undefined; #documentGuard:(()=>void)|undefined; #busy=false; #closed=false; #documentId=randomUUID();
     readonly #values=new Map<string,{id:string;value:string;purpose:string}>();
     constructor(policy:SemanticFixturePolicy,signal:AbortSignal,dependencies:PlaywrightOwnerDependencies={}) {
         this.#policy=structuredClone(policy);this.#owner=new PlaywrightProcessOwner({signal},dependencies);
     }
     get receiptPath():string{return this.#owner.receiptPath;}
-    #assert():void { if(this.#closed||!this.#current)throw new Error('Browser unavailable');assertExecutionActive(this.#current.execution);this.#current.assertCurrent();if(this.#scope)sameScope(this.#scope,this.#current); }
+    #assert():void { if(this.#closed||!this.#current)throw new Error('Browser unavailable');assertExecutionActive(this.#current.execution);this.#current.assertCurrent();this.#documentGuard?.();if(this.#scope)sameScope(this.#scope,this.#current); }
     async #run(context:BrowserExecution,operation:()=>Promise<BrowserObservation>):Promise<BrowserObservation>{
         if(this.#busy||this.#closed)throw new Error('Browser unavailable');this.#busy=true;this.#current=context;
-        try{this.#assert();return await withinExecution(operation,context.execution);}catch(error){if(context.execution.signal?.aborted||Date.now()>=context.execution.deadline){this.#closed=true;void this.#owner.close();}throw error;}finally{this.#current=undefined;this.#permit=undefined;this.#busy=false;}
+        try{this.#assert();return await withinExecution(operation,context.execution);}catch(error){if(context.execution.signal?.aborted||Date.now()>=context.execution.deadline){this.#closed=true;void this.#owner.close();}throw error;}finally{this.#current=undefined;this.#permit=undefined;this.#dispatchCheck=undefined;this.#documentGuard=undefined;this.#busy=false;}
     }
     async #start(browser:Browser):Promise<Page>{
         const context=await browser.newContext({javaScriptEnabled:false,serviceWorkers:'block',acceptDownloads:false});this.#assert();
@@ -30,10 +30,11 @@ export class SemanticPlaywright implements SemanticBrowserPort {
         await context.route('**/*',async route=>{
             const request=route.request();try{
                 this.#assert();if(!page||request.frame()!==page.mainFrame()||request.resourceType()!=='document'||this.#permit!==request.url()||!requestAllowed(this.#policy,request.method(),request.url()))throw new Error('Request denied');
-                this.#permit=undefined;this.#assert();
+                this.#permit=undefined;this.#assert();this.#dispatchCheck?.();
                 const response=await route.fetch({maxRedirects:0,maxRetries:0,timeout:Math.max(1,Math.min(10000,this.#current!.execution.deadline-Date.now()))});
                 try{this.#assert();const headers=response.headers();if(response.status()!==200||response.url()!==request.url()||headers['content-disposition']||!headers['content-type']?.startsWith('text/html'))throw new Error('Response denied');
                     const body=await response.body();this.#assert();if(body.length>262144)throw new Error('Response budget');
+                    this.#assert();this.#documentGuard=undefined;
                     await route.fulfill({status:200,headers:{'content-type':'text/html; charset=utf-8','content-security-policy':"default-src 'none'; form-action 'self'; frame-src 'none'"},body});
                 }finally{await response.dispose();}
             }catch{await route.abort('blockedbyclient').catch(()=>{});}
@@ -49,7 +50,7 @@ export class SemanticPlaywright implements SemanticBrowserPort {
         return this.#observe();
     });}
     async #observe():Promise<BrowserObservation>{
-        this.#assert();const page=this.#page!;const url=new URL(page.url());if(url.origin!==this.#policy.origin)throw new Error('Browser left fixture');
+        this.#assert();const documentId=this.#documentId;this.#documentGuard=()=>{if(this.#documentId!==documentId)throw new Error('Document changed during observation');};const page=this.#page!;const url=new URL(page.url());if(url.origin!==this.#policy.origin)throw new Error('Browser left fixture');
         const visibleText=await page.locator('body').innerText();this.#assert();
         const handles=await page.$$('a,button,input,select');this.#assert();const entries=new Map<string,Entry>();const controls:BrowserControl[]=[];
         for(const handle of handles){
@@ -71,10 +72,12 @@ export class SemanticPlaywright implements SemanticBrowserPort {
             if(!data.label.trim())continue;controls.push({ref,role,name:data.label.trim(),actions:[action],options:exposed});entries.set(ref,{handle,fingerprint:data.fingerprint,options});
         }
         const result=validateObservation({...this.#scope,id:randomUUID(),documentId:this.#documentId,origin:url.origin,location:url.pathname,observedAt:new Date().toISOString(),text:visibleText,controls},this.#scope!);
-        for(const entry of this.#entries.values())void entry.handle.dispose().catch(()=>{});this.#entries=entries;this.#observation=result;return result;
+        for(const entry of this.#entries.values())void entry.handle.dispose().catch(()=>{});this.#entries=entries;this.#observation=result;this.#documentGuard=undefined;return result;
     }
     async interact(context:BrowserExecution,raw:BrowserCommand):Promise<BrowserObservation>{return this.#run(context,async()=>{
         if(!this.#page||!this.#observation)throw new Error('Observe first');const command=parseBrowserCommand(raw);resolveControl(this.#observation,context,command);
+        const documentId=this.#observation.documentId;const observationId=this.#observation.id;
+        this.#documentGuard=()=>{if(this.#documentId!==documentId||this.#observation?.id!==observationId)throw new Error('Stale browser document');};
         const entry=this.#entries.get(command.ref)!;this.#assert();
         const current=await entry.handle.evaluate(node=>({connected:node.isConnected,fingerprint:(node as HTMLElement).outerHTML,disabled:(node as HTMLInputElement).disabled===true}));this.#assert();
         if(!current.connected||current.disabled||current.fingerprint!==entry.fingerprint||!await entry.handle.isVisible())throw new Error('Stale control');this.#assert();
@@ -95,10 +98,12 @@ export class SemanticPlaywright implements SemanticBrowserPort {
                 }return {url:url.href,fields};
             });this.#assert();
             if(!target||!requestAllowed(this.#policy,'GET',target.url))throw new Error('Interaction not permitted');
-            for(const field of target.fields){const purpose=fieldPurpose(this.#policy,new URL(this.#page.url()).pathname,field.name);if(field.input){const value=this.#values.get(field.name);if(!value||value.purpose!==purpose||value.value!==field.value||context.resolveInput(value.id,this.#policy.origin,purpose)!==field.value)throw new Error('Input not authorized');}}
+            const sourcePath=new URL(this.#page.url()).pathname;
+            const checkInputs=()=>{for(const field of target.fields){const purpose=fieldPurpose(this.#policy,sourcePath,field.name);if(field.input){const value=this.#values.get(field.name);if(!value||value.purpose!==purpose||value.value!==field.value||context.resolveInput(value.id,this.#policy.origin,purpose)!==field.value)throw new Error('Input not authorized');}}};
+            checkInputs();this.#dispatchCheck=checkInputs;
             this.#assert();this.#permit=target.url;
             // Navigate only to the resolved, policy-classified target. Never evaluate model code or selectors.
-            await this.#page.goto(target.url,{waitUntil:'domcontentloaded',timeout:Math.max(1,context.execution.deadline-Date.now())});this.#assert();
+            await this.#page.goto(target.url,{waitUntil:'domcontentloaded',timeout:Math.max(1,context.execution.deadline-Date.now())});this.#assert();if(this.#page.url()!==target.url)throw new Error('Navigation changed');
         }
         return this.#observe();
     });}

@@ -151,11 +151,61 @@ npm run storage -- upgrade-teachings --db <database> --workspace <workspace>
 For an encrypted database, supply its existing `--key-file <key-file>`. This
 validates the journal and source payloads, replaces only the projection, and runs
 no models or effects. Opening or ordinarily writing a v1 database does not upgrade
-it. New databases use projection v2. Wrong keys or invalid sources reject the
+it. New databases use projection v3. Wrong keys or invalid sources reject the
 upgrade without replacing the old projection.
 
-This delivers task memory (T1a). General website exploration and learned website
-observations (T1b), supervised live access and real booking remain separate work.
+This delivers task memory (T1a). The synthetic exploration option below adds T1b;
+supervised live access and real booking remain separate work.
+
+## Teachable synthetic browser exploration
+
+Install the matched Chromium build as described in the [browser guide](PLAYWRIGHT_BROWSER.md),
+then start the terminal agent using your existing model login:
+
+```bash
+npm run agent -- --synthetic-browser appointments-a
+```
+
+Available fixtures are `appointments-a`, `appointments-b`, and `classes`. This flag
+also enables task teachings and cannot be combined with offline mode or synthetic
+operations. A visible disposable browser opens when the model first observes the
+site. No extension enrollment or personal Chrome profile is involved.
+
+1. Create or select a task with `/work <work-id>`.
+2. Teach it: `Remember for this task: only consider morning sessions.`
+3. After the teaching acknowledgment, ask: `Explore the connected synthetic directory now and recommend a suitable session with its name and time.`
+4. Ask what website navigation it learned. Restart with the same database and
+   refocus the same task to recall saved teachings and advisory website notes.
+5. Correct the preference in a separate teaching turn, then ask it to explore again.
+
+New instructions are saved without browsing in that turn. The model receives
+bounded visible observations and opaque current controls, chooses navigation, and
+may save observation-grounded notes. Notes are historical guidance, never current
+availability, permission or proof of completion. Recommendations do not book.
+
+For a synthetic text field, the trusted owner command authorizes a value:
+
+```text
+/browser-input {"origin":"http://127.0.0.1:<actual-port>","purpose":"session-period","quote":"morning"}
+/browser-revoke <input-id>
+```
+
+Use the actual origin from the current observation. The command itself supplies
+the exact owner quote; authorization is bound to that task revision, origin and
+field purpose. A correction changes the task revision and invalidates older
+bindings. The model cannot create bindings or send arbitrary field values.
+
+Existing projection-v2 databases require explicit maintenance while stopped:
+
+```bash
+npm run storage -- upgrade-browser --db <database> --workspace <workspace>
+```
+
+Retain a verified backup and supply the existing `--key-file` for encrypted
+storage. Upgrade v1 through `upgrade-teachings` first. Maintenance validates and
+rebuilds sources without running a model or browser. See the
+[T1b verification record](verification/2026-10-10-semantic-browser-exploration.md)
+for measured coverage and limits.
 
 ## Bounded synthetic operations
 

@@ -11,7 +11,8 @@ first intended use. Email and phone integrations are not prerequisites.
    T1a durable teachings are implemented behind `--task-teachings`, with exact
    owner sources, correction/retraction and durable clarification holds. Release
    evidence is tracked in [T1a verification](verification/2026-10-09-task-teachings.md).
-   T1b model-driven synthetic exploration and learned website notes remain next.
+   T1b model-driven synthetic exploration and source-grounded advisory notes are
+   implemented behind `--synthetic-browser`; see [T1b verification](verification/2026-10-10-semantic-browser-exploration.md) for acceptance and release gates.
 2. Establish supervised live exploration with explicit site scope, private session
    custody and current observations. Existing synthetic browser acceptance does
    not prove real portal compatibility.

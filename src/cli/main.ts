@@ -1,3 +1,7 @@
+import { startSemanticFixture, type SemanticSite } from '../browser/semantic-fixture-sites.js';
+import { SemanticPlaywright } from '../browser/semantic-playwright.js';
+import type { BrowserExplorationOptions } from '../runtime/browser-exploration.js';
+import { browserMessage } from '../runtime/browser-messages.js';
 import { mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -21,6 +25,7 @@ export interface CliArgs {
   offline: boolean;
   syntheticOperations: boolean;
   teachingMode?: boolean;
+  semanticSite?: SemanticSite;
   dbPath: string;
   authPath: string;
   workspaceId: string;
@@ -70,9 +75,12 @@ export function parseCliArgs(argv: string[]): CliArgs {
     process.cwd(),
     !offline
   );
+  const semanticSite=valueAfter(argv,'--synthetic-browser');
+  if(semanticSite&&(!['appointments-a','appointments-b','classes'].includes(semanticSite)||offline||argv.includes('--synthetic-operations')))throw new Error(browserMessage('invalidFixture'));
   const model = parseModel(valueAfter(argv, '--model') ?? process.env.BEHALVO_MODEL ?? process.env.OPERATOR_MODEL);
   return {
     offline,
+    ...(semanticSite?{semanticSite:semanticSite as SemanticSite,teachingMode:true}:{}),
     ...(argv.includes('--task-teachings') ? {teachingMode:true} : {}),
     syntheticOperations: argv.includes('--synthetic-operations'),
     dbPath: resolve(valueAfter(argv, '--db') ?? (argv.includes('--synthetic-operations') ? 'data/synthetic-agent.db' : process.env.BEHALVO_DB ?? process.env.OPERATOR_DB ?? 'data/agent.db')),
@@ -98,6 +106,11 @@ async function main(): Promise<void> {
   let app;
   let pi: PiModelGateway | undefined;
   let settings: ModelSettingsStore | undefined;
+  let fixture: Awaited<ReturnType<typeof startSemanticFixture>> | undefined;
+  const browser: BrowserExplorationOptions | undefined=args.semanticSite?{open:async context=>{
+    fixture??=await startSemanticFixture(args.semanticSite!);
+    return new SemanticPlaywright(fixture.policy,context.execution.signal ?? new AbortController().signal);
+  }}:undefined;
   try {
     encryptionKey = args.storageKeyPath ? loadStorageKeyFile(args.storageKeyPath) : undefined;
     if (args.offline) {
@@ -119,6 +132,7 @@ async function main(): Promise<void> {
         gateways: [offline],
         syntheticOperations: args.syntheticOperations,
         ...(args.teachingMode ? {teachingMode:true} : {}),
+        ...(browser?{browser}:{}),
         ...(encryptionKey ? { encryptionKey } : {})
       });
     } else {
@@ -160,6 +174,7 @@ async function main(): Promise<void> {
         gateways: [pi],
         syntheticOperations: args.syntheticOperations,
         ...(args.teachingMode ? {teachingMode:true} : {}),
+        ...(browser?{browser}:{}),
         ...(encryptionKey ? { encryptionKey } : {})
       });
     }
@@ -169,6 +184,7 @@ async function main(): Promise<void> {
   }
   const io = terminalIo();
   try {
+    if(args.semanticSite)io.write(browserMessage('synthetic'));
     if (args.syntheticOperations) io.write('SYNTHETIC OPERATIONS ONLY — simulated account data; no real account effects.');
     if (args.offline) {
       await app.registry.select('offline', 'deterministic');
@@ -206,6 +222,7 @@ async function main(): Promise<void> {
   } finally {
     io.close();
     app.close();
+    await fixture?.close();
   }
 }
 

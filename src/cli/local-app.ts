@@ -1,3 +1,5 @@
+import type { BrowserExplorationOptions } from '../runtime/browser-exploration.js';
+import { browserMessage } from '../runtime/browser-messages.js';
 import { teachingMessage } from '../runtime/teaching-messages.js';
 import { OperationRegistry } from '../operations/registry.js';
 import { OperationService } from '../operations/service.js';
@@ -16,6 +18,7 @@ export interface LocalAgentOptions {
   gateways: readonly ModelGateway[];
   syntheticOperations?: boolean;
   teachingMode?: boolean;
+  browser?: BrowserExplorationOptions;
   encryptionKey?: Uint8Array;
 }
 
@@ -48,6 +51,7 @@ export function openLocalAgent(options: LocalAgentOptions): LocalAgent {
     if (state.ownerId !== options.ownerId)
       throw new Error(`Workspace owner mismatch: expected ${state.ownerId}`);
 
+    if (options.browser && !state.browserMemory) throw new Error(browserMessage('upgrade'));
     if (options.teachingMode && !state.teachingMemory) throw new Error(teachingMessage('upgrade'));
     const registry = new ModelRegistry(options.gateways);
     const operationRegistry = new OperationRegistry();
@@ -60,7 +64,7 @@ export function openLocalAgent(options: LocalAgentOptions): LocalAgent {
       operations,
       operationRegistry,
       registry,
-      service: new AgentService(store, registry, undefined, { service: operations, registry: operationRegistry, workspaceId: options.workspaceId }, {teachingMode:options.teachingMode ?? false}),
+      service: new AgentService(store, registry, undefined, { service: operations, registry: operationRegistry, workspaceId: options.workspaceId }, {teachingMode:options.teachingMode ?? false,...(options.browser?{browser:options.browser}:{})}),
       operator: new Operator(store),
       close: () => {
         if (closed) return;

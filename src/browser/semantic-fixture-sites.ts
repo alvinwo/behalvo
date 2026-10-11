@@ -11,8 +11,8 @@ export async function startSemanticFixture(site:SemanticSite) {
         if(url.pathname==='/book'){counters.effects++;res.end('Forbidden synthetic effect');return;}
         if(url.pathname==='/redirect'){res.writeHead(302,{Location:'/book'});res.end();return;}
         if(url.pathname==='/download'){res.setHeader('Content-Disposition','attachment; filename=synthetic.txt');res.end('synthetic');return;}
-        if(url.pathname==='/')res.end(`<h1>${site} synthetic directory</h1><a href="${path}">Browse sessions</a><a href="/book">Book now</a><a href="/redirect">Redirect trap</a><a href="/download">Download trap</a><a target="_blank" href="${path}">Popup trap</a><input type="password" aria-label="Password"><input hidden name="secret" value="SYNTHETIC_SECRET"><form method="get" action="/search"><label>Session period<input name="period" type="text"></label><button>Search</button></form>`);
-        else if(url.pathname===path||url.pathname==='/search'){
+        if(url.pathname==='/')res.end(`<h1>${site} synthetic directory</h1><a href="${path}">Browse sessions</a><a href="/book">Book now</a><a href="/redirect">Redirect trap</a><a href="/download">Download trap</a><a target="_blank" href="${path}">Popup trap</a><input type="password" aria-label="Password"><input hidden name="secret" value="SYNTHETIC_SECRET"><form method="get" action="/search"><label>Session period<input name="period" type="text"></label><button>Search</button></form><form method="get" action="/filter"><label>Period filter<select name="period"><option value="morning">Morning</option><option value="afternoon">Afternoon</option></select></label><button>Filter</button></form>`);
+        else if(url.pathname===path||url.pathname==='/search'||url.pathname==='/filter'){
             const morning=site==='appointments-a'?'Cedar':site==='appointments-b'?'Maple':'Drawing';
             const afternoon=site==='appointments-a'?'Pine':site==='appointments-b'?'Birch':'Pottery';
             const rows=`<a href="${path}/morning">${morning}: morning session at 09:00</a><a href="${path}/afternoon">${afternoon}: afternoon session at 15:00</a>`;
@@ -22,7 +22,7 @@ export async function startSemanticFixture(site:SemanticSite) {
     });
     await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
     const address=server.address();if(!address||typeof address==='string')throw new Error('Fixture failed');
-    const policy:SemanticFixturePolicy={origin:`http://127.0.0.1:${address.port}`,routes:['/',path,path+'/morning',path+'/afternoon','/redirect','/download'].map(path=>({path,query:{}})),fields:[{path:'/',name:'period',purpose:'session-period'}]};
-    policy.routes.push({path:'/search',query:{period:['morning','afternoon']}});
+    const policy:SemanticFixturePolicy={origin:`http://127.0.0.1:${address.port}`,routes:['/',path,path+'/morning',path+'/afternoon'].map(path=>({path,query:{}})),fields:[{path:'/',name:'period',purpose:'session-period'}]};
+    policy.routes.push({path:'/search',query:{period:['morning','afternoon']}},{path:'/filter',query:{period:['morning','afternoon']}});
     return {policy,counters,close:()=>new Promise<void>((resolve,reject)=>server.close(e=>e?reject(e):resolve()))};
 }

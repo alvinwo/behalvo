@@ -1,3 +1,5 @@
+import { authorizeTaskInput, revokeTaskInput } from '../runtime/browser-learning.js';
+import { browserMessage } from '../runtime/browser-messages.js';
 import { isOperationCommand } from '../operations/validation.js';
 import { ActionReview } from './action-review.js';
 import type { OperationService } from '../operations/service.js';
@@ -79,7 +81,18 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         if (command === '/quit')
           return { reason: 'quit', threadId, ...(workId ? { workId } : {}) };
         if (command === '/help') {
-          io.write(HELP);
+          io.write(HELP+'\n'+browserMessage('help'));
+          continue;
+        }
+        if(command==='/browser-input'||command==='/browser-revoke') {
+          if(!workId)throw new Error(browserMessage('inputUsage'));
+          const state=store.state(workspaceId);const work=state.works[workId]!;
+          const value=command==='/browser-input'?JSON.parse(line.slice(command.length).trim()):args[0];
+          if(command==='/browser-revoke'&&args.length!==1)throw new Error(browserMessage('inputUsage'));
+          const record=store.ingest(workspaceId,{source:'owner:browser-input',externalId:randomUUID(),threadId,senderId:ownerId,senderRole:'owner',text:line});
+          const binding={workspaceId,ownerId,workId,ownerRecordId:record.id,expectedWorkRevision:work.revision};
+          if(command==='/browser-input'){const input=authorizeTaskInput(store,binding,value,true);io.write(browserMessage('inputSaved')+input.id);}
+          else {revokeTaskInput(store,binding,value,true);io.write(browserMessage('inputRevoked'));}
           continue;
         }
         if (command === '/model') {
