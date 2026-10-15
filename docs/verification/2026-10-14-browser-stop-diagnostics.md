@@ -56,11 +56,34 @@ same session with fresh references and one alternative navigation. No rejected
 gesture was repeated and no permission policy was broadened.
 
 Raw local evidence is ignored under `data/verification/browser-protocol-stop/`.
-Full repository verification and independent review outcomes will be recorded
-before integration. No authenticated H-1B flow acceptance is claimed.
+Both independent reviewers found the same late-settlement gap: a deadline during
+artifact persistence or final SQLite commit could overwrite the diagnostic and
+leave a retained browser open. Five added tests reproduced the failure before
+the shared asynchronous rejection path fixed it. They cover final artifact
+deadlines, real SQLite writer-lock contention, and revoked admitted service
+fences, including unconfirmed closure. A revoked service fence is never bypassed
+to save another reply; cleanup completes before the failure is rethrown.
+
+Final executable commit `e3699ea067bf764a69a63d1ed3e6025aca22799d` passed:
+
+- Focused regression suite: 75 passed, zero failures or skips.
+- Full POSIX `npm run verify`: all six gates passed (`check`, `demo`,
+  `operations:demo`, `owner-control:demo`, `service:demo`, diff check).
+  The check suite had 1,530 tests: 1,435 passed, 95 skipped, zero failures.
+- Terminal local summary:
+  `data/verification/2026-10-15T05-19-39.620Z-ceffcdcf-d4b0-43db-9f5b-a8ad7f6666b7/summary.json`.
+  HEAD and source fingerprint were unchanged; the tree was clean before/after.
+- Both reviewers approved the focused repair after independently rerunning
+  regressions. Hosted CI remains a separate pre-merge gate, not a claim made
+  by this local record.
+
+No authenticated H-1B flow acceptance is claimed.
 
 ## Delegation ledger
 
 - Architecture: `gpt-6-astra`, max; bounded design approval; no failed design
   retries. Deferred automatic format correction.
-- Independent Sol/high and Astra/high review: pending.
+- Independent review: `gpt-5.6-sol`, high; lifecycle/unknown-effect risk review;
+  one finding-driven re-review; approved `e3699ea` after 75 passing regressions.
+- Independent review: `gpt-6-astra`, high; lifecycle/unknown-effect risk review;
+  one finding-driven re-review; approved `e3699ea` after five passing new cases.
