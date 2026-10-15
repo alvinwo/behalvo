@@ -80,6 +80,14 @@ not automatically invoke the model again or repeat a gesture. Proposed reference
 are checked against the latest observation before port invocation; the adapter
 still performs all live descriptor and dispatch checks. Untyped port failures,
 cancellation, deadline, lost authority and uncertain cleanup remain terminal.
+Browser requests keep the latest observation and latest recall result whole.
+Older page controls and completed browser tool arguments are removed from model
+context. Whole old page/recall payloads may be omitted with explicit markers;
+source IDs and fixed action outcomes remain. These are context projections, not
+journal changes or summaries that grant authority. Pinned owner input and task
+state are never truncated to make room. Exact serialized UTF-8 request accounting
+includes protocol, inputs and nested escaping; oversized mandatory context still
+stops without another inference or effect.
 Possible dispatch followed by lost response or missing fresh evidence is unknown,
 never an automatic retry. The work-wide unresolved barrier survives replacement
 windows and replay until owner reconciliation. It blocks model calls for the

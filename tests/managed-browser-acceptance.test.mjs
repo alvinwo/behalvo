@@ -160,3 +160,33 @@ test('covered link then malformed model response preserves the page for a new ow
  turn=1;await f.run(['Continue exploring.','/quit']);assert.equal(f.controller.status(f.scope()).sessionId,first.sessionId);assert.equal(covered,0);assert.equal(alternative,1);assert.equal(f.prompts.length,0);
  assert.deepEqual(Object.values(f.app.store.state('w').actions).map(a=>a.status),['accepted','failed','accepted']);assert.ok(f.output.some(line=>line.includes('Alternative explored')));
 });
+
+test('large-page exploration keeps current controls and compacts history within the unchanged product budget',{skip:!enabled,timeout:60000},async t=>{
+ const visits=[],requests=[];const site=await managedSite((req,res)=>{
+  if(req.url==='/favicon.ico'){res.end();return;}
+  visits.push(req.url);res.setHeader('Content-Type','text/html');const page=Number(req.url.slice(1))||1;
+  res.end(`<h1>Synthetic page ${page}</h1><p>${'x'.repeat(12000)}</p>`+Array.from({length:60},(_,i)=>`<a href="/${page+1}">Catalog entry ${i} ${'n'.repeat(40)}</a>`).join(''));
+ },()=>{},false);
+ const f=await appFixture(t,site,{complete:async request=>{
+  const parsed=intake(request);if(parsed)return parsed;requests.push(request);
+  const entries=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]),o=entries.at(-1)?.observation;
+  if(!o)return tool('visit',{url:'https://example.test/1'});
+  if(entries.length===5)return{text:JSON.stringify({reply:'Inspected five synthetic catalog pages.',notes:[{text:'Earlier synthetic catalog navigation.',sourceIds:[entries[0].historicalObservation.id]}]})};
+  return tool('navigate',{observationId:o.id,ref:o.controls[0].ref});
+ }});
+ await f.run(['Explore the synthetic catalog at https://example.test/1.','/quit']);
+ assert.ok(f.output.some(line=>line.includes('Inspected five synthetic catalog pages.')),JSON.stringify(f.output));
+ assert.deepEqual(visits,['/1','/2','/3','/4','/5']);assert.equal(requests.length,6);
+ let omitted=false;
+ for(const request of requests){
+  assert.ok(Buffer.byteLength(JSON.stringify(request),'utf8')<=56000);
+  const entries=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]);if(!entries.length)continue;
+  const latest=entries.at(-1).observation;assert.equal(latest.controls.length,60);assert.ok(Buffer.byteLength(JSON.stringify(latest))>20000);
+  const stored=f.app.store.state('w').browserMemory.observations[latest.id];assert.deepEqual(JSON.parse(f.app.store.readArtifact('w',stored.artifactId)),latest);
+  for(const old of entries.slice(0,-1)){assert.equal(old.observation,undefined);assert.ok(old.historicalObservation);assert.equal(old.tool.arguments,undefined);if(old.historicalObservation.textOmitted)omitted=true;}
+ }
+ assert.equal(omitted,true);assert.equal(Object.keys(f.app.store.state('w').browserMemory.observations).length,5);
+ assert.equal(Object.keys(f.app.store.state('w').browserMemory.notes).length,1);
+ assert.deepEqual(Object.values(f.app.store.state('w').actions).map(a=>a.status),Array(5).fill('accepted'));
+ assert.equal(f.prompts.filter(line=>line.includes('Review this one browser gesture')).length,0);assert.equal(f.controller.status(f.scope()).state,'idle');
+});

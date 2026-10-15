@@ -1,3 +1,4 @@
+import { buildBrowserContext, browserInputReferences } from './browser-context.js';
 import { prepareProgressEvent, PROGRESS_PROTOCOL } from './task-continuity.js';
 import { runRecallLoop } from './recall-loop.js';
 import { memoryMessage } from '../memory/messages.js';
@@ -243,17 +244,22 @@ export class AgentService {
         assertCurrent: () => admitted.fence.assertCurrent()
       } } : {}),
       ...(input.workId ? { workId: input.workId } : {}) };
-    const context = buildContext(this.store, {
+    const contextRequest = {
       workspaceId: input.workspaceId,
       ownerId: input.ownerId,
       threadId: input.threadId,
       currentRecordId: ownerRecord.id,
-      historyMode: continuityEnabled ? 'task' : 'legacy_thread',
+      historyMode: continuityEnabled ? 'task' as const : 'legacy_thread' as const,
       ...(input.workId ? { workId: input.workId } : {}),
       windowTokens: input.windowTokens ?? 64000,
       outputReserve: input.outputReserve ?? 8000,
-      ...(this.#loop ? this.#loop.contextBudget(request, binding) : {})
-    });
+      ...(!explorationEnabled&&this.#loop ? this.#loop.contextBudget(request, binding) : {})
+    };
+    const browserState=this.store.state(input.workspaceId);
+    const context=explorationEnabled&&teachingReply===undefined ? buildBrowserContext(this.store,contextRequest,
+      {...request,...(execution?.signal?{signal:execution.signal}:{})},
+      {mode:this.features.browser?.mode,enabled:!!this.features.browser,connected:false,
+        inputs:input.workId?browserInputReferences(browserState,input.workId,browserState.works[input.workId]!.revision):[]}) : buildContext(this.store,contextRequest);
 
     request.prompt = context.text;
     const reasoningWorkRevision=input.workId?this.store.state(input.workspaceId).works[input.workId]?.revision:undefined;

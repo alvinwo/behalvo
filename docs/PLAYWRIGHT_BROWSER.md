@@ -70,6 +70,25 @@ There is no automatic extra inference, gesture retry or budget reset. A browser
 operation failure, cancellation, deadline or unconfirmed authority still closes
 the session. Unknown/running action guidance takes precedence over loop errors.
 
+Browser context uses a complete serialized-request byte cap (56,000 bytes with
+ordinary defaults, at most 196,608), not the provider's advertised token window.
+Initial context allocation includes the browser protocol and input descriptors,
+then reserves up to 36,864 bytes for continuation before selecting optional chat
+history. Exact owner instructions and pinned task state take priority over this
+soft reserve. Every completion is counted again, including UTF-8 and nested JSON
+escaping.
+
+The latest page observation is kept whole, once. Older observations immediately
+lose their executable controls and session/document handles; completed browser
+tool arguments are omitted too. Whole historical page text and older recall
+payloads remain while space permits, then are omitted oldest first with explicit
+markers. Source metadata, action outcomes and diagnostics remain. The latest
+recall result is always kept whole. Historical metadata cannot prove omitted
+facts or current availability. Full observations remain in the scoped journal;
+chat recall cannot retrieve browser artifacts by observation ID. If mandatory
+context still exceeds the cap, the turn stops safely with the existing guidance.
+Even a valid 32 KiB raw observation can exceed the request cap after escaping.
+
 If a crash leaves an action `running`, it cannot be reconciled directly: a worker
 could still be active. Stop all Behalvo processes/effect workers, then run from
 the repository, using the same database and workspace:
