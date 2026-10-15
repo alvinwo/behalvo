@@ -60,6 +60,16 @@ the action and recovery commands. `/browser status` reports unresolved action ID
 even with `state: "absent"`, and focused-task turns remain blocked before model
 calls until explicit reconciliation. Historical unknown records are unchanged.
 
+A loop stop also reports a fixed phase/code, such as `response/invalid_json`,
+`tool/reference_rejected`, `model/invocation_failed` or `budget/input_limit`.
+This guidance is stored with the assistant reply in the normal scoped journal;
+it contains no raw exception or rejected model response. If the message says
+the browser remains open, ask the agent to continue in a new turn or use
+`/browser handoff` for manual interaction. The next turn obtains fresh references.
+There is no automatic extra inference, gesture retry or budget reset. A browser
+operation failure, cancellation, deadline or unconfirmed authority still closes
+the session. Unknown/running action guidance takes precedence over loop errors.
+
 If a crash leaves an action `running`, it cannot be reconciled directly: a worker
 could still be active. Stop all Behalvo processes/effect workers, then run from
 the repository, using the same database and workspace:

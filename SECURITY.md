@@ -73,6 +73,13 @@ repeating the gesture or closing a healthy session. Raw exceptions, malformed
 replies and late receipts cannot establish no dispatch; a timeout already settled
 as unknown remains unknown. Fixed phase/code diagnostics are saved in the action
 evidence without raw exception text, values, cookies or HTML.
+Local model, protocol and budget stops record fixed phase/code guidance in the
+assistant-message journal. They may retain a healthy browser only after current
+authority and lease retirement checks, with no pending/unknown action. They do
+not automatically invoke the model again or repeat a gesture. Proposed references
+are checked against the latest observation before port invocation; the adapter
+still performs all live descriptor and dispatch checks. Untyped port failures,
+cancellation, deadline, lost authority and uncertain cleanup remain terminal.
 Possible dispatch followed by lost response or missing fresh evidence is unknown,
 never an automatic retry. The work-wide unresolved barrier survives replacement
 windows and replay until owner reconciliation. It blocks model calls for the

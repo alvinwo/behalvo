@@ -111,13 +111,15 @@ test('unknown action guidance survives unconfirmed cleanup and reports both barr
 test('task continuity deadline settlement preserves browser unknown guidance',async()=>{
  const {BrowserActionBroker}=await import('../dist/runtime/browser-actions.js');const {BrowserActionStopped}=await import('../dist/browser/live-failure.js');
  const {OperationRegistry}=await import('../dist/operations/registry.js'),{OperationService}=await import('../dist/operations/service.js');
- const f=fixture([]),registry=new OperationRegistry();
+ const f=fixture([]),registry=new OperationRegistry();const originalNow=Date.now;let now=originalNow();Date.now=()=>now;
  const gateway={complete:async request=>({text:JSON.stringify(request.system.includes('owner-only task intake')?{task:{kind:'keep'},teachings:{outcome:'none'}}:{tool:{name:'visit',arguments:{url:'https://example.test/'}}})})};
- const agent=new AgentService(f.store,gateway,undefined,{registry,service:new OperationService(f.store,registry),timeoutMs:150},{taskContinuity:true,browser:{mode:'live',sessionState:()=> 'absent',open:async(ctx,binding)=>({
-  visit:async()=>{const result=await new BrowserActionBroker(f.store).perform(binding,{kind:'browser.gesture',version:1,operation:'visit',url:'https://example.test/',origin:'https://example.test',threadId:'t',sessionId:ctx.sessionId,generation:1,grantRevision:1},ctx.execution,{review:async()=> 'approve',validate:async()=>{},dispatch:async mark=>{mark();return new Promise(()=>{});}});throw new BrowserActionStopped(result);},
-  observe:async()=>assert.fail(),interact:async()=>assert.fail(),retire:async()=>{await new Promise(r=>setImmediate(r));return {leaseRetired:true,sessionDisposition:'closed',cleanupConfirmed:true};},close:async()=>({confirmed:true})
+ const agent=new AgentService(f.store,gateway,undefined,{registry,service:new OperationService(f.store,registry),timeoutMs:5000},{taskContinuity:true,browser:{mode:'live',sessionState:()=> 'absent',open:async(ctx,binding)=>({
+  visit:async()=>{const result=await new BrowserActionBroker(f.store).perform(binding,{kind:'browser.gesture',version:1,operation:'visit',url:'https://example.test/',origin:'https://example.test',threadId:'t',sessionId:ctx.sessionId,generation:1,grantRevision:1},ctx.execution,{review:async()=> 'approve',validate:async()=>{},dispatch:async mark=>{mark();throw new Error('Synthetic response lost after dispatch');}});throw new BrowserActionStopped(result);},
+  // Establish unknown before expiring the turn. Two independent timeout races
+  // can otherwise publish valid running guidance before the broker settles.
+  observe:async()=>assert.fail(),interact:async()=>assert.fail(),retire:async()=>{assert.equal(Object.values(f.store.state('w').actions)[0].status,'unknown');now=ctx.execution.deadline+1;return {leaseRetired:true,sessionDisposition:'closed',cleanupConfirmed:true};},close:async()=>({confirmed:true})
  })}});
  try{const result=await agent.runOwnerTurn({workspaceId:'w',ownerId:'o',threadId:'t',workId:'task',externalId:'deadline',text:'Explore.',model});
   const action=Object.values(f.store.state('w').actions)[0];assert.equal(action.status,'unknown');assert.ok(result.turn.reply.includes(action.id));assert.match(result.turn.reply,/\/browser resolve/);assert.equal(f.store.inbox('w').length,0);
- }finally{f.store.close();}
+ }finally{Date.now=originalNow;f.store.close();}
 });
