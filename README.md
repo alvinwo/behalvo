@@ -124,7 +124,7 @@ the agent can choose a website and follow native links without approval prompts 
 | Owner-only task intake, same-turn instruction updates, durable focus, advisory progress and correction/clarification memory across restart | Autonomous completion from model claims |
 | Saved chat listing/resume, task-attributed history, bounded source-linked recall and memory inspection | Vector services or global cross-workspace retrieval |
 | Explicit journal-validated v1–v3 → v4 continuity upgrade, including encrypted backups | Automatic legacy projection upgrades |
-| Synthetic and managed public-HTTPS exploration with source-grounded advisory notes | Proven real-portal compatibility or automatic booking verification |
+| Synthetic and managed public-HTTPS exploration with source-grounded advisory notes, complete current-page context and bounded historical payloads | Proven real-portal compatibility or automatic booking verification |
 | WorkItems/Facts shared across explicitly linked threads | Memory granting permission or completing tasks |
 | Task-driven URL/native-link navigation without prompts, recovery from proven blocked controls, explicit maintenance for interrupted browser actions, fixed action/loop diagnostics, retained browser after local model stops and manual login handoff | Personal-profile/CDP attachment, unattended actions or browser login after restart |
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |

@@ -38,6 +38,10 @@ export interface ContextPacket {
     omittedMessageCount: number;
     work?: WorkItem;
 }
+/** Pinned material alone exceeds the requested capacity; other failures must not be retried. */
+export class ContextCapacityError extends Error {
+    constructor(readonly requiredBudget:number){super('Context budget cannot fit pinned state and current input');}
+}
 /** Default is a conservative byte estimate for offline tests, NOT an exact model tokenizer. */
 export function byteBudgetEstimate(text: string): number { return Buffer.byteLength(text, 'utf8'); }
 export function buildContext(store: SqliteStore, request: ContextRequest): ContextPacket {
@@ -104,8 +108,9 @@ export function buildContext(store: SqliteStore, request: ContextRequest): Conte
     const newest = current ?? records.at(-1);
     if (newest)
         selected.push(newest);
-    if (tokenCount(serialize()) > budget)
-        throw new Error('Context budget cannot fit pinned state and current input');
+    const pinnedCost=tokenCount(serialize());
+    if (pinnedCost > budget)
+        throw new ContextCapacityError(pinnedCost);
     if(work && s.browserMemory) {
         for(const note of Object.values(s.browserMemory.notes).reverse()) {
             if(note.workId!==work.id||note.status!=='candidate'||includedBrowserNoteIds.length>=8)continue;
