@@ -42,7 +42,7 @@ for(const layout of ['directory','inventory'])test(`full chat and owner-review p
  }});
  await f.run(['Compare synthetic catalog entries.','/browser open https://example.test/','Inspect the page.',()=>`/browser input ${f.controller.status(f.scope()).inputs.find(i=>i.name==='Search').ref} Cedar`,'Search using the authorized input.','/actions','/quit']);
  assert.equal(searches,1,JSON.stringify(f.output));assert.ok(f.output.some(line=>line.includes('Cedar result')));const state=f.app.store.state('w');
- assert.equal(Object.values(state.actions).filter(a=>a.status==='accepted').length,3);assert.ok(Object.keys(state.browserMemory.notes).length);assert.ok(Object.keys(state.taskContinuity.progress).length);
+ assert.equal(Object.values(state.actions).filter(a=>a.status==='accepted').length,3);assert.deepEqual(Object.values(state.actions).map(a=>a.command.authority),['owner_open','owner_review','owner_review']);assert.ok(Object.keys(state.browserMemory.notes).length);assert.ok(Object.keys(state.taskContinuity.progress).length);
  assert.equal(f.controller.status(f.scope()).state,'idle');assert.deepEqual(f.app.store.rebuild('w'),state);
  await f.app.store.backup(join(f.dir,'backup'));assert.equal(searches,1);assert.equal(readFileSync(join(f.dir,'agent.db')).includes(Buffer.from('Cedar result')),false);
 });
@@ -88,14 +88,21 @@ test('natural task visits, later URL reuses cookies, and replay never repeats na
  await f.run(['Now inspect https://example.test/later.','/quit']);assert.equal(f.controller.status(f.scope()).sessionId,first);
  assert.ok(f.output.some(line=>line.includes('Retained synthetic session')));assert.equal(requests,2);
  const state=f.app.store.state('w');assert.deepEqual(Object.values(state.actions).map(a=>[a.command.operation,a.status]),[['visit','accepted'],['visit','accepted']]);
- assert.equal(f.prompts.filter(line=>line.includes('Review this one browser gesture')).length,2);
+ assert.equal(f.prompts.filter(line=>line.includes('Review this one browser gesture')).length,0);
  assert.deepEqual(f.app.store.rebuild('w'),state);await f.app.store.backup(join(f.dir,'visit-backup'));assert.equal(requests,2);
 });
-for(const decision of ['reject','handoff'])test(`agent initial visit ${decision} preserves zero target traffic`,{skip:!enabled,timeout:60000},async t=>{
- const site=await managedSite((_req,res)=>res.end('<h1>Should not load</h1>'),()=>{},false);
- const f=await appFixture(t,site,{complete:async request=>intake(request)??tool('visit',{url:'https://example.test/'})},decision);
- await f.run(['Inspect https://example.test/.','/quit']);assert.equal(site.requests.length,0);
- const actions=Object.values(f.app.store.state('w').actions);assert.equal(actions.length,1);assert.equal(actions[0].command.operation,'visit');assert.equal(actions[0].status,'cancelled');
+for(const decision of ['reject','handoff'])test(`automatic navigation then mutation ${decision} preserves zero mutation traffic`,{skip:!enabled,timeout:60000},async t=>{
+ let effects=0;const site=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');if(req.url==='/change'){effects++;return res.end('Changed');}res.end(req.url==='/next'?'<form method="post" action="/change"><button>Apply</button></form>':'<a href="/next">Explore</a>');},()=>{},false);
+ const f=await appFixture(t,site,{complete:async request=>{const parsed=intake(request);if(parsed)return parsed;
+  const o=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]).at(-1)?.observation;
+  if(!o)return tool('visit',{url:'https://example.test/'});
+  return tool(o.controls[0].role==='link'?'navigate':'click',{observationId:o.id,ref:o.controls[0].ref});
+ }},decision);
+ await f.run(['Explore the synthetic site and apply its change.','/quit']);assert.equal(effects,0);
+ const actions=Object.values(f.app.store.state('w').actions);assert.equal(actions.length,3,JSON.stringify(f.output));
+ assert.deepEqual(actions.map(a=>[a.command.authority,a.status]),[['navigation_policy_v1','accepted'],['navigation_policy_v1','accepted'],['owner_review','cancelled']]);
+ assert.equal(actions[1].command.destination,'https://example.test/next');assert.equal(actions[1].command.version,2);
+ assert.equal(f.prompts.filter(line=>line.includes('Review this one browser gesture')).length,1);
  if(decision==='handoff')assert.equal(f.controller.status(f.scope()).state,'human');else assert.equal(f.controller.available(f.scope()),false);
 });
 test('unknown explicit visit is dispatched once and blocks another visit after replay',{skip:!enabled,timeout:60000},async t=>{

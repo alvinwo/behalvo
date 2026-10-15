@@ -91,8 +91,10 @@ export class ManagedBrowserController {
         session.browser=(this.dependencies.browser??(options=>new LivePlaywright(options)))({sessionId:session.id,threadId:session.scope.threadId,network:session.network,assertSession:()=>this.#checkSession(session),
             perform:async(context,command,detail,gesture)=>{
                 if(session.lease!==context||!session.binding)throw new Error('Browser lease mismatch');
-                const result=await this.#broker.perform(session.binding,command,context.execution,{...gesture,
+                const authority=command.operation==='open'?'owner_open':command.operation==='visit'||(command.operation==='interact'&&command.gesture.kind==='navigate')?'navigation_policy_v1':'owner_review';
+                const result=await this.#broker.perform(session.binding,{...command,version:2,authority},context.execution,{...gesture,
                     review:(action,signal)=>{
+                        if(authority==='navigation_policy_v1')return Promise.resolve('approve');
                         if(command.operation!=='open')return this.review(action,detail,signal);
                         if(!ownerOpen||ownerOpen.sourceId!==session.binding?.ownerRecordId||ownerOpen.url!==command.url)throw new Error('Owner opening authority unavailable');
                         ownerOpen=undefined;return Promise.resolve('approve');

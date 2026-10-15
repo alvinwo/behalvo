@@ -4,6 +4,19 @@ import {commandDigest} from '../dist/kernel/policy.js';
 const command={kind:'browser.gesture',version:1,threadId:'im',sessionId:'session',generation:1,grantRevision:1,origin:'https://example.com',operation:'interact',documentId:'document',controlFingerprint:'a'.repeat(64),gesture:{kind:'click',observationId:'observation',ref:'ref'}};
 async function setup(t){const f=await fixture(t);createWork(f);const owner=f.store.ingest('personal',message('owner',{text:'Explore the synthetic website.'}));const {BrowserActionBroker}=await import('../dist/runtime/browser-actions.js');return {...f,broker:new BrowserActionBroker(f.store),binding:{workspaceId:'personal',ownerId:'owner',workId:'w',ownerRecordId:owner.id,expectedWorkRevision:1}};}
 const execution=()=>({deadline:Date.now()+30000,assertCurrent:()=>{}});
+test('v2 binds trusted authority and exact navigation destination while rejecting authority laundering',()=>{
+ const nav={...command,version:2,authority:'navigation_policy_v1',gesture:{...command.gesture,kind:'navigate'},destination:'https://other.test/path?q=one#section'};
+ const digest=commandDigest('personal','w',1,nav);
+ assert.notEqual(digest,commandDigest('personal','w',1,{...nav,destination:'https://other.test/path?q=two#section'}));
+ const click={...command,version:2,authority:'owner_review'};assert.doesNotThrow(()=>commandDigest('personal','w',1,click));
+ const open={kind:'browser.gesture',version:2,authority:'owner_open',threadId:'im',sessionId:'session',generation:1,grantRevision:1,origin:'https://example.com',operation:'open',url:'https://example.com/'};
+ assert.doesNotThrow(()=>commandDigest('personal','w',1,open));
+ assert.doesNotThrow(()=>commandDigest('personal','w',1,{...open,operation:'visit',authority:'navigation_policy_v1'}));
+ const {destination,...missing}=nav;
+ for(const invalid of [missing,{...nav,authority:'owner_review'},{...nav,destination:'http://other.test/'},{...nav,destination:'https://other.test'},
+  {...nav,destination:'https://user:pass@other.test/'},{...nav,version:1},{...click,authority:'navigation_policy_v1'},{...click,destination},
+  {...open,authority:'navigation_policy_v1'},{...open,operation:'visit'},{...click,authority:'made_up'},{...click,approved:true}])assert.throws(()=>commandDigest('personal','w',1,invalid));
+});
 test('explicit visit digests bind destination and remain distinct from legacy owner open',()=>{
  const open={kind:'browser.gesture',version:1,threadId:'im',sessionId:'session',generation:1,grantRevision:1,origin:'https://example.com',operation:'open',url:'https://example.com/path?q=one'};
  assert.equal(commandDigest('personal','w',1,open),'d1e65b9fa55a64b8afa18832e67a269f67a02715a535bf389e7ba89e8e86c609');

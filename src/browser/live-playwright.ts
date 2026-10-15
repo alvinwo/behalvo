@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { APIRequestContext, Browser, Page } from 'playwright';
-import type { BrowserActionCommand } from '../kernel/browser-action.js';
+import type { BrowserActionProposal } from '../kernel/browser-action.js';
 import { parseBrowserCommand, resolveControl, sameScope, validateObservation } from '../kernel/browser-contract.js';
 import type { BrowserGestureExecution, BrowserGestureResult } from '../runtime/browser-actions.js';
 import { assertExecutionActive, withinExecution } from '../operations/execution-context.js';
@@ -12,7 +12,7 @@ import type { BrowserCommand, BrowserControl, BrowserExecution, BrowserObservati
 export interface LiveReviewDetail { operation:string; origin:string; name:string; value?:string; option?:string; destination?:string; form?:{action:string;method:string;target:string} }
 export interface LivePlaywrightOptions {
     sessionId:string;threadId:string;network:PublicNetworkGate;assertSession():void;
-    perform<T>(context:BrowserExecution,command:BrowserActionCommand,detail:LiveReviewDetail,gesture:Omit<BrowserGestureExecution<T>,'review'>):Promise<BrowserGestureResult<T>>;
+    perform<T>(context:BrowserExecution,command:BrowserActionProposal,detail:LiveReviewDetail,gesture:Omit<BrowserGestureExecution<T>,'review'>):Promise<BrowserGestureResult<T>>;
 }
 export interface LivePlaywrightDependencies extends PlaywrightOwnerDependencies {
     /** Trusted synthetic TLS fixture seam; never exposed by product configuration. */
@@ -86,7 +86,7 @@ export class LivePlaywright {
         if(!this.#page){const ready=await this.#owner.start(browser=>this.#start(browser));this.#page=ready.value;}this.#assert();
         const revision=this.options.network.revision;
         const check=()=>{this.#assert();if(this.options.network.revision!==revision||!this.options.network.allows(target.href))throw new Error('Origin changed');};
-        const result=await this.options.perform(context,{kind:'browser.gesture',version:1,operation,threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin:target.origin,url:target.href},
+        const result=await this.options.perform(context,{kind:'browser.gesture',operation,threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin:target.origin,url:target.href},
             {operation,origin:target.origin,name:target.href,destination:target.href},{validate:async()=>check(),assertCurrent:check,dispatch:async mark=>{
                 // Explicit visits retire field authority even for same-document fragments.
                 this.#invalidateInputs();await this.#clearRefs();check();mark();
@@ -142,7 +142,8 @@ export class LivePlaywright {
             }
         };
         await validate();
-        const result=await this.options.perform(context,{kind:'browser.gesture',version:1,operation:'interact',threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin,documentId,controlFingerprint:entry.fingerprint,gesture:command},
+        const result=await this.options.perform(context,{kind:'browser.gesture',operation:'interact',threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin,documentId,controlFingerprint:entry.fingerprint,gesture:command,
+            ...(command.kind==='navigate'?{destination:publicHttpsUrl(entry.descriptor.href).href}:{})},
             {operation:command.kind,origin,name:control.name,...(value===undefined?{}:{value}),
                 ...(command.kind==='select'?{option:control.options.find(o=>o.ref===command.optionRef)!.name}:{}),
                 ...(command.kind==='navigate'?{destination:entry.descriptor.href}:{}),

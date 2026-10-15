@@ -21,7 +21,7 @@ export interface BrowserGestureExecution<T> {
 export type BrowserGestureResult<T> = { actionId: string; status:'accepted'; observation:T } |
     {actionId:string;status:'unknown'|'failed'|'rejected'|'reject'|'handoff'};
 
-/** The model cannot approve; this broker receives only a trusted owner-review callback. */
+/** The model cannot approve; this broker receives a trusted controller authorization callback. */
 export class BrowserActionBroker {
     constructor(private readonly store: SqliteStore) {}
     async perform<T>(binding: TeachingBinding, command: BrowserActionCommand, execution: OperationExecutionContext,
