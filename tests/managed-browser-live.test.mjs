@@ -160,7 +160,7 @@ test('covered controls cannot wait through a same-node destination change',{skip
   await gesture.validate();if(command.operation==='interact')await page.evaluate(()=>setTimeout(()=>{document.querySelector('#target').href='/unapproved';document.querySelector('#cover').remove();},300));
   return {status:'accepted',actionId:'test',observation:await gesture.dispatch(()=>gesture.assertCurrent())};
  }},{ignoreHTTPSErrors:true,loadChromium:()=>captureChromium(p=>page=p)});
- try{const ctx=lease(),o=await live.open(ctx,'https://example.test/');await assert.rejects(live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls[0].ref}));assert.ok(!site.requests.some(r=>r.url==='/unapproved'));}
+ try{const ctx=lease(),o=await live.open(ctx,'https://example.test/');await assert.rejects(live.interact(ctx,{kind:'navigate',observationId:o.id,ref:o.controls[0].ref}),error=>error.diagnostic?.code==='control_covered'&&error.diagnostic.phase==='validation');assert.ok(!site.requests.some(r=>r.url==='/unapproved'));assert.ok(!site.requests.some(r=>r.url==='/approved'));}
  finally{assert.equal((await live.close()).confirmed,true);await site.close();}
 });
 test('page prototype overrides cannot conceal same-node field or option changes',{skip:!enabled,timeout:60000},async()=>{
@@ -233,7 +233,8 @@ test('atomic dispatch rechecks same-node link, field, form and option semantics 
  }})});
  try{const ctx=lease();await live.open(ctx,'https://example.test/');
   const cases=[['navigate','Link',()=>document.querySelector('#link').href='/unreviewed'],['fill','Query',()=>document.querySelector('input').name='different'],['click','Submit',()=>document.querySelector('form').action='/unreviewed'],['select','City',()=>document.querySelector('option').value='different'],['click','Submit',()=>document.querySelector('button').value='delete'],['click','Toggle (unchecked)',()=>document.querySelector('[name=flag]').value='delete']];
-  for(const [kind,name,change] of cases){const o=await live.observe(ctx),control=o.controls.find(c=>c.name===name);mutation=change;await assert.rejects(live.interact(ctx,{kind,observationId:o.id,ref:control.ref,...(kind==='fill'?{taskInputId:'input'}:{}),...(kind==='select'?{optionRef:control.options[0].ref}:{})}));}
+  cases.push(['navigate','Link',()=>document.querySelector('#link').remove(),'control_missing'],['fill','Query',()=>document.querySelector('input').after(document.querySelector('input').cloneNode()),'field_ambiguous']);
+  for(const [kind,name,change,code='control_changed'] of cases){const o=await live.observe(ctx),control=o.controls.find(c=>c.name===name);mutation=change;await assert.rejects(live.interact(ctx,{kind,observationId:o.id,ref:control.ref,...(kind==='fill'?{taskInputId:'input'}:{}),...(kind==='select'?{optionRef:control.options[0].ref}:{})}),error=>error.diagnostic?.code===code);}
   assert.ok(site.requests.every(r=>r.url==='/'));assert.equal(reviews.find(r=>r.operation==='click').form.action,'https://example.test/reviewed');
  }finally{assert.equal((await live.close()).confirmed,true);await site.close();}
 });

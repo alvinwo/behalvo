@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { BrowserDiagnosticError, BrowserNoDispatchError, type BrowserStoppedResult, type BrowserActionDiagnostic } from '../browser/live-failure.js';
 import { assertNoUnknownBrowserAction, validateBrowserActionCommand, type BrowserActionCommand } from '../kernel/browser-action.js';
 import { commandDigest } from '../kernel/policy.js';
 import { assertTeachingClear } from '../kernel/teachings.js';
@@ -19,7 +20,7 @@ export interface BrowserGestureExecution<T> {
     dispatch(markDispatch:()=>void): Promise<T>;
 }
 export type BrowserGestureResult<T> = { actionId: string; status:'accepted'; observation:T } |
-    {actionId:string;status:'unknown'|'failed'|'rejected'|'reject'|'handoff'};
+    BrowserStoppedResult;
 
 /** The model cannot approve; this broker receives a trusted controller authorization callback. */
 export class BrowserActionBroker {
@@ -68,13 +69,17 @@ export class BrowserActionBroker {
                 'Approved browser gesture completed and fresh page state was captured. This is not verification of a remote outcome or task completion.'))
                 throw new Error('Browser attempt already settled');
             return {actionId:action.id,status:'accepted',observation};
-        } catch {
+        } catch(error) {
             if(!started)return cancelled('rejected');
-            const status=dispatched?'unknown':'failed';
-            this.store.finishActionAttempt(binding.workspaceId,action.id,attemptId,status,dispatched?
+            const noDispatch=error instanceof BrowserNoDispatchError;
+            const status=dispatched&&!noDispatch?'unknown':'failed';
+            const diagnostic:BrowserActionDiagnostic=error instanceof BrowserDiagnosticError?error.diagnostic:
+                dispatched?{phase:'dispatch',code:'dispatch_unconfirmed'}:{phase:'validation',code:'pre_dispatch_stopped'};
+            const explanation=status==='unknown'?
                 'Browser gesture may have occurred. Outcome unknown; no automatic retry. Owner reconciliation is required.':
-                'Browser gesture stopped before dispatch. No gesture was sent.');
-            return {actionId:action.id,status};
+                'Browser gesture stopped before dispatch. No gesture was sent.';
+            this.store.finishActionAttempt(binding.workspaceId,action.id,attemptId,status,JSON.stringify({explanation,diagnostic,...(noDispatch?{disposition:'not_dispatched'}:{})}));
+            return {actionId:action.id,status,diagnostic,...(noDispatch?{disposition:'not_dispatched'}:{})};
         }
     }
 }
