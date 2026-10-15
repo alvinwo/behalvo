@@ -316,7 +316,7 @@ export class AgentService {
     const stopReply=(fallback:string)=>{
       if(this.features.browser?.mode!=='live'||!input.workId)return fallback;
       const unresolved=unresolvedBrowserActions(this.store.state(input.workspaceId),input.workId);
-      return unresolved.length?unresolvedBrowserMessage(unresolved.map(a=>a.id))+(this.#browserCleanupPending?' '+liveMessage('cleanupPending'):''):fallback;
+      return unresolved.length?unresolvedBrowserMessage(unresolved)+(this.#browserCleanupPending?' '+liveMessage('cleanupPending'):''):fallback;
     };
 
     const current = this.store.state(input.workspaceId);

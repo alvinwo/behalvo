@@ -67,7 +67,7 @@ export class ManagedBrowserController {
         const workId=scope.workId??state.taskContinuity?.focus[scope.threadId]?.workId;
         if(workId&&state.works[workId]?.threadIds.includes(scope.threadId)){
             const unresolved=this.#unresolved({...scope,workId});
-            if(unresolved.length)throw new Error(unresolvedBrowserMessage(unresolved.map(a=>a.id)));
+            if(unresolved.length)throw new Error(unresolvedBrowserMessage(unresolved));
         }
         for(const session of this.#sessions.values())if(session.scope.workspaceId===scope.workspaceId&&session.scope.ownerId===scope.ownerId&&session.scope.threadId===scope.threadId){
             try{this.#checkSession(session);}catch{continue;}

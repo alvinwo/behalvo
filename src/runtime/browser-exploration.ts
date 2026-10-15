@@ -66,7 +66,7 @@ export async function runBrowserExploration(store:SqliteStore,gateway:ModelGatew
         check();if(!Number.isSafeInteger(maximum)||maximum<1||maximum>8)throw new Error('Invalid browser budget');
         if(options?.mode==='live'){
             const unresolved=unresolvedBrowserActions(store.state(binding.workspaceId),binding.workId);
-            if(unresolved.length)return {...result,turn:{...result.turn,reply:unresolvedBrowserMessage(unresolved.map(a=>a.id))},events,cleanupConfirmed:true};
+            if(unresolved.length)return {...result,turn:{...result.turn,reply:unresolvedBrowserMessage(unresolved)},events,cleanupConfirmed:true};
         }
         const record=store.record(binding.workspaceId,binding.ownerRecordId);
         if(record.event.type!=='message.received')throw new Error('Browser source missing');
@@ -143,7 +143,7 @@ export async function runBrowserExploration(store:SqliteStore,gateway:ModelGatew
     if(!retiredSafely){events.length=0;result={turn:{reply:stopped(),workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution.deadline,stopReason:'invalid_model_result'};}
     if(options?.mode==='live'){
         const unresolved=unresolvedBrowserActions(store.state(binding.workspaceId),binding.workId);
-        if(unresolved.length){events.length=0;result={turn:{reply:unresolvedBrowserMessage(unresolved.map(a=>a.id),failure?.diagnostic)+(!retiredSafely?' '+liveMessage('cleanupPending'):''),workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution.deadline,stopReason:'invalid_model_result'};}
+        if(unresolved.length){events.length=0;result={turn:{reply:unresolvedBrowserMessage(unresolved,failure?.diagnostic)+(!retiredSafely?' '+liveMessage('cleanupPending'):''),workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution.deadline,stopReason:'invalid_model_result'};}
     }
     if(retiredSafely&&result.applicationAuthored&&observed.length){try{check();events.push({type:'browser.checkpoint',data:{workId:binding.workId,expectedWorkRevision:binding.expectedWorkRevision,sourceIds:observed.slice(-8),reason:'exploration_stopped'}});}catch{/* No stale/cancelled checkpoint. */}}
     return {...result,events,...(cleanupConfirmed===undefined?{}:{cleanupConfirmed}),...(leaseRetired===undefined?{}:{leaseRetired}),...(sessionDisposition?{sessionDisposition}:{})};

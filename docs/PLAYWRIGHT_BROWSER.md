@@ -60,6 +60,22 @@ the action and recovery commands. `/browser status` reports unresolved action ID
 even with `state: "absent"`, and focused-task turns remain blocked before model
 calls until explicit reconciliation. Historical unknown records are unchanged.
 
+If a crash leaves an action `running`, it cannot be reconciled directly: a worker
+could still be active. Stop all Behalvo processes/effect workers, then run from
+the repository, using the same database and workspace:
+
+```sh
+npm run storage -- recover-browser --db <database> --workspace <workspace> --exclusive-maintenance [--key-file <key-file>]
+```
+
+Supply the optional key only for encrypted storage. This explicit maintenance
+command holds the database process lock, validates the existing database and
+workspace, and records only interrupted running browser actions as unknown.
+It never repeats actions or reconciles their outcome. A stale lock still blocks
+it; follow the manual stale-lock procedure in [owner control](OWNER_CONTROL.md).
+After restarting, check the actual outcome and reconcile the unknown action.
+Ordinary startup/replay never performs maintenance recovery.
+
 `/browser status` also shows `networkPolicy: "public_https"`. The old `/browser allow`
 command only explains that public sites no longer need enrollment; it grants
 no extra access.

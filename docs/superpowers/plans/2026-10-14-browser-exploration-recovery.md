@@ -240,3 +240,21 @@ The primary may implement it now using the already selected execution method.
 No new owner approval is required for the described implementation work. Any
 expansion of live mutation authority, automatic reconciliation or unproven
 geometry/navigation changes is outside this approval.
+
+## Review amendment: interrupted running actions
+
+Approved by the same delegated architect after Sol identified that running
+actions cannot use the unknown-action resolve command. The primary remains the
+sole writer. A real SQLite crash/reopen test first reproduced the dead end;
+the existing service recovery path does not handle browser actions.
+
+- [x] Add status-aware running/unknown guidance, including mixed states.
+- [x] Add the narrow `storage recover-browser` command and broker maintenance
+  method described in the amended spec. Reuse the process lock and journal
+  settlement; authenticate/validate existing storage before writable access.
+- [x] Test real restart/resolution, explicit maintenance, lock contention,
+  plaintext/encrypted storage, invalid keys, missing database/workspace,
+  unchanged unrelated actions/workspaces and idempotent effect-free replay.
+- [x] Run the focused storage/browser suite: 76 passed, zero failures/skips.
+- [ ] Re-run repository verification and obtain focused approval from both
+  original reviewers before authorized integration.

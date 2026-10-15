@@ -126,7 +126,7 @@ the agent can choose a website and follow native links without approval prompts 
 | Explicit journal-validated v1–v3 → v4 continuity upgrade, including encrypted backups | Automatic legacy projection upgrades |
 | Synthetic and managed public-HTTPS exploration with source-grounded advisory notes | Proven real-portal compatibility or automatic booking verification |
 | WorkItems/Facts shared across explicitly linked threads | Memory granting permission or completing tasks |
-| Task-driven URL/native-link navigation without prompts, recovery from proven blocked controls, fixed action diagnostics, retained browser and manual login handoff | Personal-profile/CDP attachment, unattended actions or browser login after restart |
+| Task-driven URL/native-link navigation without prompts, recovery from proven blocked controls, explicit maintenance for interrupted browser actions, fixed action diagnostics, retained browser and manual login handoff | Personal-profile/CDP attachment, unattended actions or browser login after restart |
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |
 | Pinned Pi multi-provider adapter and separate file credential store | Independent live-model operation-loop verification |
 | Provider-owned OAuth login flow in the REPL | Hosted multi-user deployment |

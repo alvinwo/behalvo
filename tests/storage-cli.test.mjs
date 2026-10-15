@@ -115,3 +115,36 @@ test('storage CLI runtime failures are fixed and do not create missing inputs or
   const wrong = await runStorage(['restore', '--from', dbPath, '--out', join(directory, 'wrong.db'), '--key-file', wrongKey]);
   assert.deepEqual(wrong, { code: 1, stdout: '', stderr: 'Encrypted storage restore failed.\n' });
 });
+test('browser recovery CLI requires explicit maintenance and never creates a missing database', {skip:!POSIX},async t=>{
+ const dir=await fixture(t),path=join(dir,'missing.db');
+ for(const suffix of [[],['--exclusive-maintenance','true'],['--exclusive-maintenance','--exclusive-maintenance']]){
+  const result=await runStorage(['recover-browser','--db',path,'--workspace','personal',...suffix]);assert.equal(result.code,2);assert.equal(existsSync(path),false);
+ }
+ const result=await runStorage(['recover-browser','--db',path,'--workspace','personal','--exclusive-maintenance']);assert.equal(result.code,1);assert.equal(existsSync(path),false);
+ const empty=join(dir,'empty.db');writeFileSync(empty,'',{mode:0o600});assert.equal((await runStorage(['recover-browser','--db',empty,'--workspace','personal','--exclusive-maintenance'])).code,1);assert.equal(readFileSync(empty).length,0);
+});
+for(const encrypted of [false,true])test(`browser maintenance recovery is scoped, exclusive and idempotent (${encrypted?'encrypted':'plaintext'})`,{skip:!POSIX},async t=>{
+ const {Operator}=await import('../dist/runtime/operator.js'),{commandDigest}=await import('../dist/kernel/policy.js'),{acquireLocalProcessLock}=await import('../dist/storage/process-lock.js');
+ const dir=await fixture(t),path=join(dir,'agent.db'),keyPath=join(dir,'storage.key');let key;
+ if(encrypted){await createStorageKeyFile(keyPath);key=loadStorageKeyFile(keyPath);}
+ const store=new SqliteStore(path,key?{encryptionKey:key}:{});store.createWorkspace('personal','owner');store.createWorkspace('other','owner');const op=new Operator(store);
+ const browserCommand={kind:'browser.gesture',version:1,operation:'visit',url:'https://example.test/',origin:'https://example.test',threadId:'t',sessionId:'s',generation:1,grantRevision:1};
+ for(const workspace of ['personal','other']){
+  op.createWork(workspace,'owner',{id:'w',title:'Synthetic task',goal:'Inspect',threadId:'t'});
+  const action={id:'browser',workId:'w',workRevision:1,key:'browser',command:browserCommand,digest:commandDigest(workspace,'w',1,browserCommand),status:'proposed'};
+  store.append(workspace,store.state(workspace).version,[{type:'action.proposed',data:{action}},{type:'action.approved',data:{id:action.id,approval:{ownerId:'owner',digest:action.digest,expiresAt:new Date(Date.now()+30000).toISOString()}}},{type:'action.started',data:{id:action.id,attemptId:'browser-attempt'}}]);
+ }
+ const messageAction=op.propose('personal',{workId:'w',key:'message',command:{kind:'message.send',channel:'mock-email',to:'synthetic-recipient@example.test',body:'synthetic body'}});
+ op.approve('personal','owner',messageAction.id,messageAction.digest,new Date(Date.now()+30000).toISOString());op.startEffect('personal',messageAction.id,'mock-email');
+ op.createWork('personal','owner',{id:'settled',title:'Settled synthetic task',goal:'Inspect',threadId:'t'});
+ const terminal={id:'terminal-browser',workId:'settled',workRevision:1,key:'terminal',command:browserCommand,digest:commandDigest('personal','settled',1,browserCommand),status:'proposed'};
+ store.append('personal',store.state('personal').version,[{type:'action.proposed',data:{action:terminal}},{type:'action.cancelled',data:{id:terminal.id,reason:'Synthetic cancellation'}}]);
+ const beforeOther=store.state('other'),beforeMessage=store.state('personal').actions[messageAction.id],beforeTerminal=store.state('personal').actions[terminal.id];store.close();
+ const args=['recover-browser','--db',path,'--workspace','personal','--exclusive-maintenance',...(encrypted?['--key-file',keyPath]:[])];
+ const lock=acquireLocalProcessLock(path);try{assert.equal((await runStorage(args)).code,1);}finally{lock.release();}
+ const missingWorkspace=await runStorage(args.map(value=>value==='personal'?'missing':value));assert.equal(missingWorkspace.code,1);
+ if(encrypted){const wrong=join(dir,'wrong.key');await createStorageKeyFile(wrong);assert.equal((await runStorage(args.map(value=>value===keyPath?wrong:value))).code,1);}
+ const result=await runStorage(args);assert.equal(result.code,0,result.stderr);assert.match(result.stdout,/1/);assert.doesNotMatch(result.stdout+result.stderr,/synthetic body|synthetic-recipient/);
+ let read=new SqliteStore(path,key?{encryptionKey:key}:{});const after=read.state('personal');assert.equal(after.actions.browser.status,'unknown');assert.equal(after.actions.browser.attemptId,'browser-attempt');assert.deepEqual(after.actions[messageAction.id],beforeMessage);assert.deepEqual(after.actions[terminal.id],beforeTerminal);assert.deepEqual(read.state('other'),beforeOther);assert.deepEqual(read.rebuild('personal'),after);read.close();
+ assert.equal((await runStorage(args)).code,0);read=new SqliteStore(path,key?{encryptionKey:key}:{});assert.deepEqual(read.state('personal'),after);assert.throws(()=>read.state('missing'));read.close();key?.fill(0);
+});

@@ -46,3 +46,8 @@ test('action inspection displays fixed failure diagnostics alongside authority a
  const output=[];displayBrowserActions(f.store,{workspaceId:'personal',ownerId:'owner',threadId:'im',workId:'w'},line=>output.push(JSON.parse(line)));
  assert.deepEqual(output[0].diagnostic,{phase:'validation',code:'control_covered'});assert.equal(output[0].command.authority,'navigation_policy_v1');assert.ok(output[0].evidenceRef);
 });
+test('mixed unresolved actions receive status-specific recovery routes',async()=>{
+ const {unresolvedBrowserMessage}=await import('../dist/browser/live-messages.js');
+ const text=unresolvedBrowserMessage([{id:'crashed',status:'running'},{id:'uncertain',status:'unknown'}]);
+ assert.match(text,/crashed \(running\)/);assert.match(text,/uncertain \(unknown\)/);assert.match(text,/recover-browser/);assert.match(text,/For actions marked unknown.*\/browser resolve/);
+});

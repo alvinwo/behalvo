@@ -6,8 +6,11 @@ import { pathToFileURL } from 'node:url';
 import { stderr, stdout } from 'node:process';
 import { createStorageKeyFile, loadStorageKeyFile } from '../storage/key-file.js';
 import { SqliteStore } from '../storage/sqlite-store.js';
+import { BrowserActionBroker } from '../runtime/browser-actions.js';
+import { liveMessage } from '../browser/live-messages.js';
 
 const USAGE = `Usage:
+  npm run storage -- recover-browser --db <database> --workspace <workspace> --exclusive-maintenance [--key-file <key-file>]
   npm run storage -- upgrade-continuity --db <database> --workspace <workspace> [--key-file <key-file>]
   npm run storage -- upgrade-browser --db <database> --workspace <workspace> [--key-file <key-file>]
   npm run storage -- upgrade-teachings --db <database> --workspace <workspace> [--key-file <key-file>]
@@ -19,6 +22,7 @@ const USAGE = `Usage:
 class StorageArgumentError extends Error {}
 
 type StorageCommand =
+  | { verb: 'recover-browser'; db:string; workspace:string; exclusiveMaintenance:true; keyFile?:string }
   | { verb: 'upgrade-continuity'; db: string; workspace: string; keyFile?: string }
   | { verb: 'upgrade-teachings'; db: string; workspace: string; keyFile?: string }
   | { verb: 'upgrade-browser'; db: string; workspace: string; keyFile?: string }
@@ -44,6 +48,11 @@ function parseOptions(argv: string[], names: readonly string[]): Map<string, str
 export function parseStorageArgs(argv: string[]): StorageCommand {
   if (argv.length === 0 || argv.includes('--help')) return { verb: 'usage' };
   const [verb, ...options] = argv;
+  if(verb==='recover-browser'){
+    if(options.filter(value=>value==='--exclusive-maintenance').length!==1)throw new StorageArgumentError();
+    const values=parseOptions(options.filter(value=>value!=='--exclusive-maintenance'),['--db','--workspace',...(options.includes('--key-file')?['--key-file']:[])]);
+    return {verb,db:values.get('--db')!,workspace:values.get('--workspace')!,exclusiveMaintenance:true,...(values.has('--key-file')?{keyFile:values.get('--key-file')!}:{})};
+  }
   if (verb === 'upgrade-teachings' || verb === 'upgrade-browser' || verb === 'upgrade-continuity') {
     const names = ['--db','--workspace', ...(options.includes('--key-file') ? ['--key-file'] : [])];
     const values = parseOptions(options,names);
@@ -89,7 +98,17 @@ export async function runStorageCli(argv: string[]): Promise<number> {
     return 0;
   }
   try {
-    if (command.verb === 'upgrade-teachings' || command.verb === 'upgrade-browser' || command.verb === 'upgrade-continuity') {
+    if(command.verb==='recover-browser'){
+      const lock=acquireLocalProcessLock(command.db);let store:SqliteStore|undefined,key:Uint8Array|undefined;
+      try{
+        key=command.keyFile?loadStorageKeyFile(command.keyFile):undefined;
+        // Authenticate the existing file and workspace before any writable open.
+        store=new SqliteStore(lock.dbPath,{readOnly:true,...(key?{encryptionKey:key}:{})});store.state(command.workspace);store.close();store=undefined;
+        store=new SqliteStore(lock.dbPath,key?{encryptionKey:key}:{});
+        const count=new BrowserActionBroker(store).recoverInterrupted(command.workspace,command.exclusiveMaintenance);
+        stdout.write(liveMessage('recovered')+count+'\n');
+      }finally{store?.close();key?.fill(0);lock.release();}
+    } else if (command.verb === 'upgrade-teachings' || command.verb === 'upgrade-browser' || command.verb === 'upgrade-continuity') {
       const lock = acquireLocalProcessLock(command.db); let store: SqliteStore | undefined; let key: Uint8Array | undefined;
       try { key = command.keyFile ? loadStorageKeyFile(command.keyFile) : undefined;
         store = new SqliteStore(lock.dbPath,key ? {encryptionKey:key} : {});
@@ -108,6 +127,7 @@ export async function runStorageCli(argv: string[]): Promise<number> {
     }
     return 0;
   } catch {
+    if(command.verb==='recover-browser'){stderr.write(liveMessage('recoveryFailed')+'\n');return 1;}
     if (command.verb === 'upgrade-teachings' || command.verb === 'upgrade-browser' || command.verb === 'upgrade-continuity') { stderr.write((command.verb==='upgrade-continuity'?taskMessage('upgradeFailed'):command.verb==='upgrade-browser'?browserMessage('upgradeFailed'):teachingMessage('upgradeFailed'))+'\n'); return 1; }
     const operation = command.verb === 'keygen' ? 'key generation' : command.verb;
     stderr.write(command.verb === 'keygen'

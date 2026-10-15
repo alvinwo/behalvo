@@ -213,3 +213,27 @@ synthetic acceptance, final POSIX `npm run verify`, independent Sol/high and
 Astra/high reviews, and exact-head hosted CI before authorized integration.
 Configured CI is not passing CI. This work authorizes no real booking, login,
 unknown-action reconciliation or change to the owner's running process.
+
+## Approved review amendment: interrupted running actions
+
+The delegated architect approved this narrow amendment after independent review
+found that a crash can preserve `running`, while owner reconciliation accepts
+only `unknown`. Guidance must preserve each action's status and show both routes
+when a task contains running and unknown actions.
+
+Add `npm run storage -- recover-browser --db <database> --workspace <workspace>
+--exclusive-maintenance [--key-file <key-file>]`. The explicit maintenance flag
+asserts that all Behalvo processes and effect workers have stopped. Acquire the
+existing database process lock first; authenticate the existing file and validate
+the workspace through a read-only open before any writable open. Never steal a
+stale lock, create a missing database/workspace, enable the service queue or bind
+a service mode. Retain the existing manual stale-lock procedure.
+
+The broker records each running browser action's exact attempt as unknown using
+the normal journal settlement API and fixed diagnostic evidence. It does not
+dispatch, retry, reconcile or change non-browser actions or other workspaces.
+Repeating maintenance emits no events for already settled actions. Clear loaded
+key bytes and release store/lock resources. Ordinary replay remains read/reduce
+only. Cover crash/reopen, plaintext and encrypted storage, lock contention,
+invalid keys/inputs, scope isolation, idempotence and subsequent owner resolution
+with synthetic tests. Re-run verification and the same independent review pair.

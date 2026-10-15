@@ -75,3 +75,25 @@ test('unknown action survives replay and reports actionable guidance without a l
  await assert.rejects(service.runOwnerTurn({workspaceId:'personal',ownerId:'owner',threadId:'im',workId:'w',externalId:'retry',text:'Continue',model:{provider:'test',model:'test'}}),error=>error.message.includes(result.actionId)&&error.message.includes('/browser resolve')&&error.message.includes('/actions'));
  assert.equal(calls,0);assert.equal(f.networks(),0);createWork(f,'other');assert.doesNotThrow(()=>f.controller.beforeTurn({...f.binding,workId:'other'}));
 });
+test('crash-preserved running browser action requires exclusive maintenance before owner reconciliation',async t=>{
+ const f=await fixture(t);createWork(f);
+ const {commandDigest}=await import('../dist/kernel/policy.js');const {runStorageCli}=await import('../dist/cli/storage-main.js');const {handleBrowserCommand}=await import('../dist/cli/browser-commands.js');
+ const command={kind:'browser.gesture',version:2,authority:'navigation_policy_v1',operation:'visit',url:'https://example.test/',origin:'https://example.test',threadId:'im',sessionId:'crashed',generation:1,grantRevision:1};
+ const action={id:'interrupted-browser',workId:'w',workRevision:1,key:'interrupted',command,digest:commandDigest('personal','w',1,command),status:'proposed'};
+ f.store.append('personal',f.store.state('personal').version,[{type:'action.proposed',data:{action}},{type:'action.approved',data:{id:action.id,approval:{ownerId:'owner',digest:action.digest,expiresAt:new Date(Date.now()+5000).toISOString()}}},{type:'action.started',data:{id:action.id,attemptId:'crashed-attempt'}}]);
+ f.restart();let calls=0,allocations=0;const controller=new ManagedBrowserController(f.store,async()=>assert.fail('No review'),{network:()=>{allocations++;throw new Error('Must not allocate');}});t.after(()=>controller.shutdown());
+ const scope={workspaceId:'personal',ownerId:'owner',threadId:'im',workId:'w'};
+ assert.deepEqual(controller.status(scope).unresolvedActions,[{id:action.id,status:'running'}]);
+ const service=new AgentService(f.store,{complete:async()=>{calls++;throw new Error('Must not call model');}},undefined,undefined,{taskContinuity:true,browser:controller.exploration()});
+ await assert.rejects(service.runOwnerTurn({...scope,externalId:'continue',text:'Continue',model:{provider:'test',model:'test'}}),error=>{
+  assert.match(error.message,/running/);assert.match(error.message,/Stop all Behalvo processes/);assert.match(error.message,/npm run storage -- recover-browser/);assert.match(error.message,/--exclusive-maintenance/);assert.doesNotMatch(error.message,/\/browser resolve/);return true;
+ });
+ assert.equal(calls,0);assert.equal(allocations,0);const output=[],io={interactive:true,write:line=>output.push(line)};
+ await handleBrowserCommand(`/browser resolve ${action.id} failed Synthetic check`,{store:f.store,controller,scope,io});assert.equal(f.store.state('personal').actions[action.id].status,'running');
+ await controller.shutdown();f.store.close();
+ assert.equal(await runStorageCli(['recover-browser','--db',f.path,'--workspace','personal','--exclusive-maintenance']),0);
+ f.store=new f.SqliteStore(f.path);const recovered=new ManagedBrowserController(f.store,async()=>assert.fail('No review'));t.after(()=>recovered.shutdown());
+ assert.equal(recovered.status(scope).unresolvedActions[0].status,'unknown');assert.throws(()=>recovered.beforeTurn(scope),/\/browser resolve/);
+ await handleBrowserCommand(`/browser resolve ${action.id} failed Synthetic owner confirmed no effect`,{store:f.store,controller:recovered,scope,io});
+ assert.equal(f.store.state('personal').actions[action.id].status,'failed');assert.deepEqual(recovered.status(scope).unresolvedActions,[]);assert.equal(calls,0);assert.equal(allocations,0);
+});

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { BrowserDiagnosticError, BrowserNoDispatchError, type BrowserStoppedResult, type BrowserActionDiagnostic } from '../browser/live-failure.js';
-import { assertNoUnknownBrowserAction, validateBrowserActionCommand, type BrowserActionCommand } from '../kernel/browser-action.js';
+import { assertNoUnknownBrowserAction, isBrowserActionCommand, validateBrowserActionCommand, type BrowserActionCommand } from '../kernel/browser-action.js';
 import { commandDigest } from '../kernel/policy.js';
 import { assertTeachingClear } from '../kernel/teachings.js';
 import type { Action } from '../kernel/types.js';
@@ -25,6 +25,15 @@ export type BrowserGestureResult<T> = { actionId: string; status:'accepted'; obs
 /** The model cannot approve; this broker receives a trusted controller authorization callback. */
 export class BrowserActionBroker {
     constructor(private readonly store: SqliteStore) {}
+    /** Caller holds the database process lock after stopping all effect workers. Never dispatches. */
+    recoverInterrupted(workspaceId:string,exclusiveMaintenance:boolean):number {
+        if(exclusiveMaintenance!==true)throw new Error('Exclusive maintenance required');
+        const actions=Object.values(this.store.state(workspaceId).actions).filter(a=>a.status==='running'&&isBrowserActionCommand(a.command));
+        let recovered=0;
+        for(const action of actions)if(this.store.finishActionAttempt(workspaceId,action.id,action.attemptId!,'unknown',
+            JSON.stringify({explanation:'Interrupted browser execution; outcome unknown. Exclusive-maintenance recovery never retries an action.',diagnostic:{phase:'dispatch',code:'dispatch_unconfirmed'}})))recovered++;
+        return recovered;
+    }
     async perform<T>(binding: TeachingBinding, command: BrowserActionCommand, execution: OperationExecutionContext,
         gesture: BrowserGestureExecution<T>): Promise<BrowserGestureResult<T>> {
         validateBrowserActionCommand(command);

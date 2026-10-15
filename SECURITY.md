@@ -78,6 +78,9 @@ never an automatic retry. The work-wide unresolved barrier survives replacement
 windows and replay until owner reconciliation. It blocks model calls for the
 focused task before allocation and remains visible in `/browser status` when no
 session exists. Existing unknown actions are never rewritten by this release.
+Crash-preserved running actions require explicit exclusive-maintenance recovery
+with all workers stopped before they become unknown and eligible for owner
+reconciliation; direct reconciliation of running actions remains rejected.
 Journaled page text inherits the
 configured SQLite protection; the database is plaintext unless opted into
 storage encryption.

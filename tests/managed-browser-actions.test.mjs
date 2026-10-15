@@ -98,3 +98,6 @@ test('deterministic browser action validation rejects a forged digest and enforc
  append({type:'action.proposed',data:{action:replacement}});append({type:'action.approved',data:{id:'replacement',approval:{ownerId:'owner',digest:replacement.digest,expiresAt:new Date(Date.now()+10000).toISOString()}}});
  assert.throws(()=>append({type:'action.started',data:{id:'replacement',attemptId:'attempt'}}),/unknown|unresolved/i);assert.equal(f.store.state('personal').actions[first.actionId].status,'unknown');
 });
+test('browser runtime recovery requires exclusive maintenance acknowledgment',async t=>{
+ const f=await setup(t);assert.throws(()=>f.broker.recoverInterrupted('personal',false),/Exclusive maintenance/);assert.equal(f.broker.recoverInterrupted('personal',true),0);
+});
