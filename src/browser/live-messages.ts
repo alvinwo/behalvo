@@ -4,8 +4,12 @@ const messages={
     interactive:'Live browser controls require an interactive terminal.',
     unavailable:'Live browsing is not enabled. Restart with --browser live.',
     noPage:'No page is open. Use visit with a public HTTPS URL when browsing is needed.',
+    stopped:'Browser exploration stopped. No task completion was verified. Inspect /actions for action outcomes before continuing.',
+    unresolved:'Browser exploration is blocked by unresolved browser actions: ',
+    reconcile:'Inspect /actions and check the actual outcome. Only then use /browser resolve <action-id> <accepted|failed> <owner-note>; failed means you confirmed no effect. Do not retry an uncertain action. A new turn or browser window does not clear this block.',
+    diagnostic:'Browser diagnostic: ',
     focus:'Focus a task before using browser controls. Describe your goal, or use /work <id>.',
-    startup:'LIVE BROWSER — public HTTPS sites, redirects and page resources can load without per-site approval, including JavaScript and background requests. Private networks and local files remain blocked. Describe your task and the agent can choose and open a website. Agent gestures, including URL visits, require your review. Use /browser handoff for login; /browser resume lets the model see visible page content. Sessions expire after ten idle minutes and close when Behalvo exits.',
+    startup:'LIVE BROWSER — the agent can open public HTTPS URLs and follow observed native links without approval prompts. Pages can execute JavaScript and background requests; navigation can have effects. Clicks, fills and selections still require your review. Private networks and local files remain blocked. Use /browser handoff for login; /browser resume lets the model see visible page content. Sessions expire after ten idle minutes and close when Behalvo exits.',
     usage:'Use /browser open <https-url>, status, input <field-ref> <non-secret text>, handoff, resume, close, or resolve <action-id> <accepted|failed> <owner-note>.',
     help:'/browser open <https-url>    Optionally open a page yourself for the focused task\n/browser status              Show network policy, field references and unresolved actions\n/browser input <ref> <text>    Authorize non-secret text for one observed field\n/browser handoff              Pause automation for manual login or interaction\n/browser resume               Resume with fresh page observations\n/browser close                Close this task’s managed browser\n/browser resolve <id> <accepted|failed> <note>  Record your observed outcome; never retry',
     opened:'Browser opened for the focused task. Ask the agent to observe or explore it.',
@@ -23,3 +27,6 @@ const messages={
     failed:'Browser command could not complete. Check the focused task, current field references and /actions; an uncertain action needs explicit reconciliation.',
 } as const;
 export function liveMessage(key:keyof typeof messages):string{return messages[key];}
+export function unresolvedBrowserMessage(ids:readonly string[],diagnostic?:{phase:string;code:string}):string {
+    return messages.unresolved+ids.join(', ')+'. '+(diagnostic?messages.diagnostic+diagnostic.phase+'/'+diagnostic.code+'. ':'')+messages.reconcile;
+}

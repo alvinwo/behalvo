@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import { parseCliArgs } from '../dist/cli/main.js';
-import { handleBrowserCommand, reviewBrowserGesture } from '../dist/cli/browser-commands.js';
-import { fixture, createWork } from './helpers.mjs';
+import { displayBrowserActions, handleBrowserCommand, reviewBrowserGesture } from '../dist/cli/browser-commands.js';
+import { fixture, createWork, message } from './helpers.mjs';
 test('legacy allow command explains public access without changing network authority',async t=>{
  const f=await fixture(t);createWork(f);const output=[];
  await handleBrowserCommand('/browser allow https://assets.test',{store:f.store,controller:{},scope:{workspaceId:'personal',ownerId:'owner',threadId:'im',workId:'w'},io:{interactive:true,write:line=>output.push(line)}});
@@ -37,4 +37,12 @@ test('failed trusted commands settle their source once without leaving processab
  const sources=f.store.journal('personal').filter(r=>r.event.type==='message.received'&&r.event.data.source==='owner:managed-browser');assert.equal(sources.length,3);
  assert.ok(sources.every(r=>!f.store.inbox('personal').some(i=>i.id===r.id)));
  const handled=f.store.journal('personal').filter(r=>r.event.type==='inbox.handled');for(const source of sources)assert.equal(handled.filter(r=>r.event.data.recordId===source.id).length,1);
+});
+test('action inspection displays fixed failure diagnostics alongside authority and evidence',async t=>{
+ const f=await fixture(t);createWork(f);const owner=f.store.ingest('personal',message('trace'));
+ const {BrowserActionBroker}=await import('../dist/runtime/browser-actions.js'),{BrowserNoDispatchError}=await import('../dist/browser/live-failure.js');
+ const command={kind:'browser.gesture',version:2,authority:'navigation_policy_v1',operation:'interact',threadId:'im',sessionId:'s',generation:1,grantRevision:1,origin:'https://example.test',documentId:'doc',controlFingerprint:'a'.repeat(64),destination:'https://example.test/catalog',gesture:{kind:'navigate',observationId:'obs',ref:'ref'}};
+ await new BrowserActionBroker(f.store).perform({workspaceId:'personal',ownerId:'owner',workId:'w',ownerRecordId:owner.id,expectedWorkRevision:1},command,{deadline:Date.now()+5000},{review:async()=> 'approve',validate:async()=>{},dispatch:async mark=>{mark();throw new BrowserNoDispatchError({status:'not_dispatched',code:'control_covered'});}});
+ const output=[];displayBrowserActions(f.store,{workspaceId:'personal',ownerId:'owner',threadId:'im',workId:'w'},line=>output.push(JSON.parse(line)));
+ assert.deepEqual(output[0].diagnostic,{phase:'validation',code:'control_covered'});assert.equal(output[0].command.authority,'navigation_policy_v1');assert.ok(output[0].evidenceRef);
 });

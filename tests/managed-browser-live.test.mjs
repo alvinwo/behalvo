@@ -233,7 +233,7 @@ test('atomic dispatch rechecks same-node link, field, form and option semantics 
  }})});
  try{const ctx=lease();await live.open(ctx,'https://example.test/');
   const cases=[['navigate','Link',()=>document.querySelector('#link').href='/unreviewed'],['fill','Query',()=>document.querySelector('input').name='different'],['click','Submit',()=>document.querySelector('form').action='/unreviewed'],['select','City',()=>document.querySelector('option').value='different'],['click','Submit',()=>document.querySelector('button').value='delete'],['click','Toggle (unchecked)',()=>document.querySelector('[name=flag]').value='delete']];
-  cases.push(['navigate','Link',()=>document.querySelector('#link').remove(),'control_missing'],['fill','Query',()=>document.querySelector('input').after(document.querySelector('input').cloneNode()),'field_ambiguous']);
+  cases.push(['navigate','Link',()=>document.querySelector('#link').remove(),'control_missing'],['fill','Query',()=>document.querySelector('input').parentElement.after(document.querySelector('input').parentElement.cloneNode(true)),'field_ambiguous']);
   for(const [kind,name,change,code='control_changed'] of cases){const o=await live.observe(ctx),control=o.controls.find(c=>c.name===name);mutation=change;await assert.rejects(live.interact(ctx,{kind,observationId:o.id,ref:control.ref,...(kind==='fill'?{taskInputId:'input'}:{}),...(kind==='select'?{optionRef:control.options[0].ref}:{})}),error=>error.diagnostic?.code===code);}
   assert.ok(site.requests.every(r=>r.url==='/'));assert.equal(reviews.find(r=>r.operation==='click').form.action,'https://example.test/reviewed');
  }finally{assert.equal((await live.close()).confirmed,true);await site.close();}

@@ -7,6 +7,14 @@ export type BrowserActionDiagnostic =
     {phase:'dispatch';code:'dispatch_unconfirmed'} |
     {phase:'navigation';code:'navigation_unsettled'} |
     {phase:'observation';code:'observation_unavailable'};
+export function readBrowserDiagnostic(value:unknown):BrowserActionDiagnostic|undefined {
+    if(!value||typeof value!=='object'||Array.isArray(value))return;
+    const v=value as Record<string,unknown>;
+    if(Object.keys(v).sort().join(',')!=='code,phase')return;
+    const valid=v.phase==='validation'&&(v.code==='pre_dispatch_stopped'||noDispatchCodes.includes(v.code as NoDispatchCode))||
+        v.phase==='dispatch'&&v.code==='dispatch_unconfirmed'||v.phase==='navigation'&&v.code==='navigation_unsettled'||v.phase==='observation'&&v.code==='observation_unavailable';
+    if(valid)return {phase:v.phase,code:v.code} as BrowserActionDiagnostic;
+}
 
 /** The receipt is read only from the current private-world dispatch RPC. */
 export function parseDispatchReceipt(value:unknown):WorldDispatchReceipt {

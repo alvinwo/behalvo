@@ -65,3 +65,13 @@ test('lazy port cannot allocate after retirement or a scope correction',async t=
  f.operator.setWorkPhase('personal','owner','w','waiting_external');await assert.rejects(port.visit(ctx,'https://example.test/'));assert.equal(f.networks(),0);await port.retire(false);
  await assert.rejects(port.visit(ctx,'https://example.test/'));assert.equal(f.networks(),0);
 });
+test('unknown action survives replay and reports actionable guidance without a live session or model call',async t=>{
+ const f=await setup(t),{BrowserActionBroker}=await import('../dist/runtime/browser-actions.js');
+ const command={kind:'browser.gesture',version:1,operation:'visit',url:'https://example.test/',origin:'https://example.test',threadId:'im',sessionId:'old',generation:1,grantRevision:1};
+ const result=await new BrowserActionBroker(f.store).perform(f.binding,command,execution(),{review:async()=> 'approve',validate:async()=>{},dispatch:async mark=>{mark();throw new Error('unknown');}});
+ assert.equal(result.status,'unknown');f.store.rebuild('personal');
+ const status=f.controller.status(f.binding);assert.equal(status.state,'absent');assert.deepEqual(status.unresolvedActions,[{id:result.actionId,status:'unknown'}]);
+ let calls=0;const service=new AgentService(f.store,{complete:async()=>{calls++;throw new Error('Must not call model');}},undefined,undefined,{taskContinuity:true,browser:f.controller.exploration()});
+ await assert.rejects(service.runOwnerTurn({workspaceId:'personal',ownerId:'owner',threadId:'im',workId:'w',externalId:'retry',text:'Continue',model:{provider:'test',model:'test'}}),error=>error.message.includes(result.actionId)&&error.message.includes('/browser resolve')&&error.message.includes('/actions'));
+ assert.equal(calls,0);assert.equal(f.networks(),0);createWork(f,'other');assert.doesNotThrow(()=>f.controller.beforeTurn({...f.binding,workId:'other'}));
+});

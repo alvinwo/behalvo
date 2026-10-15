@@ -54,6 +54,9 @@ export function validateBrowserActionCommand(value: unknown): asserts value is B
     }
 }
 export function assertNoUnknownBrowserAction(state: State, workId: string): void {
-    if(Object.values(state.actions).some(a=>a.workId===workId&&isBrowserActionCommand(a.command)&&['running','unknown'].includes(a.status)))
+    if(unresolvedBrowserActions(state,workId).length)
         throw new Error('Unresolved or unknown browser gesture blocks further dispatch for this work');
+}
+export function unresolvedBrowserActions(state:State,workId:string){
+    return Object.values(state.actions).filter(a=>a.workId===workId&&isBrowserActionCommand(a.command)&&['running','unknown'].includes(a.status));
 }

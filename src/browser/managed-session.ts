@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { liveMessage } from './live-messages.js';
+import { liveMessage, unresolvedBrowserMessage } from './live-messages.js';
+import { recoverableBrowserFailure } from './live-failure.js';
 import { assertOwner } from '../kernel/policy.js';
-import { assertNoUnknownBrowserAction } from '../kernel/browser-action.js';
+import { assertNoUnknownBrowserAction, unresolvedBrowserActions } from '../kernel/browser-action.js';
 import { assertTeachingClear } from '../kernel/teachings.js';
 import type { Action } from '../kernel/types.js';
 import { assertExecutionActive, type OperationExecutionContext } from '../operations/execution-context.js';
@@ -61,7 +62,13 @@ export class ManagedBrowserController {
         if(record.event.type!=='message.received'||record.event.data.threadId!==binding.threadId)throw new Error('Browser source thread mismatch');
     }
     available(scope:ManagedBrowserScope):boolean{try{const session=this.#get(scope);return session.state==='idle';}catch{return false;}}
-    beforeTurn(scope:{workspaceId:string;ownerId:string;threadId:string}):void{
+    beforeTurn(scope:{workspaceId:string;ownerId:string;threadId:string;workId?:string}):void{
+        const state=this.store.state(scope.workspaceId);assertOwner(state,scope.ownerId);
+        const workId=scope.workId??state.taskContinuity?.focus[scope.threadId]?.workId;
+        if(workId&&state.works[workId]?.threadIds.includes(scope.threadId)){
+            const unresolved=this.#unresolved({...scope,workId});
+            if(unresolved.length)throw new Error(unresolvedBrowserMessage(unresolved.map(a=>a.id)));
+        }
         for(const session of this.#sessions.values())if(session.scope.workspaceId===scope.workspaceId&&session.scope.ownerId===scope.ownerId&&session.scope.threadId===scope.threadId){
             try{this.#checkSession(session);}catch{continue;}
             if(session.state==='human'||session.browser?.human)throw new Error(liveMessage('manualBlocked'));
@@ -99,7 +106,7 @@ export class ManagedBrowserController {
                         if(!ownerOpen||ownerOpen.sourceId!==session.binding?.ownerRecordId||ownerOpen.url!==command.url)throw new Error('Owner opening authority unavailable');
                         ownerOpen=undefined;return Promise.resolve('approve');
                     }});
-                if(result.status==='unknown'||result.status==='failed')void this.#close(session);
+                if(result.status==='unknown'||(result.status==='failed'&&!recoverableBrowserFailure(result)))void this.#close(session);
                 return result;
             }});
         session.state='idle';
@@ -182,7 +189,14 @@ export class ManagedBrowserController {
             },close
         };
     }
-    status(scope:ManagedBrowserScope){const session=this.#get(scope);this.#touch(session);return{sessionId:session.id,state:session.state,scope:session.scope,location:session.state==='human'?undefined:session.browser?.location,networkPolicy:'public_https' as const,expiresAt:new Date(session.expiresAt).toISOString(),inputs:session.browser?.inputs()??[],unresolvedActions:Object.values(this.store.state(scope.workspaceId).actions).filter(a=>a.workId===scope.workId&&a.command.kind==='browser.gesture'&&['unknown','running'].includes(a.status)).map(a=>({id:a.id,status:a.status}))};}
+    #unresolved(scope:ManagedBrowserScope){return unresolvedBrowserActions(this.store.state(scope.workspaceId),scope.workId).map(a=>({id:a.id,status:a.status}));}
+    status(scope:ManagedBrowserScope){
+        this.#checkScope(scope);const session=this.#sessions.get(this.#key(scope));
+        const durable={scope,networkPolicy:'public_https' as const,unresolvedActions:this.#unresolved(scope)};
+        if(!session)return {...durable,state:'absent' as const,inputs:[]};
+        try{this.#checkSession(session);}catch{return {...durable,state:session.state,inputs:[]};}
+        this.#touch(session);return {...durable,sessionId:session.id,state:session.state,location:session.state==='human'?undefined:session.browser?.location,expiresAt:new Date(session.expiresAt).toISOString(),inputs:session.browser?.inputs()??[]};
+    }
     input(binding:ManagedBrowserBinding,ref:string,value:string):string{this.#binding(binding);const session=this.#get(binding);if(session.state!=='idle'||!session.browser)throw new Error('Browser must be idle');const item=session.browser.inputs().find(item=>item.ref===ref);if(!item)throw new Error('Input reference is stale');
         const result=authorizeTaskInput(this.store,binding,{quote:value,origin:item.origin,purpose:session.browser.inputPurpose(ref)},true);this.#touch(session);return result.id;}
     async handoff(scope:ManagedBrowserScope):Promise<void>{const session=this.#get(scope);if(session.state!=='idle'||!session.browser)throw new Error('Browser must be idle');await session.browser.handoff();session.state='human';this.#touch(session);}
