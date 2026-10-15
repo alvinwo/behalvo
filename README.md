@@ -108,9 +108,10 @@ Use `npm run agent -- --synthetic-operations` for an isolated simulated account.
 
 See [Local MVP guide](docs/local-mvp.md) for the complete setup, data paths, security boundaries, and current limitations.
 
-For an isolated live browser with manual login handoff and reviewed gestures, use
+For an isolated live browser with automatic navigation and manual login handoff, use
 `npm run agent -- --browser live` in an interactive terminal. Describe your goal;
-the agent can choose a website and request a reviewed visit without `/browser open`. See the
+the agent can choose a website and follow native links without approval prompts or
+`/browser open`. Form interactions still require review. See the
 [Playwright browser guide](docs/PLAYWRIGHT_BROWSER.md) and
 [sessions, tasks and memory](docs/HARNESS_SESSIONS.md).
 
@@ -125,7 +126,7 @@ the agent can choose a website and request a reviewed visit without `/browser op
 | Explicit journal-validated v1–v3 → v4 continuity upgrade, including encrypted backups | Automatic legacy projection upgrades |
 | Synthetic and managed public-HTTPS exploration with source-grounded advisory notes | Proven real-portal compatibility or automatic booking verification |
 | WorkItems/Facts shared across explicitly linked threads | Memory granting permission or completing tasks |
-| Task-driven reviewed URL visits, retained isolated browser, fresh leases, manual login handoff and public HTTPS access | Personal-profile/CDP attachment, unattended actions or browser login after restart |
+| Task-driven URL/native-link navigation without prompts, recovery from proven blocked controls, fixed action diagnostics, retained browser and manual login handoff | Personal-profile/CDP attachment, unattended actions or browser login after restart |
 | Provider-neutral model contract and model registry | Background supervised 24/7 daemon |
 | Pinned Pi multi-provider adapter and separate file credential store | Independent live-model operation-loop verification |
 | Provider-owned OAuth login flow in the REPL | Hosted multi-user deployment |

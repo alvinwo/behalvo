@@ -25,13 +25,22 @@ workspace, local owner, chat and task. Public HTTPS sites, redirects and resourc
 may run JavaScript and background requests without per-origin approval. Websites
 can send received data to other public HTTPS sites under normal browser policy;
 field binding constrains where Behalvo fills input, not the website’s later use.
-The model can choose an initial or later URL through `visit`; both need fresh
-private review and a one-use journaled Action before destination traffic. Only a
-trusted `/browser open` command carries one-use authority for its exact initial
-URL and owner source. Acquiring the model port allocates nothing; a pending
-creation is owned before its first allocating await so cancellation can close it.
-A text-only answer needs no session. Each other agent gesture also needs review.
-HTTP verbs do not classify effects.
+The model can choose initial or later public HTTPS URLs through `visit` and follow
+current observed native links through `navigate` without approval prompts.
+The trusted controller records `navigation_policy_v1` authority in version-2
+journaled Actions before possible dispatch. Click, fill and select retain fresh
+private review (`owner_review`). A trusted `/browser open` command carries
+one-use `owner_open` authority for its exact URL and owner source. Legacy version-1
+actions and digests are unchanged. The model cannot supply authority fields or
+promote a button to a native link.
+Navigation may execute page handlers, send cookies and produce remote effects;
+HTTP verbs, URLs and labels do not prove whether an operation is consequential.
+The model is instructed not to use navigation to bypass an owner-required
+confirmation for a known consequential operation. The adapter cannot prove an
+arbitrary website's business semantics.
+Acquiring the model port allocates nothing; a pending creation is owned before
+its first allocating await so cancellation can close it. A text-only answer
+needs no session.
 A checked-IP CONNECT proxy prevents a second DNS resolution after validation;
 context routing also guards redirects and dependencies. There is no direct
 fallback, personal profile, remote CDP attachment or public boundary override.
@@ -53,13 +62,23 @@ close owned resources; unconfirmed cleanup remains an explicit failure. Live
 browsing neither calls the vault nor establishes real visa-portal compatibility.
 
 Browser Actions bind task revision, session, generation and network policy revision.
-URL visits bind the exact destination; control actions additionally bind document,
+URL visits and native-link navigation bind the exact destination; control actions additionally bind document,
 observation and semantic control fingerprint. Explicit visits invalidate controls
 and input descriptors even for same-document fragment navigation. Input authorization uses an exact
 owner source and descriptor-only purpose; it cannot revive an executable handle.
+The private helper returns an exact, allowlisted no-dispatch receipt only before
+activation. Covered, stale, missing or ambiguous controls can settle as failed
+and trigger one fresh observation in the same bounded turn, without silently
+repeating the gesture or closing a healthy session. Raw exceptions, malformed
+replies and late receipts cannot establish no dispatch; a timeout already settled
+as unknown remains unknown. Fixed phase/code diagnostics are saved in the action
+evidence without raw exception text, values, cookies or HTML.
 Possible dispatch followed by lost response or missing fresh evidence is unknown,
 never an automatic retry. The work-wide unresolved barrier survives replacement
-windows and replay until owner reconciliation. Journaled page text inherits the
+windows and replay until owner reconciliation. It blocks model calls for the
+focused task before allocation and remains visible in `/browser status` when no
+session exists. Existing unknown actions are never rewritten by this release.
+Journaled page text inherits the
 configured SQLite protection; the database is plaintext unless opted into
 storage encryption.
 

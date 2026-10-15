@@ -12,8 +12,8 @@ npm run agent -- --browser live --model openai-codex/gpt-6-astra
 
 Describe your goal in chat, including a website if you have one. The agent decides
 whether browsing is needed and chooses a public HTTPS URL (or a search page) to
-visit. Review the proposed URL and type `approve` to navigate. No `/browser open`
-command is required. A text-only answer does not launch a browser.
+visit. URL visits and observed native links proceed without approval prompts.
+No `/browser open` command is required. A text-only answer does not launch a browser.
 
 The first visit opens a new visible Chromium window, without an extension or
 personal Chrome profile. Later visits reuse the task/chat window and its cookies.
@@ -23,10 +23,14 @@ optional manual shortcut for the focused task.
 
 Public HTTPS sites, redirects, scripts, images and content APIs load without
 per-domain approval, including JavaScript and background requests. This is not
-read-only access: GET can mutate and POST can read. Each agent-selected gesture, including an initial or later URL visit, separately displays its task,
-site, control, selected option, navigation/form destination and authorized non-secret text for a fresh `approve`, `reject` or
-`handoff` response. The initial owner-authored open command needs no duplicate
-approval. A successful gesture does not verify a remote business outcome.
+read-only access: navigation can run handlers, send cookies and cause remote
+effects. Click, fill and select display the task, site, control, selected option,
+form destination and authorized non-secret text for a fresh `approve`, `reject`
+or `handoff` response. Native links and URL visits use the live navigation policy;
+the initial owner-authored open command uses its exact one-use authority. The
+agent must not use navigation to bypass a required confirmation for a known
+consequential operation. A successful gesture does not verify a remote business
+outcome.
 
 1. Use `/browser handoff` to enter login and verification codes in the browser.
    Agent turns in this chat pause during handoff; other chats cannot use its browser.
@@ -38,11 +42,25 @@ approval. A successful gesture does not verify a remote business outcome.
    for review.
 4. Inspect `/actions` after uncertainty. After checking the website yourself, use
    `/browser resolve <action-id> <accepted|failed> <note>`. This records your
-   evidence and never repeats the gesture.
+   evidence and never repeats the gesture. Choose `failed` only when you confirmed
+   no effect; a closed window alone does not prove this. New turns and replacement
+   windows do not clear unresolved actions.
 5. Use `/browser close` to close the task's window. Exiting Behalvo also closes
    owned sessions and reports unconfirmed cleanup.
 
-`/browser status` shows `networkPolicy: "public_https"`. The old `/browser allow`
+`/actions` shows each action's authority, exact navigation destination, outcome,
+evidence reference and fixed diagnostic when available. For example,
+`validation/control_covered` means the fixed helper refused activation because
+another element covered the target. The agent receives a fresh observation and
+can choose a different step or hand off, within the existing eight-completion and
+120-second limits. The application never silently repeats that rejected gesture.
+
+Unknown outcomes still stop and close the browser. The stop message identifies
+the action and recovery commands. `/browser status` reports unresolved action IDs
+even with `state: "absent"`, and focused-task turns remain blocked before model
+calls until explicit reconciliation. Historical unknown records are unchanged.
+
+`/browser status` also shows `networkPolicy: "public_https"`. The old `/browser allow`
 command only explains that public sites no longer need enrollment; it grants
 no extra access.
 
@@ -71,7 +89,8 @@ Real H-1B portal compatibility, automatic booking verification and unattended mo
 [sessions and memory](HARNESS_SESSIONS.md) and the
 [harness verification](verification/2026-10-11-harness-browser.md) and
 [public HTTPS verification](verification/2026-10-11-public-https.md), plus
-[agent navigation verification](verification/2026-10-11-agent-browser-navigation.md).
+[agent navigation verification](verification/2026-10-11-agent-browser-navigation.md) and
+[browser recovery verification](verification/2026-10-14-browser-exploration-recovery.md).
 
 Explicit visible acceptance uses synthetic accounts only:
 
