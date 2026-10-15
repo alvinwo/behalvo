@@ -325,6 +325,22 @@ export class AgentService {
     const proposedWorkIds = new Set<string>();
     const events: DomainEvent[] = [...teachingEvents,...browserEvents];
     let hasProgress=false;
+    const rejectFinal = async (error:unknown, fallback:string, terminal=false) => {
+      events.length=0;hasProgress=false;applicationAuthored=true;stopReason='invalid_model_result';
+      if(this.features.browser?.mode==='live'&&browserOutcome){
+        let code:BrowserStopCode='final/settlement_rejected';
+        try{assertExecutionActive(execution);await execution?.assertCurrent?.();assertExecutionActive(execution);browserCommitGuard?.();continuityCommitGuard();}
+        catch{code=execution&&executionDeadlineReached(execution,error)?'lifecycle/deadline':execution?.signal?.aborted?'lifecycle/cancelled':'lifecycle/authority_unavailable';}
+        let disposition=browserOutcome.sessionDisposition;
+        if((terminal||code.startsWith('lifecycle/'))&&browserOutcome.closeSession){
+          let confirmed=false;try{confirmed=(await browserOutcome.closeSession()).confirmed;}catch{/* No raw cleanup error in the journal. */}
+          this.#browserCleanupPending=!confirmed;disposition=confirmed?'closed':undefined;
+        }
+        stopReason=code==='lifecycle/deadline'?'deadline':code==='lifecycle/cancelled'?'cancelled':'invalid_model_result';
+        fallback=browserStopMessage(code,disposition,this.#browserCleanupPending?'cleanup/cleanup_unconfirmed':undefined);
+      }
+      turn={reply:stopReply(fallback),workProposals:[],factProposals:[]};
+    };
 
     try {
       if ((continuityEnabled || hasNotes) && turn.workProposals.length) throw new Error('Task creation requires owner intake');
@@ -379,28 +395,12 @@ export class AgentService {
         throw new Error('Run deadline');
     } catch (error) {
       if (!this.#loop && !teachingEnabled) throw error;
-      events.length = 0;hasProgress=false;
-      applicationAuthored = true;
-      stopReason = 'invalid_model_result';
-      let fallback='Operation run stopped: final proposals were rejected or the run deadline elapsed. No final proposals were committed. Inspect /actions for independently recorded operation outcomes.';
-      if(this.features.browser?.mode==='live'&&browserOutcome){
-        let code:BrowserStopCode='final/settlement_rejected';
-        try{assertExecutionActive(execution);await execution?.assertCurrent?.();browserCommitGuard?.();continuityCommitGuard();}
-        catch{code=execution&&executionDeadlineReached(execution,error)?'lifecycle/deadline':execution?.signal?.aborted?'lifecycle/cancelled':'lifecycle/authority_unavailable';}
-        let disposition=browserOutcome.sessionDisposition;
-        if(code.startsWith('lifecycle/')&&browserOutcome.closeSession){
-          let confirmed=false;try{confirmed=(await browserOutcome.closeSession()).confirmed;}catch{/* No raw cleanup error in the journal. */}
-          this.#browserCleanupPending=!confirmed;disposition=confirmed?'closed':undefined;
-        }
-        stopReason=code==='lifecycle/deadline'?'deadline':code==='lifecycle/cancelled'?'cancelled':'invalid_model_result';
-        fallback=browserStopMessage(code,disposition,this.#browserCleanupPending?'cleanup/cleanup_unconfirmed':undefined);
-      }
-      turn = { reply: stopReply(fallback),
-        workProposals: [], factProposals: [] };
+      await rejectFinal(error,'Operation run stopped: final proposals were rejected or the run deadline elapsed. No final proposals were committed. Inspect /actions for independently recorded operation outcomes.');
     }
 
     const assistantExternalId = result.providerResponseId ?? `agent-${randomUUID()}`;
     if (admitted) {
+      try {
       const version = this.store.state(input.workspaceId).version;
       const completed = this.store.completeOwnerTurnJob(input.workspaceId, admitted.job.claim!, {
         ownerRecordId: ownerRecord.id, expectedVersion: version, events,
@@ -419,8 +419,17 @@ export class AgentService {
         record.event.type === 'message.received' && record.event.data.senderRole === 'agent');
       if (!assistantRecord) throw new Error('Assistant message was not committed');
       return { ownerRecordId: ownerRecord.id, assistantRecordId: assistantRecord.id, context, turn, ...(input.workId?{workId:input.workId}:{}) };
+      } catch(error) {
+        // A revoked service fence cannot authorize another settlement. Close the
+        // browser before the worker handles the failed claim; never bypass it.
+        if(browserOutcome)await rejectFinal(error,'',true);
+        throw error;
+      }
     }
 
+    let committed: JournalRecord[];
+    const guarded=!!browserOutcome||!applicationAuthored||teachingEvents.length>0||browserEvents.length>0||hasProgress;
+    try {
     const assistantArtifactId = this.store.putArtifact(input.workspaceId, turn.reply);
     const assistantEvent: DomainEvent = {
       type: 'message.received',
@@ -434,28 +443,26 @@ export class AgentService {
       }
     };
     events.push(assistantEvent);
-
-    const deadlineStop = () => {
-      applicationAuthored = true;
-      turn = { reply: stopReply('Operation run stopped at its deadline before final reply/proposal commit. Inspect /actions for independently recorded operation outcomes.'),
-        workProposals: [], factProposals: [] };
-      events.length = 0;hasProgress=false;
-      assistantEvent.data.source = 'agent:application';
-      assistantEvent.data.externalId = `agent-${randomUUID()}`;
-      assistantEvent.data.artifactId = this.store.putArtifact(input.workspaceId, turn.reply);
-      events.push(assistantEvent);
-    };
     const finalVersion = this.store.state(input.workspaceId).version;
     // Check before entry and after SQLite obtains its writer lock; lock waits may exceed the deadline.
-    if ((!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0 || hasProgress)) && result.deadline !== undefined && Date.now() >= result.deadline) deadlineStop();
-    let committed: JournalRecord[];
-    try {
+    const finalGuard=guarded&&result.deadline!==undefined?()=>{
+      assertExecutionActive({deadline:result.deadline!,...(execution?.signal?{signal:execution.signal}:{})});
+      if(!applicationAuthored||hasProgress||browserOutcome)continuityCommitGuard();
+      if(!applicationAuthored||browserEvents.length>0||browserOutcome)browserCommitGuard?.();
+    }:undefined;
+    finalGuard?.();
       committed = this.store.completeInbox(input.workspaceId, ownerRecord.id, finalVersion, events,
-        (!applicationAuthored || (teachingEvents.length>0 || browserEvents.length>0 || hasProgress)) && result.deadline !== undefined ? () => {assertExecutionActive({ deadline: result.deadline!, ...(execution?.signal?{signal:execution.signal}:{}) });if(!applicationAuthored||hasProgress)continuityCommitGuard();if(!applicationAuthored || browserEvents.length>0)browserCommitGuard?.();} : undefined);
+        finalGuard);
     } catch (error) {
-      if (!(error instanceof OperationStoppedError) || (applicationAuthored && teachingEvents.length===0 && browserEvents.length===0 && !hasProgress)) throw error;
-      deadlineStop();
-      committed = this.store.completeInbox(input.workspaceId, ownerRecord.id, this.store.state(input.workspaceId).version, events);
+      if (!(error instanceof OperationStoppedError) || !guarded) {
+        if(browserOutcome)await rejectFinal(error,'',true);
+        throw error;
+      }
+      await rejectFinal(error,'Operation run stopped at its deadline before final reply/proposal commit. Inspect /actions for independently recorded operation outcomes.',true);
+      const artifactId=this.store.putArtifact(input.workspaceId,turn.reply);
+      // Only the fixed application stop may settle after lifecycle rejection.
+      committed = this.store.completeInbox(input.workspaceId, ownerRecord.id, this.store.state(input.workspaceId).version,
+        [{type:'message.received',data:{source:'agent:application',externalId:`agent-${randomUUID()}`,threadId:input.threadId,senderId:'agent',senderRole:'agent',artifactId}}]);
     }
     const assistantRecord = committed.find((record): record is JournalRecord => record.event.type === 'message.received' && record.event.data.senderRole === 'agent');
     if (!assistantRecord)

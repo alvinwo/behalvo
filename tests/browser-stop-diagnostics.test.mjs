@@ -7,7 +7,7 @@ import {runBrowserExploration} from '../dist/runtime/browser-exploration.js';
 
 const tool=(name,args={})=>({text:JSON.stringify({tool:{name,arguments:args}})});
 function fixture(t,options={}) {
- const store=new SqliteStore(':memory:');store.createWorkspace('w','owner');
+ const store=new SqliteStore(options.path??':memory:',{serviceQueue:{upgradeExisting:false}});store.createWorkspace('w','owner');
  const op=new Operator(store);op.createWork('w','owner',{id:'task',title:'Synthetic catalog',goal:'Inspect catalog',threadId:'thread'});
  const owner=store.ingest('w',{source:'test',externalId:'one',threadId:'thread',senderId:'owner',senderRole:'owner',text:'Inspect the synthetic catalog.'});
  const binding={workspaceId:'w',ownerId:'owner',workId:'task',ownerRecordId:owner.id,expectedWorkRevision:1};
@@ -36,6 +36,46 @@ for(const [name,response,code] of [
  assert.ok(result.turn.reply.includes(code),result.turn.reply);assert.equal(result.sessionDisposition,'retained');assert.equal(f.stats.retired,true);assert.equal(f.stats.interacts,0);assert.equal(f.stats.calls,2);
  assert.match(result.turn.reply,/remains open/);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_MODEL_CANARY/);
  assert.equal(Object.values(f.store.state('w').actions).length,0);assert.ok(result.events.every(e=>e.type==='browser.checkpoint'));
+});
+
+function productAgent(f) {
+ let calls=0;
+ return new AgentService(f.store,{complete:async()=>({text:++calls===1?JSON.stringify({task:{kind:'keep'},teachings:{outcome:'none'}}):calls===2?tool('observe').text:'PRIVATE_RESPONSE_CANARY'})},undefined,undefined,{taskContinuity:true,browser:{mode:'live',open:async()=>f.port}});
+}
+const productInput={workspaceId:'w',ownerId:'owner',workId:'task',threadId:'thread',externalId:'late-stop',text:'Inspect catalog.',model:{provider:'fake',model:'test'}};
+for(const confirmed of [true,false])test(`late final artifact deadline closes a retained browser (confirmed=${confirmed})`,async t=>{
+ const f=fixture(t),agent=productAgent(f);let closes=0;f.port.close=async()=>{closes++;return {confirmed};};
+ const originalNow=Date.now;let now=originalNow();Date.now=()=>now;t.after(()=>{Date.now=originalNow;});
+ const put=f.store.putArtifact.bind(f.store);f.store.putArtifact=(...args)=>{const result=put(...args);if(typeof args[1]==='string'&&args[1].includes('response/invalid_json')){now+=120001;f.store.putArtifact=put;}return result;};
+ const result=await agent.runOwnerTurn(productInput);
+ assert.match(result.turn.reply,/lifecycle\/deadline/);assert.doesNotMatch(result.turn.reply,/remains open|PRIVATE_/);assert.equal(f.stats.retired,true);assert.equal(closes,1);
+ assert.equal(f.store.state('w').browserMemory.checkpoints.task,undefined);assert.equal(f.store.state('w').taskContinuity.progress.task,undefined);
+ assert.equal(f.store.readArtifact('w',f.store.record('w',result.assistantRecordId).event.data.artifactId),result.turn.reply);
+ if(!confirmed){assert.match(result.turn.reply,/cleanup\/cleanup_unconfirmed/);await assert.rejects(()=>agent.runOwnerTurn({...productInput,externalId:'next'}),/cleanup/);}
+});
+test('SQLite writer wait at final commit closes the retired browser and commits only a deadline stop',async t=>{
+ const {mkdtempSync,rmSync}=await import('node:fs');const {join}=await import('node:path');const {tmpdir}=await import('node:os');const {holdSqliteWriteLock}=await import('./sqlite-lock-helper.mjs');
+ const dir=mkdtempSync(join(tmpdir(),'browser-stop-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const path=join(dir,'db'),f=fixture(t,{path}),agent=productAgent(f);let lock,closes=0;
+ f.port.close=async()=>{closes++;return {confirmed:true};};
+ const originalNow=Date.now;let offset=0;Date.now=()=>originalNow()+offset;t.after(()=>{Date.now=originalNow;});
+ const complete=f.store.completeInbox.bind(f.store);f.store.completeInbox=(...args)=>{
+  // Leave a short remaining deadline, then contend on the real SQLite writer lock.
+  offset=119900;lock=holdSqliteWriteLock(path,220);f.store.completeInbox=complete;return complete(...args);
+ };
+ try{const result=await agent.runOwnerTurn(productInput);assert.match(result.turn.reply,/lifecycle\/deadline/);assert.equal(closes,1);assert.equal(f.stats.retired,true);assert.equal(f.store.state('w').browserMemory.checkpoints.task,undefined);assert.equal(f.store.state('w').taskContinuity.progress.task,undefined);}
+ finally{await lock;}
+});
+for(const confirmed of [true,false])test(`admitted settlement fence revocation closes a retired browser without unauthorized settlement (confirmed=${confirmed})`,async t=>{
+ const f=fixture(t),agent=productAgent(f);let closes=0,revoked=false;
+ f.port.close=async()=>{closes++;return {confirmed};};
+ const at=new Date().toISOString();f.store.admitOwnerTurnJob({workspaceId:'w',ownerId:'owner',source:'owner:service',requestId:'late-fence',envelope:{kind:'owner_turn',threadId:'thread',workId:'task',text:'Inspect catalog.'},accepted:{threadId:'thread',workId:'task',model:productInput.model,windowTokens:64000,outputReserve:8000,capability:'prepare_only'},instanceId:'test',at});
+ const job=f.store.claimServiceJob('w','worker',at),complete=f.store.completeOwnerTurnJob.bind(f.store);
+ f.store.completeOwnerTurnJob=(...args)=>{revoked=true;return complete(...args);};
+ const check=()=>{if(revoked)throw new Error('PRIVATE_REVOKED_FENCE');};
+ await assert.rejects(()=>agent.processAdmittedOwnerTurn({workspaceId:'w',ownerId:'owner',job,fence:{serviceGeneration:'synthetic',deadline:Date.now()+5000,signal:new AbortController().signal,assertCurrent:async()=>check(),assertDispatchCurrent:check,assertSettlementCurrent:check}}),/PRIVATE_REVOKED_FENCE/);
+ assert.equal(f.stats.retired,true);assert.equal(closes,1);assert.equal(f.store.serviceJob('w',job.id).status,'running');assert.equal(f.store.state('w').browserMemory.checkpoints.task,undefined);assert.equal(f.store.state('w').taskContinuity.progress.task,undefined);
+ if(!confirmed)await assert.rejects(()=>agent.runOwnerTurn({...productInput,externalId:'next'}),/cleanup/);
 });
 test('provider failure after an observation retains the browser and never echoes the provider error',async t=>{
  const f=fixture(t),result=await f.run(()=>{throw new Error('PRIVATE_PROVIDER_CANARY');});
