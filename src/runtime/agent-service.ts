@@ -4,7 +4,7 @@ import { memoryMessage } from '../memory/messages.js';
 import { processTaskIntake } from './task-intake.js';
 import { taskMessage } from './task-messages.js';
 import { assertBrowserWork } from './browser-learning.js';
-import { runBrowserExploration, type BrowserExplorationOptions } from './browser-exploration.js';
+import { runBrowserExploration, type BrowserExplorationOptions, type BrowserExplorationResult } from './browser-exploration.js';
 import { browserMessage } from './browser-messages.js';
 import { extractTeachings } from './teaching-extractor.js';
 import { prepareTeachingEvents } from './teachings.js';
@@ -15,7 +15,7 @@ import { assertExecutionActive, executionDeadlineReached, withinExecution, Opera
 import { OperationLoop, type OperationLoopOptions, type OperationLoopResult } from './operation-loop.js';
 import { randomUUID } from 'node:crypto';
 import { unresolvedBrowserActions } from '../kernel/browser-action.js';
-import { liveMessage, unresolvedBrowserMessage } from '../browser/live-messages.js';
+import { browserStopMessage, liveMessage, unresolvedBrowserMessage, type BrowserStopCode } from '../browser/live-messages.js';
 import type { DomainEvent, Fact, JournalRecord } from '../kernel/types.js';
 import { reduce } from '../kernel/reducer.js';
 import { assertOwner } from '../kernel/policy.js';
@@ -271,6 +271,7 @@ export class AgentService {
       return response;
     };
     let result: OperationLoopResult;
+    let browserOutcome:BrowserExplorationResult|undefined;
     if (teachingReply !== undefined) result = {turn:{reply:teachingReply,workProposals:[],factProposals:[]},applicationAuthored:true,deadline:execution!.deadline};
     else if (explorationEnabled) {
       if(!input.workId)throw new Error('Focus an explicitly linked work item before browsing');
@@ -281,6 +282,7 @@ export class AgentService {
       const browserResult=await runBrowserExploration(this.store,this.gateway,request,
         browserBinding,
         execution!,this.features.browser,extracted?7:8,binding.inputBudgetBytes,context.includedBrowserSourceIds);
+      browserOutcome=browserResult;
       this.#browserCleanupPending=!(browserResult.cleanupConfirmed===true||browserResult.leaseRetired===true);
       browserEvents.push(...browserResult.events);result=browserResult;
     }
@@ -380,7 +382,20 @@ export class AgentService {
       events.length = 0;hasProgress=false;
       applicationAuthored = true;
       stopReason = 'invalid_model_result';
-      turn = { reply: stopReply('Operation run stopped: final proposals were rejected or the run deadline elapsed. No final proposals were committed. Inspect /actions for independently recorded operation outcomes.'),
+      let fallback='Operation run stopped: final proposals were rejected or the run deadline elapsed. No final proposals were committed. Inspect /actions for independently recorded operation outcomes.';
+      if(this.features.browser?.mode==='live'&&browserOutcome){
+        let code:BrowserStopCode='final/settlement_rejected';
+        try{assertExecutionActive(execution);await execution?.assertCurrent?.();browserCommitGuard?.();continuityCommitGuard();}
+        catch{code=execution&&executionDeadlineReached(execution,error)?'lifecycle/deadline':execution?.signal?.aborted?'lifecycle/cancelled':'lifecycle/authority_unavailable';}
+        let disposition=browserOutcome.sessionDisposition;
+        if(code.startsWith('lifecycle/')&&browserOutcome.closeSession){
+          let confirmed=false;try{confirmed=(await browserOutcome.closeSession()).confirmed;}catch{/* No raw cleanup error in the journal. */}
+          this.#browserCleanupPending=!confirmed;disposition=confirmed?'closed':undefined;
+        }
+        stopReason=code==='lifecycle/deadline'?'deadline':code==='lifecycle/cancelled'?'cancelled':'invalid_model_result';
+        fallback=browserStopMessage(code,disposition,this.#browserCleanupPending?'cleanup/cleanup_unconfirmed':undefined);
+      }
+      turn = { reply: stopReply(fallback),
         workProposals: [], factProposals: [] };
     }
 

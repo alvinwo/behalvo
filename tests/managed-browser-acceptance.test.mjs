@@ -141,3 +141,22 @@ test('selection retains fresh owner review after an automatic visit',{skip:!enab
  assert.equal(f.prompts.filter(line=>line.includes('Review this one browser gesture')).length,1);
  assert.deepEqual(Object.values(f.app.store.state('w').actions).map(a=>a.command.authority),['navigation_policy_v1','owner_review']);
 });
+test('covered link then malformed model response preserves the page for a new owner turn',{skip:!enabled,timeout:60000},async t=>{
+ let covered=0,alternative=0,turn=0,oldRef;const site=await managedSite((req,res)=>{
+  res.setHeader('Content-Type','text/html');if(req.url==='/covered')covered++;if(req.url==='/alternative')alternative++;
+  res.end(req.url==='/alternative'?'<h1>Alternative explored</h1>':'<a href="/covered" style="position:absolute;left:10px;top:10px">Covered catalog</a><div style="position:fixed;left:0;top:0;width:180px;height:100px;background:white;z-index:10">Announcement</div><a href="/alternative" style="position:absolute;left:300px;top:120px">Alternative catalog</a>');
+ },()=>{},false);
+ const f=await appFixture(t,site,{complete:async request=>{
+  const parsed=intake(request);if(parsed)return parsed;
+  const transcript=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]),last=transcript.at(-1),o=last?.observation;
+  if(!o)return turn?tool('observe'):tool('visit',{url:'https://example.test/'});
+  if(o.text.includes('Alternative explored'))return final(o);
+  if(last.result?.disposition==='not_dispatched'){oldRef=o.controls[0].ref;return {text:'PRIVATE_MALFORMED_MODEL_CANARY {'};}
+  if(turn){assert.notEqual(o.controls[0].ref,oldRef);return tool('navigate',{observationId:o.id,ref:o.controls.find(c=>c.name==='Alternative catalog').ref});}
+  return tool('navigate',{observationId:o.id,ref:o.controls.find(c=>c.name==='Covered catalog').ref});
+ }});
+ await f.run(['Explore the synthetic catalog.','/quit']);const first=f.controller.status(f.scope());
+ assert.equal(first.state,'idle');assert.equal(first.unresolvedActions.length,0);assert.ok(f.output.some(line=>line.includes('response/invalid_json')&&line.includes('remains open')));assert.doesNotMatch(JSON.stringify(f.app.store.journal('w')),/PRIVATE_MALFORMED_MODEL_CANARY/);
+ turn=1;await f.run(['Continue exploring.','/quit']);assert.equal(f.controller.status(f.scope()).sessionId,first.sessionId);assert.equal(covered,0);assert.equal(alternative,1);assert.equal(f.prompts.length,0);
+ assert.deepEqual(Object.values(f.app.store.state('w').actions).map(a=>a.status),['accepted','failed','accepted']);assert.ok(f.output.some(line=>line.includes('Alternative explored')));
+});

@@ -30,6 +30,36 @@ const messages={
     failed:'Browser command could not complete. Check the focused task, current field references and /actions; an uncertain action needs explicit reconciliation.',
 } as const;
 export function liveMessage(key:keyof typeof messages):string{return messages[key];}
+const explorationStops={
+    'budget/completion_limit':'The turn reached its model-completion limit.',
+    'budget/input_limit':'The accumulated browser context reached this turn’s input limit.',
+    'budget/response_limit':'The model response exceeded the supported size.',
+    'model/invocation_failed':'The model request failed. Check /model and /login if this repeats.',
+    'response/invalid_json':'The model response was not valid JSON and was not dispatched.',
+    'response/invalid_envelope':'The model response did not match the supported browser protocol and was not dispatched.',
+    'tool/unsupported_tool':'The model requested an unsupported tool. That request was not dispatched.',
+    'tool/invalid_arguments':'The tool arguments were rejected before invocation.',
+    'tool/reference_rejected':'The proposed control did not match the latest observation. It was not invoked.',
+    'browser/acquisition_failed':'The browser session could not be acquired.',
+    'browser/operation_failed':'The browser operation could not finish. Inspect /actions for its recorded outcome.',
+    'browser/observation_failed':'Fresh browser state could not be captured or recorded.',
+    'browser/handoff_failed':'Manual handoff could not be confirmed.',
+    'final/invalid_notes':'The model’s proposed notes failed validation and were not saved.',
+    'final/invalid_progress':'The model’s proposed progress failed validation and was not saved.',
+    'final/settlement_rejected':'The final task update failed validation and was not committed.',
+    'lifecycle/deadline':'The turn deadline elapsed.',
+    'lifecycle/cancelled':'The turn was cancelled.',
+    'lifecycle/authority_unavailable':'The task or browser authority changed or could not be confirmed.',
+    'cleanup/retirement_failed':'The browser lease could not be retired normally.',
+    'cleanup/cleanup_unconfirmed':'Browser cleanup is unconfirmed. Do not assume the process or profile was removed.',
+} as const;
+export type BrowserStopCode=keyof typeof explorationStops;
+export function browserStopMessage(code:BrowserStopCode,disposition?:'retained'|'human'|'closed',cleanup?:BrowserStopCode):string {
+    return `Browser exploration stopped (${code}). ${explorationStops[code]} No task completion was verified.`+
+        (cleanup?` ${cleanup}: ${explorationStops[cleanup]}`:'')+
+        (!cleanup&&disposition==='retained'?' The browser remains open. Ask the agent to continue in a new turn, or use /browser handoff for manual use.':
+            disposition==='closed'?' The browser session is closed.':'');
+}
 export function unresolvedBrowserMessage(actions:readonly {id:string;status:string}[],diagnostic?:{phase:string;code:string}):string {
     return messages.unresolved+actions.map(a=>`${a.id} (${a.status})`).join(', ')+'. '+(diagnostic?messages.diagnostic+diagnostic.phase+'/'+diagnostic.code+'. ':'')+
         [actions.some(a=>a.status==='running')?messages.maintenance:'',actions.some(a=>a.status==='unknown')?messages.reconcile:''].filter(Boolean).join(' ');
