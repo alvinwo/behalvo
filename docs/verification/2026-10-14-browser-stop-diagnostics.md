@@ -64,14 +64,15 @@ deadlines, real SQLite writer-lock contention, and revoked admitted service
 fences, including unconfirmed closure. A revoked service fence is never bypassed
 to save another reply; cleanup completes before the failure is rethrown.
 
-Final executable commit `e3699ea067bf764a69a63d1ed3e6025aca22799d` passed:
+Production commit `e3699ea067bf764a69a63d1ed3e6025aca22799d` and final test tree
+`d50627dff5f152fea2224778c7fa5d311f0cbc55` passed:
 
 - Focused regression suite: 75 passed, zero failures or skips.
 - Full POSIX `npm run verify`: all six gates passed (`check`, `demo`,
   `operations:demo`, `owner-control:demo`, `service:demo`, diff check).
   The check suite had 1,530 tests: 1,435 passed, 95 skipped, zero failures.
 - Terminal local summary:
-  `data/verification/2026-10-15T05-19-39.620Z-ceffcdcf-d4b0-43db-9f5b-a8ad7f6666b7/summary.json`.
+  `data/verification/2026-10-15T05-25-05.712Z-5e3e2130-7e62-4c9b-ba1b-0476408f2d4f/summary.json`.
   HEAD and source fingerprint were unchanged; the tree was clean before/after.
 - Both reviewers approved the focused repair after independently rerunning
   regressions. Hosted CI remains a separate pre-merge gate, not a claim made
@@ -79,11 +80,22 @@ Final executable commit `e3699ea067bf764a69a63d1ed3e6025aca22799d` passed:
 
 No authenticated H-1B flow acceptance is claimed.
 
+Initial hosted CI exposed a timing-dependent test expectation: the action could
+still be running when guidance was published and settle unknown before the
+test's awaiting caller resumed. A `setImmediate` did not synchronize two
+independent timeout paths. The revised regression explicitly awaits the broker's
+unknown settlement before advancing a controlled clock past the turn deadline.
+It retains the original unknown-guidance assertions; production behavior was
+unchanged. Both reviewers approved this test-only correction. Hosted checks
+on the final documentation head must pass before merging.
+
 ## Delegation ledger
 
 - Architecture: `gpt-6-astra`, max; bounded design approval; no failed design
   retries. Deferred automatic format correction.
 - Independent review: `gpt-5.6-sol`, high; lifecycle/unknown-effect risk review;
-  one finding-driven re-review; approved `e3699ea` after 75 passing regressions.
+  one finding-driven re-review and one CI test correction review; approved
+  `e3699ea` and `d50627d` after independent regression runs.
 - Independent review: `gpt-6-astra`, high; lifecycle/unknown-effect risk review;
-  one finding-driven re-review; approved `e3699ea` after five passing new cases.
+  one finding-driven re-review, bounded CI diagnosis and test correction review;
+  approved `e3699ea` and `d50627d` after independent regression runs.
