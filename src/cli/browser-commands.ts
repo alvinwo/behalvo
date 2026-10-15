@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { publicHttpsUrl } from '../browser/public-network.js';
 import { liveMessage } from '../browser/live-messages.js';
+import { readBrowserDiagnostic } from '../browser/live-failure.js';
 import type { ManagedBrowserController, ManagedBrowserScope } from '../browser/managed-session.js';
 import type { LiveReviewDetail } from '../browser/live-playwright.js';
 import { isBrowserActionCommand } from '../kernel/browser-action.js';
@@ -23,8 +24,10 @@ export async function reviewBrowserGesture(io:ReplIo,action:Action,detail:LiveRe
 
 export function displayBrowserActions(store:SqliteStore,scope:Omit<ManagedBrowserScope,'workId'>&{workId?:string},write:(line:string)=>void):void{
     const state=store.state(scope.workspaceId);assertOwner(state,scope.ownerId);if(!scope.workId)throw new Error(liveMessage('focus'));
-    for(const action of Object.values(state.actions))if(action.workId===scope.workId&&isBrowserActionCommand(action.command))
-        write(JSON.stringify({actionId:action.id,workId:action.workId,status:action.status,digest:action.digest,command:action.command,evidenceRef:action.evidenceRef??null}));
+    for(const action of Object.values(state.actions))if(action.workId===scope.workId&&isBrowserActionCommand(action.command)){
+        let diagnostic;try{if(action.evidenceRef)diagnostic=readBrowserDiagnostic(JSON.parse(store.readArtifact(scope.workspaceId,action.evidenceRef)).diagnostic);}catch{/* Legacy or non-diagnostic evidence remains addressable by reference. */}
+        write(JSON.stringify({actionId:action.id,workId:action.workId,status:action.status,digest:action.digest,command:action.command,evidenceRef:action.evidenceRef??null,...(diagnostic?{diagnostic}:{})}));
+    }
 }
 
 export async function handleBrowserCommand(raw:string,options:{store:SqliteStore;controller?:ManagedBrowserController;scope:Omit<ManagedBrowserScope,'workId'>&{workId?:string};io:ReplIo}):Promise<boolean>{

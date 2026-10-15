@@ -14,6 +14,8 @@ import { assertExecutionActive, executionDeadlineReached, withinExecution, Opera
   type OperationExecutionContext, type TrustedExecutionFence } from '../operations/execution-context.js';
 import { OperationLoop, type OperationLoopOptions, type OperationLoopResult } from './operation-loop.js';
 import { randomUUID } from 'node:crypto';
+import { unresolvedBrowserActions } from '../kernel/browser-action.js';
+import { liveMessage, unresolvedBrowserMessage } from '../browser/live-messages.js';
 import type { DomainEvent, Fact, JournalRecord } from '../kernel/types.js';
 import { reduce } from '../kernel/reducer.js';
 import { assertOwner } from '../kernel/policy.js';
@@ -134,7 +136,7 @@ export class AgentService {
       throw new Error('Agent service workspace binding mismatch');
     const initial = this.store.state(input.workspaceId);
     assertOwner(initial, input.ownerId);
-    if(input.job.parameters.kind==='owner_turn')this.features.browser?.beforeTurn?.({workspaceId:input.workspaceId,ownerId:input.ownerId,threadId:input.job.parameters.threadId});
+    if(input.job.parameters.kind==='owner_turn')this.features.browser?.beforeTurn?.({workspaceId:input.workspaceId,ownerId:input.ownerId,threadId:input.job.parameters.threadId,...(input.job.parameters.workId?{workId:input.job.parameters.workId}:{})});
     const job = input.job;
     if (job.workspaceId !== input.workspaceId || job.status !== 'running' || !job.claim ||
         job.kind !== 'owner_turn' || job.parameters.kind !== 'owner_turn')
@@ -311,6 +313,11 @@ export class AgentService {
     let turn = result.turn;
     let applicationAuthored = result.applicationAuthored;
     let stopReason: ServiceStopReason = result.stopReason ?? 'completed';
+    const stopReply=(fallback:string)=>{
+      if(this.features.browser?.mode!=='live'||!input.workId)return fallback;
+      const unresolved=unresolvedBrowserActions(this.store.state(input.workspaceId),input.workId);
+      return unresolved.length?unresolvedBrowserMessage(unresolved)+(this.#browserCleanupPending?' '+liveMessage('cleanupPending'):''):fallback;
+    };
 
     const current = this.store.state(input.workspaceId);
     const proposedWorkIds = new Set<string>();
@@ -373,7 +380,7 @@ export class AgentService {
       events.length = 0;hasProgress=false;
       applicationAuthored = true;
       stopReason = 'invalid_model_result';
-      turn = { reply: 'Operation run stopped: final proposals were rejected or the run deadline elapsed. No final proposals were committed. Inspect /actions for independently recorded operation outcomes.',
+      turn = { reply: stopReply('Operation run stopped: final proposals were rejected or the run deadline elapsed. No final proposals were committed. Inspect /actions for independently recorded operation outcomes.'),
         workProposals: [], factProposals: [] };
     }
 
@@ -415,7 +422,7 @@ export class AgentService {
 
     const deadlineStop = () => {
       applicationAuthored = true;
-      turn = { reply: 'Operation run stopped at its deadline before final reply/proposal commit. Inspect /actions for independently recorded operation outcomes.',
+      turn = { reply: stopReply('Operation run stopped at its deadline before final reply/proposal commit. Inspect /actions for independently recorded operation outcomes.'),
         workProposals: [], factProposals: [] };
       events.length = 0;hasProgress=false;
       assistantEvent.data.source = 'agent:application';

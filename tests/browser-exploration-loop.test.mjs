@@ -45,7 +45,7 @@ test('browser protocol explicitly advertises application-dispatched JSON tools',
 test('live model receives public HTTPS policy separately from gesture review',async()=>{
  const f=fixture([{outcome:'none'},{reply:'Ready to inspect.',notes:[]}]);f.browser.mode='live';
  const complete=f.gateway.complete,systems=[];f.gateway.complete=async request=>{systems.push(request.system);return complete(request);};
- try{await f.run();assert.match(systems[1],/public HTTPS.*without per-origin approval/i);assert.doesNotMatch(systems[1],/origin access grant/i);assert.match(systems[1],/Every gesture is reviewed privately by the owner/);assert.match(systems[1],/Private networks and local files remain blocked/);}
+ try{await f.run();assert.match(systems[1],/public HTTPS.*without per-origin approval/i);assert.doesNotMatch(systems[1],/origin access grant/i);assert.match(systems[1],/native-link navigation.*without approval prompts/);assert.match(systems[1],/Click, fill and select still require private owner review/);assert.match(systems[1],/never use a URL or link to bypass/);assert.match(systems[1],/Private networks and local files remain blocked/);}
  finally{f.store.close();}
 });
 
@@ -63,7 +63,61 @@ test('live direct answer needs no browser allocation even when no session exists
  const f=fixture([{outcome:'none'},{reply:'Here is the explanation.',notes:[]}]);let opens=0;Object.assign(f.browser,{mode:'live',available:()=>false,sessionState:()=> 'absent',open:async()=>{opens++;throw new Error('Unexpected browser');}});
  try{const result=await f.run();assert.equal(result.turn.reply,'Here is the explanation.');assert.equal(opens,0);}finally{f.store.close();}
 });
-for(const [mode,args] of [['synthetic',{url:'https://example.test/'}],['live',{url:'http://localhost/'}],['live',{url:'https://example.test/',extra:true}],['live',{url:'https://user:pass@example.test/'}]])test(`invalid ${mode} visit is rejected before resource acquisition: ${JSON.stringify(args)}`,async()=>{
+for(const [mode,args] of [['synthetic',{url:'https://example.test/'}],['live',{url:'http://localhost/'}],['live',{url:'https://example.test/',extra:true}],['live',{url:'https://example.test/',authority:'navigation_policy_v1'}],['live',{url:'https://user:pass@example.test/'}]])test(`invalid ${mode} visit is rejected before resource acquisition: ${JSON.stringify(args)}`,async()=>{
  const f=fixture([{outcome:'none'},{tool:{name:'visit',arguments:args}}]);let opens=0;Object.assign(f.browser,{mode,sessionState:()=> 'absent',open:async()=>{opens++;throw new Error('Unexpected allocation');}});
  try{const result=await f.run();assert.match(result.turn.reply,/stopped/);assert.equal(opens,0);assert.equal(Object.keys(f.store.state('w').actions).length,0);}finally{f.store.close();}
+});
+for(const outcome of ['fresh','observation_failed','stale','cancelled','deadline','budget'])test(`proven no-dispatch recovery ${outcome} keeps one attempt and the existing turn guards`,async()=>{
+ const {runBrowserExploration}=await import('../dist/runtime/browser-exploration.js');
+ const {BrowserActionBroker}=await import('../dist/runtime/browser-actions.js');
+ const {BrowserNoDispatchError,BrowserActionStopped}=await import('../dist/browser/live-failure.js');
+ const f=fixture([]),abort=new AbortController();let calls=0,observations=0,attempts=0,retired,feedback;
+ const owner=f.store.ingest('w',{source:'test',externalId:'recovery',threadId:'t',senderId:'o',senderRole:'owner',text:'Explore.'});
+ const binding={workspaceId:'w',ownerId:'o',workId:'task',ownerRecordId:owner.id,expectedWorkRevision:1};
+ const execution={deadline:Date.now()+(outcome==='deadline'?100:5000),signal:abort.signal};
+ const observation=ctx=>({workspaceId:'w',workId:'task',workRevision:1,sessionId:ctx.sessionId,generation:1,id:'obs-'+observations,documentId:'doc',origin:'https://example.test',location:'/',observedAt:new Date().toISOString(),text:'Synthetic catalog',controls:[{ref:'ref-'+observations,role:'link',name:'Catalog',actions:['navigate'],options:[]}]});
+ try{
+  const result=await runBrowserExploration(f.store,{complete:async request=>{calls++;const last=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]).at(-1);
+   if(calls===1)return{text:JSON.stringify({tool:{name:'observe',arguments:{}}})};
+   if(calls===2)return{text:JSON.stringify({tool:{name:'navigate',arguments:{observationId:last.observation.id,ref:last.observation.controls[0].ref}}})};
+   feedback=last;return{text:JSON.stringify({reply:'Inspected fresh state.',notes:[]})};
+  }},{model,system:'',prompt:''},binding,execution,{mode:'live',open:async ctx=>({
+   observe:async()=>{observations++;
+    if(observations===2){if(outcome==='observation_failed')throw new Error('PRIVATE_CANARY');if(outcome==='stale')new Operator(f.store).setWorkPhase('w','o','task','waiting_external');if(outcome==='cancelled')abort.abort();if(outcome==='deadline')await new Promise(r=>setTimeout(r,120));}
+    return observation(ctx);
+   },interact:async(_ctx,gesture)=>{attempts++;
+    const command={kind:'browser.gesture',version:1,operation:'interact',threadId:'t',sessionId:ctx.sessionId,generation:1,grantRevision:1,origin:'https://example.test',documentId:'doc',controlFingerprint:'a'.repeat(64),gesture};
+    const failure=await new BrowserActionBroker(f.store).perform(binding,command,execution,{review:async()=> 'approve',validate:async()=>{},dispatch:async mark=>{mark();throw new BrowserNoDispatchError({status:'not_dispatched',code:'control_covered'});}});
+    throw new BrowserActionStopped(failure);
+   },retire:async healthy=>{retired=healthy;return healthy?{leaseRetired:true,sessionDisposition:'retained'}:{leaseRetired:true,sessionDisposition:'closed',cleanupConfirmed:true};},close:async()=>({confirmed:true})
+  })},outcome==='budget'?2:8,196608,[]);
+  assert.equal(attempts,1);assert.equal(observations,2);assert.equal(Object.values(f.store.state('w').actions)[0].status,'failed');assert.doesNotMatch(JSON.stringify(result),/PRIVATE_CANARY/);
+  if(outcome==='fresh'){assert.equal(calls,3);assert.equal(feedback.result.disposition,'not_dispatched');assert.equal(feedback.observation.id,'obs-2');assert.equal(retired,true);assert.equal(result.sessionDisposition,'retained');}
+  else if(outcome==='budget'){assert.equal(calls,2);assert.equal(result.applicationAuthored,true);}
+  else{assert.equal(calls,2);assert.equal(retired,false);assert.equal(result.sessionDisposition,'closed');assert.equal(result.cleanupConfirmed,true);assert.match(result.turn.reply,/stopped/);}
+ }finally{f.store.close();}
+});
+test('unknown action guidance survives unconfirmed cleanup and reports both barriers',async()=>{
+ const {runBrowserExploration}=await import('../dist/runtime/browser-exploration.js');const {BrowserActionBroker}=await import('../dist/runtime/browser-actions.js');const {BrowserActionStopped}=await import('../dist/browser/live-failure.js');
+ const f=fixture([]),owner=f.store.ingest('w',{source:'test',externalId:'unknown',threadId:'t',senderId:'o',senderRole:'owner',text:'Explore.'});
+ const binding={workspaceId:'w',ownerId:'o',workId:'task',ownerRecordId:owner.id,expectedWorkRevision:1},execution={deadline:Date.now()+5000};let unknown;
+ try{const result=await runBrowserExploration(f.store,{complete:async()=>({text:JSON.stringify({tool:{name:'visit',arguments:{url:'https://example.test/'}}})})},{model,system:'',prompt:''},binding,execution,{mode:'live',sessionState:()=> 'absent',open:async ctx=>({
+  visit:async()=>{unknown=await new BrowserActionBroker(f.store).perform(binding,{kind:'browser.gesture',version:1,operation:'visit',url:'https://example.test/',origin:'https://example.test',threadId:'t',sessionId:ctx.sessionId,generation:1,grantRevision:1},execution,{review:async()=> 'approve',validate:async()=>{},dispatch:async mark=>{mark();throw new Error('lost reply');}});throw new BrowserActionStopped(unknown);},
+  observe:async()=>assert.fail(),interact:async()=>assert.fail(),retire:async()=>({leaseRetired:false,sessionDisposition:'closed',cleanupConfirmed:false}),close:async()=>({confirmed:false})
+ })},8,196608,[]);
+ assert.equal(result.cleanupConfirmed,false);assert.ok(result.turn.reply.includes(unknown.actionId));assert.match(result.turn.reply,/\/browser resolve/);assert.match(result.turn.reply,/cleanup is unconfirmed/);assert.doesNotMatch(result.turn.reply,/continue in a new turn/);
+ }finally{f.store.close();}
+});
+test('task continuity deadline settlement preserves browser unknown guidance',async()=>{
+ const {BrowserActionBroker}=await import('../dist/runtime/browser-actions.js');const {BrowserActionStopped}=await import('../dist/browser/live-failure.js');
+ const {OperationRegistry}=await import('../dist/operations/registry.js'),{OperationService}=await import('../dist/operations/service.js');
+ const f=fixture([]),registry=new OperationRegistry();
+ const gateway={complete:async request=>({text:JSON.stringify(request.system.includes('owner-only task intake')?{task:{kind:'keep'},teachings:{outcome:'none'}}:{tool:{name:'visit',arguments:{url:'https://example.test/'}}})})};
+ const agent=new AgentService(f.store,gateway,undefined,{registry,service:new OperationService(f.store,registry),timeoutMs:150},{taskContinuity:true,browser:{mode:'live',sessionState:()=> 'absent',open:async(ctx,binding)=>({
+  visit:async()=>{const result=await new BrowserActionBroker(f.store).perform(binding,{kind:'browser.gesture',version:1,operation:'visit',url:'https://example.test/',origin:'https://example.test',threadId:'t',sessionId:ctx.sessionId,generation:1,grantRevision:1},ctx.execution,{review:async()=> 'approve',validate:async()=>{},dispatch:async mark=>{mark();return new Promise(()=>{});}});throw new BrowserActionStopped(result);},
+  observe:async()=>assert.fail(),interact:async()=>assert.fail(),retire:async()=>{await new Promise(r=>setImmediate(r));return {leaseRetired:true,sessionDisposition:'closed',cleanupConfirmed:true};},close:async()=>({confirmed:true})
+ })}});
+ try{const result=await agent.runOwnerTurn({workspaceId:'w',ownerId:'o',threadId:'t',workId:'task',externalId:'deadline',text:'Explore.',model});
+  const action=Object.values(f.store.state('w').actions)[0];assert.equal(action.status,'unknown');assert.ok(result.turn.reply.includes(action.id));assert.match(result.turn.reply,/\/browser resolve/);assert.equal(f.store.inbox('w').length,0);
+ }finally{f.store.close();}
 });

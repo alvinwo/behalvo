@@ -1,18 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { APIRequestContext, Browser, Page } from 'playwright';
-import type { BrowserActionCommand } from '../kernel/browser-action.js';
+import type { BrowserActionProposal } from '../kernel/browser-action.js';
 import { parseBrowserCommand, resolveControl, sameScope, validateObservation } from '../kernel/browser-contract.js';
 import type { BrowserGestureExecution, BrowserGestureResult } from '../runtime/browser-actions.js';
 import { assertExecutionActive, withinExecution } from '../operations/execution-context.js';
 import { PlaywrightProcessOwner, type PlaywrightOwnerDependencies } from './playwright-process-owner.js';
 import { PublicNetworkGate, publicHttpsUrl } from './public-network.js';
 import { LiveWorld, type WorldControl } from './live-world.js';
+import { BrowserActionStopped, BrowserDiagnosticError, BrowserNoDispatchError } from './live-failure.js';
 import type { BrowserCommand, BrowserControl, BrowserExecution, BrowserObservation, BrowserScope } from './semantic-types.js';
 
 export interface LiveReviewDetail { operation:string; origin:string; name:string; value?:string; option?:string; destination?:string; form?:{action:string;method:string;target:string} }
 export interface LivePlaywrightOptions {
     sessionId:string;threadId:string;network:PublicNetworkGate;assertSession():void;
-    perform<T>(context:BrowserExecution,command:BrowserActionCommand,detail:LiveReviewDetail,gesture:Omit<BrowserGestureExecution<T>,'review'>):Promise<BrowserGestureResult<T>>;
+    perform<T>(context:BrowserExecution,command:BrowserActionProposal,detail:LiveReviewDetail,gesture:Omit<BrowserGestureExecution<T>,'review'>):Promise<BrowserGestureResult<T>>;
 }
 export interface LivePlaywrightDependencies extends PlaywrightOwnerDependencies {
     /** Trusted synthetic TLS fixture seam; never exposed by product configuration. */
@@ -86,15 +87,20 @@ export class LivePlaywright {
         if(!this.#page){const ready=await this.#owner.start(browser=>this.#start(browser));this.#page=ready.value;}this.#assert();
         const revision=this.options.network.revision;
         const check=()=>{this.#assert();if(this.options.network.revision!==revision||!this.options.network.allows(target.href))throw new Error('Origin changed');};
-        const result=await this.options.perform(context,{kind:'browser.gesture',version:1,operation,threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin:target.origin,url:target.href},
+        const result=await this.options.perform(context,{kind:'browser.gesture',operation,threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin:target.origin,url:target.href},
             {operation,origin:target.origin,name:target.href,destination:target.href},{validate:async()=>check(),assertCurrent:check,dispatch:async mark=>{
                 // Explicit visits retire field authority even for same-document fragments.
                 this.#invalidateInputs();await this.#clearRefs();check();mark();
-                await this.#page!.goto(target.href,{waitUntil:'domcontentloaded',timeout:Math.max(1,context.execution.deadline-Date.now())});return this.#capture();}});
+                try{await this.#page!.goto(target.href,{waitUntil:'domcontentloaded',timeout:Math.max(1,context.execution.deadline-Date.now())});}
+                catch{throw new BrowserDiagnosticError({phase:'navigation',code:'navigation_unsettled'});}
+                return this.#captureAfterDispatch();}});
         if(result.status==='handoff'){this.#human=true;this.#invalidateInputs();await this.#clearRefs();}
-        if(result.status!=='accepted')throw new Error('Browser opening stopped');return result.observation;
+        if(result.status!=='accepted')throw new BrowserActionStopped(result);return result.observation;
     });}
     async observe(context:BrowserExecution):Promise<BrowserObservation>{return this.#run(context,()=>this.#capture());}
+    async #captureAfterDispatch():Promise<BrowserObservation>{
+        try{return await this.#capture();}catch{throw new BrowserDiagnosticError({phase:'observation',code:'observation_unavailable'});}
+    }
     #purpose(origin:string,fingerprint:string):string{return 'live-field:v1:'+hash({sessionId:this.options.sessionId,documentId:this.#documentId,origin,epoch:this.#inputEpoch,fingerprint});}
     async #capture():Promise<BrowserObservation>{
         this.#assert();if(!this.#page)throw new Error('Browser absent');const documentId=this.#documentId;const page=this.#page;
@@ -142,7 +148,8 @@ export class LivePlaywright {
             }
         };
         await validate();
-        const result=await this.options.perform(context,{kind:'browser.gesture',version:1,operation:'interact',threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin,documentId,controlFingerprint:entry.fingerprint,gesture:command},
+        const result=await this.options.perform(context,{kind:'browser.gesture',operation:'interact',threadId:this.options.threadId,sessionId:context.sessionId,generation:context.generation,grantRevision:revision,origin,documentId,controlFingerprint:entry.fingerprint,gesture:command,
+            ...(command.kind==='navigate'?{destination:publicHttpsUrl(entry.descriptor.href).href}:{})},
             {operation:command.kind,origin,name:control.name,...(value===undefined?{}:{value}),
                 ...(command.kind==='select'?{option:control.options.find(o=>o.ref===command.optionRef)!.name}:{}),
                 ...(command.kind==='navigate'?{destination:entry.descriptor.href}:{}),
@@ -151,12 +158,13 @@ export class LivePlaywright {
                 // deliberately replaces its old observation; only pre-dispatch checks bind that ref.
                 assertCurrent:()=>{this.#assert();if(this.options.network.revision!==revision)throw new Error('Browser network policy changed');},dispatch:async mark=>{
                 await this.#world!.prepare(entry.nodeId);await validate();check();mark();
-                await this.#world!.dispatch({nodeId:entry.nodeId,descriptor:entry.descriptor,kind:command.kind,deadline:context.execution.deadline,
+                const receipt=await this.#world!.dispatch({nodeId:entry.nodeId,descriptor:entry.descriptor,kind:command.kind,deadline:context.execution.deadline,
                     ...(value===undefined?{}:{value}),...(command.kind==='select'?{index:entry.options.get(command.optionRef)!}:{})});
-                return this.#capture();
+                if(receipt.status==='not_dispatched')throw new BrowserNoDispatchError(receipt);
+                return this.#captureAfterDispatch();
             }});
         if(result.status==='handoff'){this.#human=true;this.#invalidateInputs();await this.#clearRefs();}
-        if(result.status!=='accepted')throw new Error(`Browser gesture ${result.status}`);return result.observation;
+        if(result.status!=='accepted')throw new BrowserActionStopped(result);return result.observation;
     });}
     async retire():Promise<void>{if(this.#busy)throw new Error('Browser busy');await this.#clearRefs();this.#scope=undefined;}
     async handoff():Promise<void>{if(this.#busy)throw new Error('Browser busy');this.#human=true;this.#invalidateInputs();await this.retire();}

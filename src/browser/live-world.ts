@@ -1,5 +1,6 @@
 import type { CDPSession, Page } from 'playwright';
 import { describeLiveControl, liveVisibleText } from './live-dom.js';
+import { BrowserDiagnosticError, parseDispatchReceipt, type WorldDispatchReceipt } from './live-failure.js';
 
 type Description=ReturnType<typeof describeLiveControl>;
 export interface WorldControl extends Description { nodeId:number }
@@ -18,29 +19,31 @@ function installWorld(describe:typeof describeLiveControl,text:typeof liveVisibl
             return {text:text(),controls:candidates.map(node=>{const nodeId=++next;nodes.set(nodeId,node);return{...describe(node),nodeId};})};},
         describe(nodeId:number){const node=nodes.get(nodeId);if(!node)throw new Error('Stale node');return describe(node);},
         prepare(nodeId:number){const node=nodes.get(nodeId);if(!node)throw new Error('Stale node');Element.prototype.scrollIntoView.call(node,{block:'center',inline:'center',behavior:'instant'});},
-        dispatch(action:WorldAction){
+        dispatch(action:WorldAction):WorldDispatchReceipt{
             const node=nodes.get(action.nodeId);
-            if(!node||Date.now()>=action.deadline||!same(node,action.descriptor))throw new Error('Stale dispatch');
+            if(Date.now()>=action.deadline)return{status:'not_dispatched',code:'deadline_expired'};
+            if(!node||!node.isConnected)return{status:'not_dispatched',code:'control_missing'};
+            if(!same(node,action.descriptor))return{status:'not_dispatched',code:'control_changed'};
             if(action.kind==='fill'){
                 const fields=Array.from(document.querySelectorAll('input,textarea'));
-                if(fields.length>1000||fields.filter(field=>same(field,action.descriptor)).length!==1)throw new Error('Ambiguous field');
+                if(fields.length>1000||fields.filter(field=>same(field,action.descriptor)).length!==1)return{status:'not_dispatched',code:'field_ambiguous'};
             }
             // Final validation and the first effect run in the same JS task. No await,
             // page-world callbacks, focus, scrolling, or locator resolution in between.
             const rect=node.getBoundingClientRect();const x=rect.left+rect.width/2,y=rect.top+rect.height/2;
             const hit=document.elementFromPoint(x,y);
-            if(x<0||y<0||x>=innerWidth||y>=innerHeight||!hit||!(node===hit||node.contains(hit)))throw new Error('Covered control');
+            if(x<0||y<0||x>=innerWidth||y>=innerHeight||!hit||!(node===hit||node.contains(hit)))return{status:'not_dispatched',code:'control_covered'};
             if(action.kind==='fill'){
                 const prototype=node.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
                 Object.getOwnPropertyDescriptor(prototype,'value')!.set!.call(node,action.value!);
                 node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));
             }else if(action.kind==='select'){
                 const option=(node as HTMLSelectElement).options[action.index!];
-                if(!option||option.disabled||option.parentElement?.hasAttribute('disabled'))throw new Error('Stale option');
+                if(!option||option.disabled||option.parentElement?.hasAttribute('disabled'))return{status:'not_dispatched',code:'option_changed'};
                 Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'selectedIndex')!.set!.call(node,action.index!);
                 node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));
             }else HTMLElement.prototype.click.call(node);
-            return true;
+            return {status:'dispatched'};
         }
     };
 }
@@ -66,7 +69,7 @@ export class LiveWorld {
     describe(nodeId:number):Promise<Description>{return this.#call('describe',nodeId);}
     prepare(nodeId:number):Promise<void>{return this.#call('prepare',nodeId);}
     async clear():Promise<void>{if(this.#objectId)await this.#call('clear').catch(()=>{});}
-    async dispatch(action:WorldAction):Promise<void>{
+    async dispatch(action:WorldAction):Promise<WorldDispatchReceipt>{
         let requested=false;let committedResolve!:()=>void;
         let timeout:ReturnType<typeof setTimeout>|undefined;
         const committed=new Promise<void>((resolve,reject)=>{committedResolve=resolve;timeout=setTimeout(()=>reject(new Error('Navigation unsettled')),Math.max(1,action.deadline-Date.now()));});
@@ -74,7 +77,14 @@ export class LiveWorld {
         const onRequest=(event:{frameId:string})=>{if(event.frameId===this.#frameId)requested=true;};
         const onCommit=(frame:import('playwright').Frame)=>{if(frame===this.page.mainFrame())committedResolve();};
         this.session.on('Page.frameRequestedNavigation',onRequest);this.page.on('framenavigated',onCommit);
-        try{await this.#call('dispatch',action);if(requested){await committed;await this.page.waitForLoadState('domcontentloaded',{timeout:Math.max(1,action.deadline-Date.now())});}}
+        try{
+            const receipt=parseDispatchReceipt(await this.#call('dispatch',action));
+            if(receipt.status==='dispatched'&&requested){
+                try{await committed;await this.page.waitForLoadState('domcontentloaded',{timeout:Math.max(1,action.deadline-Date.now())});}
+                catch{throw new BrowserDiagnosticError({phase:'navigation',code:'navigation_unsettled'});}
+            }
+            return receipt;
+        }
         finally{clearTimeout(timeout);this.session.off('Page.frameRequestedNavigation',onRequest);this.page.off('framenavigated',onCommit);}
     }
 }

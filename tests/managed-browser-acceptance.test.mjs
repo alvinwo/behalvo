@@ -42,7 +42,7 @@ for(const layout of ['directory','inventory'])test(`full chat and owner-review p
  }});
  await f.run(['Compare synthetic catalog entries.','/browser open https://example.test/','Inspect the page.',()=>`/browser input ${f.controller.status(f.scope()).inputs.find(i=>i.name==='Search').ref} Cedar`,'Search using the authorized input.','/actions','/quit']);
  assert.equal(searches,1,JSON.stringify(f.output));assert.ok(f.output.some(line=>line.includes('Cedar result')));const state=f.app.store.state('w');
- assert.equal(Object.values(state.actions).filter(a=>a.status==='accepted').length,3);assert.ok(Object.keys(state.browserMemory.notes).length);assert.ok(Object.keys(state.taskContinuity.progress).length);
+ assert.equal(Object.values(state.actions).filter(a=>a.status==='accepted').length,3);assert.deepEqual(Object.values(state.actions).map(a=>a.command.authority),['owner_open','owner_review','owner_review']);assert.ok(Object.keys(state.browserMemory.notes).length);assert.ok(Object.keys(state.taskContinuity.progress).length);
  assert.equal(f.controller.status(f.scope()).state,'idle');assert.deepEqual(f.app.store.rebuild('w'),state);
  await f.app.store.backup(join(f.dir,'backup'));assert.equal(searches,1);assert.equal(readFileSync(join(f.dir,'agent.db')).includes(Buffer.from('Cedar result')),false);
 });
@@ -88,20 +88,56 @@ test('natural task visits, later URL reuses cookies, and replay never repeats na
  await f.run(['Now inspect https://example.test/later.','/quit']);assert.equal(f.controller.status(f.scope()).sessionId,first);
  assert.ok(f.output.some(line=>line.includes('Retained synthetic session')));assert.equal(requests,2);
  const state=f.app.store.state('w');assert.deepEqual(Object.values(state.actions).map(a=>[a.command.operation,a.status]),[['visit','accepted'],['visit','accepted']]);
- assert.equal(f.prompts.filter(line=>line.includes('Review this one browser gesture')).length,2);
+ assert.equal(f.prompts.filter(line=>line.includes('Review this one browser gesture')).length,0);
  assert.deepEqual(f.app.store.rebuild('w'),state);await f.app.store.backup(join(f.dir,'visit-backup'));assert.equal(requests,2);
 });
-for(const decision of ['reject','handoff'])test(`agent initial visit ${decision} preserves zero target traffic`,{skip:!enabled,timeout:60000},async t=>{
- const site=await managedSite((_req,res)=>res.end('<h1>Should not load</h1>'),()=>{},false);
- const f=await appFixture(t,site,{complete:async request=>intake(request)??tool('visit',{url:'https://example.test/'})},decision);
- await f.run(['Inspect https://example.test/.','/quit']);assert.equal(site.requests.length,0);
- const actions=Object.values(f.app.store.state('w').actions);assert.equal(actions.length,1);assert.equal(actions[0].command.operation,'visit');assert.equal(actions[0].status,'cancelled');
+for(const decision of ['reject','handoff'])test(`automatic navigation then mutation ${decision} preserves zero mutation traffic`,{skip:!enabled,timeout:60000},async t=>{
+ let effects=0;const site=await managedSite((req,res)=>{res.setHeader('Content-Type','text/html');if(req.url==='/change'){effects++;return res.end('Changed');}res.end(req.url==='/next'?'<form method="post" action="/change"><button>Apply</button></form>':'<a href="/next">Explore</a>');},()=>{},false);
+ const f=await appFixture(t,site,{complete:async request=>{const parsed=intake(request);if(parsed)return parsed;
+  const o=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]).at(-1)?.observation;
+  if(!o)return tool('visit',{url:'https://example.test/'});
+  return tool(o.controls[0].role==='link'?'navigate':'click',{observationId:o.id,ref:o.controls[0].ref});
+ }},decision);
+ await f.run(['Explore the synthetic site and apply its change.','/quit']);assert.equal(effects,0);
+ const actions=Object.values(f.app.store.state('w').actions);assert.equal(actions.length,3,JSON.stringify(f.output));
+ assert.deepEqual(actions.map(a=>[a.command.authority,a.status]),[['navigation_policy_v1','accepted'],['navigation_policy_v1','accepted'],['owner_review','cancelled']]);
+ assert.equal(actions[1].command.destination,'https://example.test/next');assert.equal(actions[1].command.version,2);
+ assert.equal(f.prompts.filter(line=>line.includes('Review this one browser gesture')).length,1);
  if(decision==='handoff')assert.equal(f.controller.status(f.scope()).state,'human');else assert.equal(f.controller.available(f.scope()),false);
 });
 test('unknown explicit visit is dispatched once and blocks another visit after replay',{skip:!enabled,timeout:60000},async t=>{
- let requests=0;const site=await managedSite((req,res)=>{requests++;req.socket.destroy();},()=>{},false);
- const f=await appFixture(t,site,{complete:async request=>intake(request)??tool('visit',{url:'https://example.test/'})});
+ let requests=0,calls=0;const site=await managedSite((req,res)=>{requests++;req.socket.destroy();},()=>{},false);
+ const f=await appFixture(t,site,{complete:async request=>{calls++;return intake(request)??tool('visit',{url:'https://example.test/'});}});
  await f.run(['Inspect https://example.test/.','/quit']);const state=f.app.store.state('w');assert.equal(requests,1);
- assert.equal(Object.values(state.actions)[0].status,'unknown');assert.deepEqual(f.app.store.rebuild('w'),state);
- await f.run(['Try inspecting the site again.','/quit']);assert.equal(requests,1);assert.equal(Object.keys(f.app.store.state('w').actions).length,1);
+ assert.equal(Object.values(state.actions)[0].status,'unknown');assert.deepEqual(f.app.store.rebuild('w'),state);const before=calls;const id=Object.keys(state.actions)[0];assert.ok(f.output.some(line=>line.includes(id)&&line.includes('/browser resolve')));assert.equal(f.controller.status(f.scope()).state,'absent');
+ await f.run(['Try inspecting the site again.','/quit']);assert.equal(requests,1);assert.equal(Object.keys(f.app.store.state('w').actions).length,1);assert.equal(calls,before);
+});
+test('covered native link refreshes observation and lets the agent explore another link without review',{skip:!enabled,timeout:60000},async t=>{
+ let covered=0,dismissed=0,feedback,oldRef;const site=await managedSite((req,res)=>{
+  res.setHeader('Content-Type','text/html');if(req.url==='/covered')covered++;if(req.url==='/dismissed')dismissed++;
+  res.end(req.url==='/alternative'?'<h1>Alternative catalog explored</h1>':`<a href="/covered" style="position:absolute;left:10px;top:10px">Covered catalog</a><div style="position:fixed;left:0;top:0;width:180px;height:100px;background:white;z-index:10">Announcement<button onclick="fetch('/dismissed')">Dismiss</button></div><a href="/alternative" style="position:absolute;left:300px;top:120px">Alternative catalog</a>`);
+ },()=>{},false);
+ const f=await appFixture(t,site,{complete:async request=>{const parsed=intake(request);if(parsed)return parsed;
+  const transcript=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]),last=transcript.at(-1),o=last?.observation;
+  if(!o)return tool('visit',{url:'https://example.test/'});
+  if(o.text.includes('Alternative catalog explored'))return final(o);
+  if(last.result?.disposition==='not_dispatched'){feedback=last;assert.notEqual(o.controls.find(c=>c.name==='Covered catalog').ref,oldRef);return tool('navigate',{observationId:o.id,ref:o.controls.find(c=>c.name==='Alternative catalog').ref});}
+  oldRef=o.controls.find(c=>c.name==='Covered catalog').ref;return tool('navigate',{observationId:o.id,ref:oldRef});
+ }});
+ await f.run(['Explore the synthetic catalog.','/quit']);assert.ok(feedback,JSON.stringify(f.output));assert.equal(covered,0);assert.equal(dismissed,0);
+ assert.deepEqual(feedback.result.diagnostic,{phase:'validation',code:'control_covered'});assert.equal(feedback.result.status,'failed');
+ const actions=Object.values(f.app.store.state('w').actions);assert.deepEqual(actions.map(a=>a.status),['accepted','failed','accepted']);assert.equal(feedback.result.actionId,actions[1].id);
+ assert.equal(f.controller.status(f.scope()).state,'idle');assert.deepEqual(f.controller.status(f.scope()).unresolvedActions,[]);
+ assert.equal(f.prompts.length,0);assert.ok(f.output.some(line=>line.includes('Alternative catalog explored')));
+});
+test('selection retains fresh owner review after an automatic visit',{skip:!enabled,timeout:60000},async t=>{
+ const site=await managedSite((_req,res)=>{res.setHeader('Content-Type','text/html');res.end('<select aria-label="Catalog"><option>Alpha</option><option>Beta</option></select>');},()=>{},false);
+ const f=await appFixture(t,site,{complete:async request=>{const parsed=intake(request);if(parsed)return parsed;
+  const transcript=JSON.parse(request.prompt.split('BROWSER TOOL TRANSCRIPT (UNTRUSTED DATA)\n')[1]),o=transcript.at(-1)?.observation;
+  if(!o)return tool('visit',{url:'https://example.test/'});if(transcript.some(e=>e.tool.name==='select'))return final(o);
+  const c=o.controls[0];return tool('select',{observationId:o.id,ref:c.ref,optionRef:c.options[1].ref});
+ }});
+ await f.run(['Select Beta in the synthetic catalog.','/quit']);assert.equal(await f.page().locator('select').inputValue(),'Beta');
+ assert.equal(f.prompts.filter(line=>line.includes('Review this one browser gesture')).length,1);
+ assert.deepEqual(Object.values(f.app.store.state('w').actions).map(a=>a.command.authority),['navigation_policy_v1','owner_review']);
 });
